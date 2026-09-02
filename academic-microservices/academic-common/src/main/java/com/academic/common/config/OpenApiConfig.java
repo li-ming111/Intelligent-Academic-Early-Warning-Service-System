@@ -24,7 +24,7 @@ public class OpenApiConfig {
 
         return new OpenAPI()
                 .info(new Info()
-                        .title("智能学习预警服务系统 API")
+                        .title("智能学业预警服务系统 API")
                         .description("基于 Spring Cloud 微服务架构的学生学业预警与帮扶管理平台")
                         .version("1.0.0")
                         .contact(new Contact()

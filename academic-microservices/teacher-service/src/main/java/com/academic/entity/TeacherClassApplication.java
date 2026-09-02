@@ -5,7 +5,7 @@ import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 import lombok.Data;
 
-import java.util.Date;
+import java.time.LocalDateTime;
 
 @Data
 @TableName("teacher_class_application")
@@ -21,9 +21,9 @@ public class TeacherClassApplication {
     
     private Integer status;
     
-    private Date createTime;
-    
-    private Date updateTime;
+    private LocalDateTime createTime;
+
+    private LocalDateTime updateTime;
     
     private String className;
     

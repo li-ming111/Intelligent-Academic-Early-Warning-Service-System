@@ -25,14 +25,14 @@ public class StudentServiceFallback implements StudentServiceClient {
 
     @Override
     public ApiResponse<Student> getStudentById(Long studentId) {
-        log.warn("student-service is unavailable, returning null for studentId: {}", studentId);
-        return ApiResponse.success(null);
+        log.warn("student-service is unavailable, returning fallback for studentId: {}", studentId);
+        return ApiResponse.error("学生服务暂时不可用");
     }
 
     @Override
     public ApiResponse<StudentProfile> getStudentProfileById(Long studentId) {
-        log.warn("student-service is unavailable, returning null for studentProfileId: {}", studentId);
-        return ApiResponse.success(null);
+        log.warn("student-service is unavailable, returning fallback for studentProfileId: {}", studentId);
+        return ApiResponse.error("学生服务暂时不可用");
     }
 
     @Override

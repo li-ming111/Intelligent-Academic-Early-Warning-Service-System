@@ -5,7 +5,7 @@ import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 import lombok.Data;
 
-import java.util.Date;
+import java.time.LocalDateTime;
 
 @Data
 @TableName("feedback")
@@ -25,9 +25,9 @@ public class Feedback {
     
     private Integer status;
     
-    private Date createTime;
-    
-    private Date replyTime;
+    private LocalDateTime createTime;
+
+    private LocalDateTime replyTime;
     
     private String studentName;
 }

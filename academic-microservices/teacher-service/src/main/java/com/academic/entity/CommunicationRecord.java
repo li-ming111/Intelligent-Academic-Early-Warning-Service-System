@@ -5,7 +5,7 @@ import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 import lombok.Data;
 
-import java.util.Date;
+import java.time.LocalDateTime;
 
 @Data
 @TableName("communication_record")
@@ -21,7 +21,7 @@ public class CommunicationRecord {
     
     private String type;
     
-    private Date createTime;
+    private LocalDateTime createTime;
     
     private String studentName;
 }

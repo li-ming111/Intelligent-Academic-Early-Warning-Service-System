@@ -26,3 +26,9 @@ node_modules
 
 # 数据库完整备份
 /db_backups/
+
+# 本地工具缓存 / 误解压产物 / 散图
+.codebuddy/
+BOOT-INF/
+temp_gateway/
+generated-images/

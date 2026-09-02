@@ -66,26 +66,15 @@ public class CollegeServiceImpl extends ServiceImpl<CollegeMapper, College> impl
     @Override
     @Cacheable(value = "colleges", key = "'id:' + #id")
     public College getCollegeById(Long id) {
-        try {
-            College college = this.getById(id);
-            if (college != null) {
-                LambdaQueryWrapper<Student> studentWrapper = new LambdaQueryWrapper<>();
-                studentWrapper.eq(Student::getCollegeId, id);
-                long studentCountLong = studentMapper.selectCount(studentWrapper);
-                int studentCount = (int) studentCountLong;
-                college.setStudentCount(studentCount);
-
-                int teacherCount = countUsersByCollegeAndRole(id, ROLE_TEACHER);
-                college.setTeacherCount(teacherCount);
-
-                int counselorCount = countUsersByCollegeAndRole(id, ROLE_COUNSELOR);
-                college.setCounselorCount(counselorCount);
-            }
-            return college;
-        } catch (Exception e) {
-            log.error("操作异常", e);
-            return null;
+        College college = this.getById(id);
+        if (college != null) {
+            LambdaQueryWrapper<Student> studentWrapper = new LambdaQueryWrapper<>();
+            studentWrapper.eq(Student::getCollegeId, id);
+            college.setStudentCount((int)(long) studentMapper.selectCount(studentWrapper));
+            college.setTeacherCount(countUsersByCollegeAndRole(id, ROLE_TEACHER));
+            college.setCounselorCount(countUsersByCollegeAndRole(id, ROLE_COUNSELOR));
         }
+        return college;
     }
 
     private int countUsersByCollegeAndRole(Long collegeId, Integer role) {
