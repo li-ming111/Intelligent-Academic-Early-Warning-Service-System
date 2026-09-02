@@ -1,2 +1,0 @@
-@echo off
-"D:\JAVA\mysql\mysql-8.0.44-winx64\mysql-8.0.44-winx64\bin\mysql.exe" -u root -proot academic_warning_system -e "INSERT IGNORE INTO users (username, password, role, status, created_at, updated_at) VALUES ('collegeadmin1', '\$2a\$10\$EixZaYVK1fsbw1ZfbX3OXe.P1ZqWqGgFhxoQhNoG7TWXKZ8XN3ZZy', 5, 1, NOW(), NOW()); UPDATE college_admin_profile SET user_id=(SELECT id FROM users WHERE username='collegeadmin1') WHERE user_id=55; SELECT id, username, role FROM users WHERE username LIKE 'collegeadmin%'; SELECT * FROM college_admin_profile;"

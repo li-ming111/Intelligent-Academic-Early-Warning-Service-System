@@ -1,7 +1,0 @@
-D:\ABS\academic-microservices\gateway-service\src\main\java\com\academic\config\RateLimiterConfig.java
-D:\ABS\academic-microservices\gateway-service\src\main\java\com\academic\filter\GlobalRequestFilter.java
-D:\ABS\academic-microservices\gateway-service\src\main\java\com\academic\filter\LoggingFilter.java
-D:\ABS\academic-microservices\gateway-service\src\main\java\com\academic\filter\AuthenticationFilter.java
-D:\ABS\academic-microservices\gateway-service\src\main\java\com\academic\controller\FallbackController.java
-D:\ABS\academic-microservices\gateway-service\src\main\java\com\academic\config\CorsConfig.java
-D:\ABS\academic-microservices\gateway-service\src\main\java\com\academic\GatewayServiceApplication.java

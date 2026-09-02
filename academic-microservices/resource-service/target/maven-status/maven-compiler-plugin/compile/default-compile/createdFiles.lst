@@ -1,7 +1,0 @@
-com\academic\ResourceServiceApplication.class
-com\academic\service\impl\SupportResourceServiceImpl.class
-com\academic\exception\GlobalExceptionHandler.class
-com\academic\controller\SupportResourceController.class
-com\academic\entity\SupportResource.class
-com\academic\mapper\SupportResourceMapper.class
-com\academic\service\SupportResourceService.class

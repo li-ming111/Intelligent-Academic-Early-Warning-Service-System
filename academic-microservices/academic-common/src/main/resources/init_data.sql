@@ -1,5 +1,5 @@
 -- ========================================
--- 智能学习预警服务系统 - 种子数据
+-- 智能学业预警服务系统 - 种子数据
 -- 所有 INSERT 使用 INSERT IGNORE，安全幂等
 -- 密码均为 123456 的 BCrypt 编码
 -- ========================================
@@ -23,10 +23,10 @@ INSERT IGNORE INTO classes (id, name, college_id, major_id) VALUES
 
 -- 用户（密码：123456 → BCrypt）
 INSERT IGNORE INTO users (id, username, password, role, name, email, phone, status) VALUES
-(1, 'admin', '$2a$10$N.zmdr9k7uOCQb376NoUnuTJ8iAt6Z5EHsM8lE9lBOsl7iAt6Z5Eh', 4, '管理员', 'admin@academic.com', '13800000001', 1),
-(2, 'teacher001', '$2a$10$N.zmdr9k7uOCQb376NoUnuTJ8iAt6Z5EHsM8lE9lBOsl7iAt6Z5Eh', 2, '张老师', 'teacher001@academic.com', '13800000002', 1),
-(3, 'counselor001', '$2a$10$N.zmdr9k7uOCQb376NoUnuTJ8iAt6Z5EHsM8lE9lBOsl7iAt6Z5Eh', 3, '李辅导员', 'counselor001@academic.com', '13800000003', 1),
-(4, 'student001', '$2a$10$N.zmdr9k7uOCQb376NoUnuTJ8iAt6Z5EHsM8lE9lBOsl7iAt6Z5Eh', 1, '王同学', 'student001@academic.com', '13800000004', 1);
+(1, 'admin', '$2a$10$O1AmnqNe50/knConTInm6Owvk/BkiYTYAviRZk5mz0uQfpT99Oija', 4, '管理员', 'admin@academic.com', '13800000001', 1),
+(2, 'teacher001', '$2a$10$O1AmnqNe50/knConTInm6Owvk/BkiYTYAviRZk5mz0uQfpT99Oija', 2, '张老师', 'teacher001@academic.com', '13800000002', 1),
+(3, 'counselor001', '$2a$10$O1AmnqNe50/knConTInm6Owvk/BkiYTYAviRZk5mz0uQfpT99Oija', 3, '李辅导员', 'counselor001@academic.com', '13800000003', 1),
+(4, 'student001', '$2a$10$O1AmnqNe50/knConTInm6Owvk/BkiYTYAviRZk5mz0uQfpT99Oija', 1, '王同学', 'student001@academic.com', '13800000004', 1);
 
 -- 学生档案
 INSERT IGNORE INTO student_profile (id, user_id, student_id, name, college_id, major_id, class_id, enrollment_year) VALUES

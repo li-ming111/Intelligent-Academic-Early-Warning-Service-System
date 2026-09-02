@@ -1,8 +1,13 @@
 # Maven
-*/target/
+**/target/
 *.class
 *.jar
 *.war
+
+# 运行日志
+logs/
+*.log
+derby.*
 
 # Node
 */node_modules/
@@ -18,3 +23,6 @@ dist/
 .gradle/
 build/
 node_modules
+
+# 数据库完整备份
+/db_backups/

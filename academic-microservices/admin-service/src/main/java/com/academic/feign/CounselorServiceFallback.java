@@ -24,8 +24,8 @@ public class CounselorServiceFallback implements CounselorServiceClient {
 
     @Override
     public ApiResponse<CounselorProfile> getCounselorById(Long counselorId) {
-        log.warn("counselor-service is unavailable, returning null for counselorId: {}", counselorId);
-        return ApiResponse.success(null);
+        log.warn("counselor-service is unavailable, returning fallback for counselorId: {}", counselorId);
+        return ApiResponse.error("辅导员服务暂时不可用");
     }
 
     @Override
