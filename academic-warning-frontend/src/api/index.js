@@ -566,6 +566,22 @@ export const counselorAPI = {
   // 审核辅导员班级申请（供管理员使用）
   reviewClassApplication: (applicationId, data) => {
     return apiClient.post(`/counselors/class-management/applications/${applicationId}/review`, data)
+  },
+  // ============= 沟通记录API =============
+  getCommunicationLogs: (counselorId) => {
+    return apiClient.get(`/counselors/${counselorId}/communication-logs`)
+  },
+  getStudentCommunicationLogs: (studentId) => {
+    return apiClient.get(`/counselors/students/${studentId}/communication-logs`)
+  },
+  createCommunicationLog: (data) => {
+    return apiClient.post(`/counselors/communication-logs`, data)
+  },
+  updateCommunicationLog: (id, data) => {
+    return apiClient.put(`/counselors/communication-logs/${id}`, data)
+  },
+  deleteCommunicationLog: (id) => {
+    return apiClient.delete(`/counselors/communication-logs/${id}`)
   }
 }
 

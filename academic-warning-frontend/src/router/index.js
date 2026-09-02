@@ -41,6 +41,7 @@ import CounselorSettings from '../views/CounselorSettings.vue'
 import CounselorScores from '../views/CounselorScores.vue'
 import CounselorAssistance from '../views/CounselorAssistance.vue'
 import CounselorAnalytics from '../views/CounselorAnalytics.vue'
+import CounselorCommunication from '../views/CounselorCommunication.vue'
 import AdminRegister from '../views/AdminRegister.vue'
 import AdminColleges from '../views/AdminColleges.vue'
 import AdminMajors from '../views/AdminMajors.vue'
@@ -67,15 +68,8 @@ import CollegeAdminScoreQuery from '../views/CollegeAdminScoreQuery.vue'
 import TeacherLayout from '../views/TeacherLayout.vue'
 import AdminLayout from '../views/AdminLayout.vue'
 import CounselorLayout from '../views/CounselorLayout.vue'
-import TestPage from '../views/TestPage.vue'
 
 const routes = [
-  {
-    path: '/test',
-    name: 'TestPage',
-    component: TestPage,
-    meta: { requiresAuth: false }
-  },
   {
     path: '/login',
     name: 'Login',
@@ -300,6 +294,11 @@ const routes = [
         path: 'notifications',
         name: 'CounselorNotifications',
         component: CounselorNotifications
+      },
+      {
+        path: 'communication',
+        name: 'CounselorCommunication',
+        component: CounselorCommunication
       },
       {
         path: 'class-management',

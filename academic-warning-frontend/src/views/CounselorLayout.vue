@@ -28,12 +28,19 @@
           >
             <span>预警管理</span>
           </router-link>
-          <router-link 
-            to="/counselor/assistance" 
+          <router-link
+            to="/counselor/assistance"
             class="nav-item"
             :class="{ active: isActive('/counselor/assistance') }"
           >
             <span>帮扶计划</span>
+          </router-link>
+          <router-link
+            to="/counselor/communication"
+            class="nav-item"
+            :class="{ active: isActive('/counselor/communication') }"
+          >
+            <span>沟通记录</span>
           </router-link>
           <router-link 
             to="/counselor/scores" 
@@ -168,6 +175,7 @@ const pageMap = {
   '/counselor/students': '学生管理',
   '/counselor/warnings': '预警管理',
   '/counselor/assistance': '帮扶计划',
+  '/counselor/communication': '沟通记录',
   '/counselor/scores': '成绩跟踪',
   '/counselor/analytics': '数据分析',
   '/counselor/notifications': '通知中心',
