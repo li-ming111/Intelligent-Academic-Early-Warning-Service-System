@@ -69,25 +69,61 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { ref, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
+import { counselorAPI } from '@/api/index'
+import { getUserId } from '@/utils/userUtils'
+
+const counselorId = localStorage.getItem('counselorId') || getUserId()
 
 const pwdForm = ref({ oldPassword: '', newPassword: '', confirmPassword: '' })
 const profileForm = ref({ name: '', email: '', phone: '' })
 const notifyForm = ref({ warningNotification: true, systemMessage: true, classNotification: true, studentFeedback: true, emailReminder: false })
 const workForm = ref({ college: '', office: '', officePhone: '' })
 
-const handleChangePwd = () => {
+onMounted(async () => {
+  try {
+    const info = await counselorAPI.getProfile(counselorId)
+    if (info) {
+      profileForm.value.name = info.name || ''
+      profileForm.value.email = info.email || ''
+      profileForm.value.phone = info.phone || ''
+      workForm.value.college = info.college_name || info.college || ''
+    }
+  } catch (e) { console.error('加载信息失败', e) }
+})
+
+const handleChangePwd = async () => {
   const { oldPassword, newPassword, confirmPassword } = pwdForm.value
   if (!oldPassword || !newPassword || !confirmPassword) { ElMessage.error('请填写所有密码字段'); return }
   if (newPassword.length < 6) { ElMessage.error('新密码至少6位'); return }
   if (newPassword !== confirmPassword) { ElMessage.error('两次输入的密码不一致'); return }
-  ElMessage.success('密码修改成功')
-  pwdForm.value = { oldPassword: '', newPassword: '', confirmPassword: '' }
+  try {
+    const res = await counselorAPI.changePassword({ userId: Number(counselorId), oldPassword, newPassword })
+    if (res && (res.code === 200 || res.success)) {
+      ElMessage.success('密码修改成功')
+      pwdForm.value = { oldPassword: '', newPassword: '', confirmPassword: '' }
+    } else { ElMessage.error(res?.message || '密码修改失败') }
+  } catch (e) { ElMessage.error('密码修改失败') }
 }
-const handleSaveProfile = () => ElMessage.success('个人信息已保存')
-const handleSaveNotify = () => ElMessage.success('通知偏好已保存')
-const handleSaveWork = () => ElMessage.success('工作设置已保存')
+const handleSaveProfile = async () => {
+  try {
+    await counselorAPI.updateProfile({ userId: Number(counselorId), name: profileForm.value.name, email: profileForm.value.email, phone: profileForm.value.phone })
+    ElMessage.success('个人信息已保存')
+  } catch (e) { ElMessage.error('保存失败') }
+}
+const handleSaveNotify = async () => {
+  try {
+    await counselorAPI.updateNotifyPrefs({ userId: Number(counselorId), ...notifyForm.value })
+    ElMessage.success('通知偏好已保存')
+  } catch (e) { ElMessage.error('保存失败') }
+}
+const handleSaveWork = async () => {
+  try {
+    await counselorAPI.updateWorkInfo({ userId: Number(counselorId), office: workForm.value.office, officePhone: workForm.value.officePhone, college: workForm.value.college })
+    ElMessage.success('工作设置已保存')
+  } catch (e) { ElMessage.error('保存失败') }
+}
 </script>
 
 <style scoped>
