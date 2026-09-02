@@ -17,6 +17,8 @@ export default {
       tabs: [
         { page: 'pages/admin/dashboard', label: '首页', icon: '🏠' },
         { page: 'pages/admin/users', label: '用户', icon: '👤' },
+        { page: 'pages/admin/colleges', label: '学院', icon: '🏫' },
+        { page: 'pages/admin/warnings', label: '预警', icon: '⚠' },
         { page: 'pages/admin/profile', label: '我的', icon: '⚙' }
       ]
     }

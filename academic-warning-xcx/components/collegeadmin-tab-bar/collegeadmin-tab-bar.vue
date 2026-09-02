@@ -16,6 +16,9 @@ export default {
       safeBottom: 0,
       tabs: [
         { page: 'pages/college-admin/dashboard', label: '首页', icon: '🏠' },
+        { page: 'pages/college-admin/students', label: '学生', icon: '👨‍🎓' },
+        { page: 'pages/college-admin/warnings', label: '预警', icon: '⚠' },
+        { page: 'pages/college-admin/classes', label: '班级', icon: '🏫' },
         { page: 'pages/college-admin/profile', label: '我的', icon: '👤' }
       ]
     }

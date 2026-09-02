@@ -43,7 +43,7 @@
       <button class="logout-btn" @tap="handleLogout">退出登录</button>
     </view>
 
-    <view class="version">智能学习预警服务系统 v1.0</view>
+    <view class="version">智能学业预警服务系统 v1.0</view>
 
     <admin-tab-bar current="pages/admin/profile" />
   </view>

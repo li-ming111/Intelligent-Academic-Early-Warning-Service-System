@@ -251,11 +251,215 @@
         "navigationBarTitleText": "个人主页",
         "navigationStyle": "custom"
       }
+    },
+    {
+      "path": "pages/college-admin/students",
+      "style": {
+        "navigationBarTitleText": "学生管理"
+      }
+    },
+    {
+      "path": "pages/college-admin/warnings",
+      "style": {
+        "navigationBarTitleText": "预警管理"
+      }
+    },
+    {
+      "path": "pages/college-admin/classes",
+      "style": {
+        "navigationBarTitleText": "班级管理"
+      }
+    },
+    {
+      "path": "pages/college-admin/teachers",
+      "style": {
+        "navigationBarTitleText": "教师管理"
+      }
+    },
+    {
+      "path": "pages/college-admin/counselors",
+      "style": {
+        "navigationBarTitleText": "辅导员管理"
+      }
+    },
+    {
+      "path": "pages/college-admin/analysis",
+      "style": {
+        "navigationBarTitleText": "数据分析"
+      }
+    },
+    {
+      "path": "pages/college-admin/scores",
+      "style": {
+        "navigationBarTitleText": "成绩查询"
+      }
+    },
+    {
+      "path": "pages/college-admin/export",
+      "style": {
+        "navigationBarTitleText": "数据导出"
+      }
+    },
+    {
+      "path": "pages/counselor/scores",
+      "style": {
+        "navigationBarTitleText": "成绩跟踪"
+      }
+    },
+    {
+      "path": "pages/counselor/credit-monitor",
+      "style": {
+        "navigationBarTitleText": "学分监控"
+      }
+    },
+    {
+      "path": "pages/counselor/courses",
+      "style": {
+        "navigationBarTitleText": "课程查看"
+      }
+    },
+    {
+      "path": "pages/counselor/class-management",
+      "style": {
+        "navigationBarTitleText": "班级管理"
+      }
+    },
+    {
+      "path": "pages/counselor/settings",
+      "style": {
+        "navigationBarTitleText": "个人设置"
+      }
+    },
+    {
+      "path": "pages/teacher/credit-prediction",
+      "style": {
+        "navigationBarTitleText": "学分预测"
+      }
+    },
+    {
+      "path": "pages/teacher/class-management",
+      "style": {
+        "navigationBarTitleText": "班级管理"
+      }
+    },
+    {
+      "path": "pages/teacher/feedback-management",
+      "style": {
+        "navigationBarTitleText": "反馈管理"
+      }
+    },
+    {
+      "path": "pages/teacher/audit-log",
+      "style": {
+        "navigationBarTitleText": "审计日志"
+      }
+    },
+    {
+      "path": "pages/teacher/settings",
+      "style": {
+        "navigationBarTitleText": "个人设置"
+      }
+    },
+    {
+      "path": "pages/admin/colleges",
+      "style": {
+        "navigationBarTitleText": "学院管理"
+      }
+    },
+    {
+      "path": "pages/admin/majors",
+      "style": {
+        "navigationBarTitleText": "专业管理"
+      }
+    },
+    {
+      "path": "pages/admin/courses",
+      "style": {
+        "navigationBarTitleText": "课程管理"
+      }
+    },
+    {
+      "path": "pages/admin/rules",
+      "style": {
+        "navigationBarTitleText": "预警规则"
+      }
+    },
+    {
+      "path": "pages/admin/warnings",
+      "style": {
+        "navigationBarTitleText": "预警总览"
+      }
+    },
+    {
+      "path": "pages/admin/statistics",
+      "style": {
+        "navigationBarTitleText": "数据统计"
+      }
+    },
+    {
+      "path": "pages/admin/messages",
+      "style": {
+        "navigationBarTitleText": "消息管理"
+      }
+    },
+    {
+      "path": "pages/admin/data-export",
+      "style": {
+        "navigationBarTitleText": "数据导入导出"
+      }
+    },
+    {
+      "path": "pages/admin/permissions",
+      "style": {
+        "navigationBarTitleText": "权限管理"
+      }
+    },
+    {
+      "path": "pages/admin/class-management",
+      "style": {
+        "navigationBarTitleText": "班级管理"
+      }
+    },
+    {
+      "path": "pages/student/assistance-feedback",
+      "style": {
+        "navigationBarTitleText": "帮扶评价"
+      }
+    },
+    {
+      "path": "pages/student/benchmark-analysis",
+      "style": {
+        "navigationBarTitleText": "对标分析"
+      }
+    },
+    {
+      "path": "pages/student/class-ranking",
+      "style": {
+        "navigationBarTitleText": "班级排名"
+      }
+    },
+    {
+      "path": "pages/student/class-members",
+      "style": {
+        "navigationBarTitleText": "班级成员"
+      }
+    },
+    {
+      "path": "pages/student/notification-center",
+      "style": {
+        "navigationBarTitleText": "通知中心"
+      }
+    },
+    {
+      "path": "pages/student/statistics",
+      "style": {
+        "navigationBarTitleText": "个人统计"
+      }
     }
   ],
   "globalStyle": {
     "navigationBarTextStyle": "white",
-    "navigationBarTitleText": "智能学习预警",
+    "navigationBarTitleText": "智能学业预警",
     "navigationBarBackgroundColor": "#3b5ce8",
     "backgroundColor": "#f0f2f8",
     "disableScroll": false

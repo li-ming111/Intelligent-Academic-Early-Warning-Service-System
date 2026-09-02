@@ -4,7 +4,7 @@
       <view class="logo-wrap">
         <image src="/static/logo.jpg" mode="aspectFit" class="logo" />
       </view>
-      <text class="brand-title">智能学习预警服务系统</text>
+      <text class="brand-title">智能学业预警服务系统</text>
       <text class="brand-sub">哈尔滨信息工程学院</text>
     </view>
 

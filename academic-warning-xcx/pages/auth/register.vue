@@ -2,7 +2,7 @@
   <view class="page">
     <view class="brand">
       <image src="/static/logo.jpg" mode="aspectFit" class="logo" />
-      <text class="brand-name">智能学习预警服务系统</text>
+      <text class="brand-name">智能学业预警服务系统</text>
       <text class="brand-sub">用户注册</text>
     </view>
 

@@ -64,7 +64,7 @@
       </view>
     </view>
 
-    <text class="version">智能学习预警服务系统 v1.0</text>
+    <text class="version">智能学业预警服务系统 v1.0</text>
   </view>
 </template>
 
