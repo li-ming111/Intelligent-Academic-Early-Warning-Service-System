@@ -989,8 +989,6 @@ create table academic_warning
     created_at      timestamp   default CURRENT_TIMESTAMP null,
     updated_by      varchar(100)                          null,
     updated_at      timestamp   default CURRENT_TIMESTAMP null on update CURRENT_TIMESTAMP,
-    constraint fk_academic_warning_rule_id
-        foreign key (rule_id) references warning_rules (id),
     constraint fk_academic_warning_student_id
         foreign key (student_id) references student_profile (id)
 );
@@ -1063,6 +1061,8 @@ ALTER TABLE communication_logs ADD CONSTRAINT fk_communication_logs_teacher_id F
 ALTER TABLE communication_logs ADD CONSTRAINT fk_communication_logs_student_id FOREIGN KEY (student_id) REFERENCES student_profile (id);
 ALTER TABLE communication_logs ADD CONSTRAINT fk_communication_logs_warning_id FOREIGN KEY (warning_id) REFERENCES academic_warning (id);
 
+ALTER TABLE academic_warning ADD CONSTRAINT fk_academic_warning_rule_id FOREIGN KEY (rule_id) REFERENCES warning_rules (id);
+
 ALTER TABLE communication_record ADD CONSTRAINT fk_communication_record_teacher_id FOREIGN KEY (teacher_id) REFERENCES teacher_profile (id);
 ALTER TABLE communication_record ADD CONSTRAINT fk_communication_record_student_id FOREIGN KEY (student_id) REFERENCES student_profile (id);
 
@@ -1099,6 +1099,9 @@ ALTER TABLE score_appeals ADD CONSTRAINT fk_score_appeals_course_id FOREIGN KEY 
 ALTER TABLE score_audit_log ADD CONSTRAINT fk_score_audit_log_student_id FOREIGN KEY (student_id) REFERENCES student_profile (id);
 ALTER TABLE score_audit_log ADD CONSTRAINT fk_score_audit_log_course_id FOREIGN KEY (course_id) REFERENCES courses (id);
 ALTER TABLE score_audit_log ADD CONSTRAINT fk_score_audit_log_teacher_id FOREIGN KEY (teacher_id) REFERENCES teacher_profile (id);
+
+ALTER TABLE college_admin_profile ADD CONSTRAINT fk_college_admin_profile_user_id FOREIGN KEY (user_id) REFERENCES users (id);
+ALTER TABLE college_admin_profile ADD CONSTRAINT fk_college_admin_profile_college_id FOREIGN KEY (college_id) REFERENCES colleges (id);
 
 -- ========================================
 -- 种子数据：INSERT 语句
@@ -1667,7 +1670,7 @@ INSERT IGNORE INTO `fail_records` (`id`, `student_id`, `course_id`, `course_name
 -- ========================================
 -- 预警记录（基于挂科记录生成）
 -- ========================================
-INSERT IGNORE INTO `academic_warnings` (`id`, `student_id`, `student_name`, `warning_level`, `warning_type`, `description`, `status`, `rule_id`, `created_at`, `updated_at`) VALUES
+INSERT IGNORE INTO `academic_warning` (`id`, `student_id`, `student_name`, `warning_level`, `warning_type`, `description`, `status`, `rule_id`, `created_at`, `updated_at`) VALUES
 (1, 39, '韩坤', 2, '多科挂科', '数据结构(65分)、计算机组成原理(71分)两门挂科，触发中度预警', 0, 2, '2026-05-27 10:00:00', '2026-05-27 10:00:00'),
 (2, 46, '李爽', 3, '多科挂科', '高等数学(66分)、线性代数(69分)、Java程序设计(68分)三门挂科，触发高度预警', 1, 3, '2026-05-27 10:00:00', '2026-05-27 10:00:00'),
 (3, 52, '张健', 3, '多科挂科', '高等数学(64分)、线性代数(62分)、Java程序设计(65分)三门挂科，触发高度预警', 0, 3, '2026-05-27 10:00:00', '2026-05-27 10:00:00');
@@ -1751,34 +1754,7 @@ INSERT IGNORE INTO `subscription_preferences` (`id`, `student_id`, `subscribe_wa
 (2, 4, 1, 1, 1, 1, 1, 1, 1, 1, 1, '2026-05-27 10:00:00', '2026-05-27 10:00:00'),
 (3, 5, 1, 0, 1, 1, 1, 0, 1, 0, 1, '2026-05-27 10:00:00', '2026-05-27 10:00:00');
 
--- ========================================
--- 学生基础信息（student表，与student_profile对应）
--- ========================================
-INSERT IGNORE INTO `student` (`id`, `name`, `student_id`, `class_id`, `college_id`, `major_id`, `gender`, `phone`, `email`, `status`, `created_at`, `updated_at`) VALUES
-(1, '司明', '2023020616', 1, 1, 2, '男', '15245508389', '2318986782@qq.com', 1, '2026-03-04 10:43:20', '2026-03-04 10:43:20'),
-(2, '邱琳紫', '2023020615', 1, 1, 1, '女', NULL, NULL, 1, '2026-03-05 11:00:29', '2026-03-05 11:00:29'),
-(3, '宋新鹏', '2023020617', 1, 1, 1, '男', NULL, NULL, 1, '2026-03-05 11:00:29', '2026-03-05 11:00:29'),
-(4, '赵琦', '2022020137', 1, 1, 1, '女', NULL, NULL, 1, '2026-03-05 11:00:29', '2026-03-05 11:00:29'),
-(5, '苏红阳', '2023020619', 1, 1, 1, '男', NULL, NULL, 1, '2026-03-05 11:00:29', '2026-03-05 11:00:29'),
-(6, '唐浩然', '2023020620', 1, 1, 1, '男', NULL, NULL, 1, '2026-03-05 11:00:29', '2026-03-05 11:00:29'),
-(7, '王宏民', '2023020621', 1, 1, 1, '男', NULL, NULL, 1, '2026-03-05 11:00:29', '2026-03-05 11:00:29'),
-(8, '王玉蛟', '2023020624', 1, 1, 1, '男', NULL, NULL, 1, '2026-03-05 11:00:29', '2026-03-05 11:00:29'),
-(9, '吴雨航', '2023020625', 1, 1, 1, '男', NULL, NULL, 1, '2026-03-05 11:00:29', '2026-03-05 11:00:29'),
-(10, '徐瑞瑶', '2023020626', 1, 1, 1, '女', NULL, NULL, 1, '2026-03-05 11:00:29', '2026-03-05 11:00:29'),
-(11, '韩坤', '2023020607', 1, 1, 1, '男', NULL, NULL, 1, '2026-03-05 11:00:29', '2026-03-05 11:00:29'),
-(12, '张博巍', '2023020629', 1, 1, 1, '男', NULL, NULL, 1, '2026-03-05 11:00:29', '2026-03-05 11:00:29'),
-(13, '程启頔', '2023020504', 1, 1, 1, '男', NULL, NULL, 1, '2026-03-05 11:00:29', '2026-03-05 11:00:29'),
-(14, '邓雨轩', '2023020505', 1, 1, 1, '女', NULL, NULL, 1, '2026-03-05 11:00:29', '2026-03-05 11:00:29'),
-(15, '高菲', '2023020506', 1, 1, 1, '女', NULL, NULL, 1, '2026-03-05 11:00:29', '2026-03-05 11:00:29'),
-(16, '胡钰', '2023020507', 1, 1, 1, '女', NULL, NULL, 1, '2026-03-05 11:00:29', '2026-03-05 11:00:29'),
-(17, '李佳芮', '2023020509', 1, 1, 1, '女', NULL, NULL, 1, '2026-03-05 11:00:29', '2026-03-05 11:00:29'),
-(18, '李爽', '2023020510', 1, 1, 1, '女', NULL, NULL, 1, '2026-03-05 11:00:29', '2026-03-05 11:00:29'),
-(19, '梁莹静', '2023020512', 1, 1, 1, '女', NULL, NULL, 1, '2026-03-05 11:00:29', '2026-03-05 11:00:29'),
-(20, '孟阳', '2023020515', 1, 1, 1, '男', NULL, NULL, 1, '2026-03-05 11:00:29', '2026-03-05 11:00:29'),
-(21, '王瑾泰', '2023020519', 1, 1, 1, '男', NULL, NULL, 1, '2026-03-05 11:00:29', '2026-03-05 11:00:29'),
-(22, '王平洋', '2023020520', 1, 1, 1, '男', NULL, NULL, 1, '2026-03-05 11:00:29', '2026-03-05 11:00:29'),
-(23, '夏志浩', '2023020521', 1, 1, 1, '男', NULL, NULL, 1, '2026-03-05 11:00:29', '2026-03-05 11:00:29'),
-(24, '张健', '2023020524', 1, 1, 1, '男', NULL, NULL, 1, '2026-03-05 11:00:29', '2026-03-05 11:00:29');
+-- 旧表 student 已废弃，种子数据已迁移至 student_profile 表（见前文 INSERT IGNORE INTO student_profile），此处不再向不存在的 student 表插入
 
 -- ========================================
 -- 详细成绩（scores表：24学生×6门必修课 = 144条）

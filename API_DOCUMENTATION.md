@@ -1,4 +1,4 @@
-# 智能学习预警服务系统 - API 接口文档
+# 智能学业预警服务系统 - API 接口文档
 
 > Base URL: `http://localhost:8076/api`  
 > 响应格式: `{ code: 200, message: "success", data: ... }` (code=200 表示成功)
