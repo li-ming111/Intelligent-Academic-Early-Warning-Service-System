@@ -1,0 +1,120 @@
+/* ==========================================================
+   智能学业预警服务系统 · 小程序端设计 Token
+   ==========================================================
+   本文件由 uni-app 自动注入到**每一个** SFC 的 <style> 中。
+   因此这里只能放变量与 mixin，不能产生任何 CSS 输出 ——
+   否则同一段样式会被复制进每个组件的产物里（旧版底部那段
+   `page {}` 就是这么被复制了 70 多遍的）。
+
+   真正要输出到页面的样式在 styles/tokens.scss（CSS 自定义属性）
+   与 styles/common.scss（重置与通用类），由 App.vue 统一 import 一次。
+   ========================================================== */
+
+/* ---------- 语义色：含义跨角色固定，不随主题变 ---------- */
+$color-success: #22c55e;
+$color-warning: #f59e0b;
+$color-danger: #ef4444;
+$color-info: #3b82f6;
+
+/* "待录入"专用灰。**禁止复用 $color-danger** ——
+   期末未录入是"暂无成绩"，不是"考了 0 分"，用红色会和真正挂科混为一谈，
+   这正是全项目最初那个 bug 的视觉根源。 */
+$color-pending: #9ca3af;
+
+/* ---------- 预警三级 ---------- */
+$level-1: #f59e0b; /* 轻度 */
+$level-2: #f97316; /* 中度 */
+$level-3: #ef4444; /* 严重 */
+
+/* ---------- 中性色 ---------- */
+$color-bg: #f5f5f7;
+$color-card: #ffffff;
+$color-text: #1d1d1f;
+$color-text-secondary: #86868b;
+$color-text-hint: #aeaeb2;
+$color-border: #e5e5ea;
+$color-divider: #f0f0f2;
+
+/* ---------- 角色主色 ----------
+   与 PC 端 academic-warning-frontend/src/config/theme.js 取同一组值，
+   两端同一角色必须同色。college-admin 在 PC 端曾经缺失、落到 default 紫
+   与 admin 撞色，这里显式给足五个角色。 */
+$role-student: #4caf50;
+$role-teacher: #2196f3;
+$role-counselor: #2563eb;
+$role-admin: #667eea;
+$role-college-admin: #0ea5e9;
+
+/* ---------- 圆角 ---------- */
+$radius-sm: 8rpx;
+$radius-md: 12rpx;
+$radius-lg: 16rpx;
+$radius-xl: 24rpx;
+$radius-pill: 9999rpx;
+
+/* ---------- 间距 ---------- */
+$spacing-xs: 8rpx;
+$spacing-sm: 12rpx;
+$spacing-md: 16rpx;
+$spacing-lg: 20rpx;
+$spacing-xl: 24rpx;
+$spacing-2xl: 32rpx;
+$spacing-3xl: 40rpx;
+
+/* 页面左右边距，全站统一 */
+$page-padding: 24rpx;
+
+/* ---------- 字号 ---------- */
+$font-xs: 22rpx;
+$font-sm: 24rpx;
+$font-base: 26rpx;
+$font-md: 28rpx;
+$font-lg: 32rpx;
+$font-xl: 36rpx;
+$font-2xl: 44rpx;
+
+/* ---------- 阴影 ---------- */
+$shadow-card: 0 2rpx 8rpx rgba(0, 0, 0, 0.04);
+$shadow-raised: 0 4rpx 16rpx rgba(0, 0, 0, 0.06);
+$shadow-overlay: 0 8rpx 32rpx rgba(0, 0, 0, 0.1);
+
+/* ---------- 层级 ---------- */
+$z-base: 10;
+$z-hero: 900;
+$z-tabbar: 999;
+$z-navbar: 1000;
+$z-sheet: 1050;
+$z-modal: 2000;
+
+/* 可点区域最小高度（微信设计指南） */
+$tap-min: 88rpx;
+
+/* ---------- mixin ---------- */
+/* 单行省略 */
+@mixin ellipsis {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* 多行省略 */
+@mixin ellipsis-multi($lines: 2) {
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: $lines;
+}
+
+/* 卡片 */
+@mixin card {
+  background: $color-card;
+  border-radius: $radius-lg;
+  box-shadow: $shadow-card;
+}
+
+/* flex 居中 */
+@mixin flex-center {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}

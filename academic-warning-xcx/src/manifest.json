@@ -1,0 +1,35 @@
+{
+    "name" : "智能学业预警服务系统",
+    /* 根 appid 是 DCloud 的 appid，仅打包原生 App 时需要，小程序不用它。
+       **不要**把微信的 appid 填到这里。 */
+    "appid" : "",
+    "description" : "智能学业预警服务系统 · 小程序端",
+    "versionName" : "1.0.0",
+    "versionCode" : "100",
+    /* 设计稿按 750rpx 宽度写，保持 rpx 原样不转换 */
+    "transformPx" : false,
+
+    "mp-weixin" : {
+        "appid" : "wx5cb7975e0edd2e58",
+        "setting" : {
+            /* 开发期后端在 localhost:8076，必须关掉域名校验，
+               否则所有请求被微信拦截。上线前要改回 true 并配置合法域名。 */
+            "urlCheck" : false,
+            "minified" : true
+        },
+        "usingComponents" : true,
+        "optimization" : {
+            "subPackages" : true
+        },
+        "lazyCodeLoading" : "requiredComponents"
+    },
+
+    "h5" : {
+        "title" : "智能学业预警服务系统"
+    },
+
+    "uniStatistics" : {
+        "enable" : false
+    },
+    "vueVersion" : "3"
+}

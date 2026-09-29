@@ -1,0 +1,479 @@
+{
+  "easycom": {
+    "autoscan": true,
+    "custom": {
+      "^wd-(.*)": "wot-design-uni/components/wd-$1/wd-$1.vue",
+      "^z-paging$": "z-paging/components/z-paging/z-paging.vue",
+      "^z-paging-(.*)$": "z-paging/components/z-paging-$1/z-paging-$1.vue"
+    }
+  },
+  "pages": [
+    {
+      "path": "pages/auth/login",
+      "style": {
+        "navigationStyle": "custom",
+        "navigationBarTitleText": "登录"
+      }
+    },
+    {
+      "path": "pages/auth/register",
+      "style": {
+        "navigationBarTitleText": "注册"
+      }
+    },
+    {
+      "path": "pages/student/dashboard",
+      "style": {
+        "navigationStyle": "custom",
+        "navigationBarTitleText": "首页",
+        "navigationBarBackgroundColor": "#4caf50"
+      }
+    },
+    {
+      "path": "pages/student/scores",
+      "style": {
+        "navigationStyle": "custom",
+        "navigationBarTitleText": "成绩查询",
+        "navigationBarBackgroundColor": "#4caf50"
+      }
+    },
+    {
+      "path": "pages/student/warnings",
+      "style": {
+        "navigationBarTitleText": "预警记录",
+        "navigationBarBackgroundColor": "#4caf50",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/student/profile",
+      "style": {
+        "navigationBarTitleText": "我的",
+        "navigationBarBackgroundColor": "#4caf50",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/student/assistance",
+      "style": {
+        "navigationBarTitleText": "帮扶计划",
+        "navigationBarBackgroundColor": "#4caf50",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/student/appeals",
+      "style": {
+        "navigationBarTitleText": "成绩申诉",
+        "navigationBarBackgroundColor": "#4caf50",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/student/benchmark-analysis",
+      "style": {
+        "navigationBarTitleText": "对标分析",
+        "navigationBarBackgroundColor": "#4caf50",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/student/class-ranking",
+      "style": {
+        "navigationBarTitleText": "排名与班级",
+        "navigationBarBackgroundColor": "#4caf50",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/student/notification-center",
+      "style": {
+        "navigationBarTitleText": "通知中心",
+        "navigationBarBackgroundColor": "#4caf50",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/student/assistance-feedback",
+      "style": {
+        "navigationBarTitleText": "帮扶评价",
+        "navigationBarBackgroundColor": "#4caf50",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/student/settings",
+      "style": {
+        "navigationBarTitleText": "设置",
+        "navigationBarBackgroundColor": "#4caf50",
+        "navigationStyle": "custom"
+      }
+    }
+  ],
+  "subPackages": [
+    {
+      "root": "pages/admin",
+      "pages": [
+        {
+          "path": "dashboard",
+          "style": {
+            "navigationStyle": "custom",
+            "navigationBarTitleText": "管理控制台",
+            "navigationBarBackgroundColor": "#667eea"
+          }
+        },
+        {
+          "path": "users",
+          "style": {
+            "navigationStyle": "custom",
+            "navigationBarTitleText": "用户管理",
+            "navigationBarBackgroundColor": "#667eea"
+          }
+        },
+        {
+          "path": "permissions",
+          "style": {
+            "navigationStyle": "custom",
+            "navigationBarTitleText": "角色权限",
+            "navigationBarBackgroundColor": "#667eea"
+          }
+        },
+        {
+          "path": "colleges",
+          "style": {
+            "navigationStyle": "custom",
+            "navigationBarTitleText": "学院与专业",
+            "navigationBarBackgroundColor": "#667eea"
+          }
+        },
+        {
+          "path": "courses",
+          "style": {
+            "navigationStyle": "custom",
+            "navigationBarTitleText": "课程与班级",
+            "navigationBarBackgroundColor": "#667eea"
+          }
+        },
+        {
+          "path": "rules",
+          "style": {
+            "navigationStyle": "custom",
+            "navigationBarTitleText": "预警规则",
+            "navigationBarBackgroundColor": "#667eea"
+          }
+        },
+        {
+          "path": "warnings",
+          "style": {
+            "navigationStyle": "custom",
+            "navigationBarTitleText": "预警总览",
+            "navigationBarBackgroundColor": "#667eea"
+          }
+        },
+        {
+          "path": "class-requests",
+          "style": {
+            "navigationStyle": "custom",
+            "navigationBarTitleText": "班级申请审批",
+            "navigationBarBackgroundColor": "#667eea"
+          }
+        },
+        {
+          "path": "profile",
+          "style": {
+            "navigationStyle": "custom",
+            "navigationBarTitleText": "我的",
+            "navigationBarBackgroundColor": "#667eea"
+          }
+        }
+      ]
+    },
+    {
+      "root": "pages/counselor",
+      "pages": [
+        {
+          "path": "dashboard",
+          "style": {
+            "navigationStyle": "custom",
+            "navigationBarTitleText": "辅导员工作台",
+            "navigationBarBackgroundColor": "#2563eb"
+          }
+        },
+        {
+          "path": "warnings",
+          "style": {
+            "navigationStyle": "custom",
+            "navigationBarTitleText": "预警处理",
+            "navigationBarBackgroundColor": "#2563eb"
+          }
+        },
+        {
+          "path": "students",
+          "style": {
+            "navigationStyle": "custom",
+            "navigationBarTitleText": "学生管理",
+            "navigationBarBackgroundColor": "#2563eb"
+          }
+        },
+        {
+          "path": "assistance",
+          "style": {
+            "navigationStyle": "custom",
+            "navigationBarTitleText": "帮扶计划",
+            "navigationBarBackgroundColor": "#2563eb"
+          }
+        },
+        {
+          "path": "analytics",
+          "style": {
+            "navigationStyle": "custom",
+            "navigationBarTitleText": "数据分析",
+            "navigationBarBackgroundColor": "#2563eb"
+          }
+        },
+        {
+          "path": "scores",
+          "style": {
+            "navigationStyle": "custom",
+            "navigationBarTitleText": "成绩跟踪",
+            "navigationBarBackgroundColor": "#2563eb"
+          }
+        },
+        {
+          "path": "credit-monitor",
+          "style": {
+            "navigationStyle": "custom",
+            "navigationBarTitleText": "学分监控",
+            "navigationBarBackgroundColor": "#2563eb"
+          }
+        },
+        {
+          "path": "courses",
+          "style": {
+            "navigationStyle": "custom",
+            "navigationBarTitleText": "课程情况",
+            "navigationBarBackgroundColor": "#2563eb"
+          }
+        },
+        {
+          "path": "class-management",
+          "style": {
+            "navigationStyle": "custom",
+            "navigationBarTitleText": "班级管理",
+            "navigationBarBackgroundColor": "#2563eb"
+          }
+        },
+        {
+          "path": "profile",
+          "style": {
+            "navigationStyle": "custom",
+            "navigationBarTitleText": "我的",
+            "navigationBarBackgroundColor": "#2563eb"
+          }
+        }
+      ]
+    },
+    {
+      "root": "pages/teacher",
+      "pages": [
+        {
+          "path": "dashboard",
+          "style": {
+            "navigationStyle": "custom",
+            "navigationBarTitleText": "教师工作台",
+            "navigationBarBackgroundColor": "#2196f3"
+          }
+        },
+        {
+          "path": "scores",
+          "style": {
+            "navigationStyle": "custom",
+            "navigationBarTitleText": "成绩管理",
+            "navigationBarBackgroundColor": "#2196f3"
+          }
+        },
+        {
+          "path": "students",
+          "style": {
+            "navigationStyle": "custom",
+            "navigationBarTitleText": "学生管理",
+            "navigationBarBackgroundColor": "#2196f3"
+          }
+        },
+        {
+          "path": "credit-prediction",
+          "style": {
+            "navigationStyle": "custom",
+            "navigationBarTitleText": "学分预测",
+            "navigationBarBackgroundColor": "#2196f3"
+          }
+        },
+        {
+          "path": "courses",
+          "style": {
+            "navigationStyle": "custom",
+            "navigationBarTitleText": "课程管理",
+            "navigationBarBackgroundColor": "#2196f3"
+          }
+        },
+        {
+          "path": "warnings",
+          "style": {
+            "navigationStyle": "custom",
+            "navigationBarTitleText": "预警管理",
+            "navigationBarBackgroundColor": "#2196f3"
+          }
+        },
+        {
+          "path": "analysis",
+          "style": {
+            "navigationStyle": "custom",
+            "navigationBarTitleText": "班级分析",
+            "navigationBarBackgroundColor": "#2196f3"
+          }
+        },
+        {
+          "path": "feedback-management",
+          "style": {
+            "navigationStyle": "custom",
+            "navigationBarTitleText": "反馈管理",
+            "navigationBarBackgroundColor": "#2196f3"
+          }
+        },
+        {
+          "path": "class-management",
+          "style": {
+            "navigationStyle": "custom",
+            "navigationBarTitleText": "班级管理",
+            "navigationBarBackgroundColor": "#2196f3"
+          }
+        },
+        {
+          "path": "profile",
+          "style": {
+            "navigationStyle": "custom",
+            "navigationBarTitleText": "我的",
+            "navigationBarBackgroundColor": "#2196f3"
+          }
+        }
+      ]
+    },
+    {
+      "root": "pages/college-admin",
+      "pages": [
+        {
+          "path": "dashboard",
+          "style": {
+            "navigationStyle": "custom",
+            "navigationBarTitleText": "学院管理",
+            "navigationBarBackgroundColor": "#0ea5e9"
+          }
+        },
+        {
+          "path": "students",
+          "style": {
+            "navigationStyle": "custom",
+            "navigationBarTitleText": "学生管理",
+            "navigationBarBackgroundColor": "#0ea5e9"
+          }
+        },
+        {
+          "path": "teachers",
+          "style": {
+            "navigationStyle": "custom",
+            "navigationBarTitleText": "教师管理",
+            "navigationBarBackgroundColor": "#0ea5e9"
+          }
+        },
+        {
+          "path": "counselors",
+          "style": {
+            "navigationStyle": "custom",
+            "navigationBarTitleText": "辅导员管理",
+            "navigationBarBackgroundColor": "#0ea5e9"
+          }
+        },
+        {
+          "path": "classes",
+          "style": {
+            "navigationStyle": "custom",
+            "navigationBarTitleText": "班级管理",
+            "navigationBarBackgroundColor": "#0ea5e9"
+          }
+        },
+        {
+          "path": "warnings",
+          "style": {
+            "navigationStyle": "custom",
+            "navigationBarTitleText": "预警管理",
+            "navigationBarBackgroundColor": "#0ea5e9"
+          }
+        },
+        {
+          "path": "scores",
+          "style": {
+            "navigationStyle": "custom",
+            "navigationBarTitleText": "成绩分析",
+            "navigationBarBackgroundColor": "#0ea5e9"
+          }
+        },
+        {
+          "path": "assistance",
+          "style": {
+            "navigationStyle": "custom",
+            "navigationBarTitleText": "帮扶情况",
+            "navigationBarBackgroundColor": "#0ea5e9"
+          }
+        },
+        {
+          "path": "profile",
+          "style": {
+            "navigationStyle": "custom",
+            "navigationBarTitleText": "我的",
+            "navigationBarBackgroundColor": "#0ea5e9"
+          }
+        }
+      ]
+    }
+  ],
+  "globalStyle": {
+    "navigationBarTextStyle": "white",
+    "navigationBarTitleText": "智能学业预警",
+    "navigationBarBackgroundColor": "#4caf50",
+    "backgroundColor": "#f5f5f7",
+    "backgroundColorTop": "#f5f5f7",
+    "backgroundColorBottom": "#f5f5f7"
+  },
+  "tabBar": {
+    "color": "#8e99a8",
+    "selectedColor": "#4caf50",
+    "backgroundColor": "#ffffff",
+    "borderStyle": "white",
+    "list": [
+      {
+        "pagePath": "pages/student/dashboard",
+        "text": "首页",
+        "iconPath": "static/tab-home.png",
+        "selectedIconPath": "static/tab-home-active.png"
+      },
+      {
+        "pagePath": "pages/student/scores",
+        "text": "成绩",
+        "iconPath": "static/tab-edu.png",
+        "selectedIconPath": "static/tab-edu-active.png"
+      },
+      {
+        "pagePath": "pages/student/warnings",
+        "text": "预警",
+        "iconPath": "static/tab-warning.png",
+        "selectedIconPath": "static/tab-warning-active.png"
+      },
+      {
+        "pagePath": "pages/student/profile",
+        "text": "我的",
+        "iconPath": "static/tab-help.png",
+        "selectedIconPath": "static/tab-help-active.png"
+      }
+    ]
+  }
+}

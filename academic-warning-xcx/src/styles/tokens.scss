@@ -1,0 +1,69 @@
+/* ==========================================================
+   运行期主题变量（CSS 自定义属性）
+   ==========================================================
+   与 uni.scss 的分工：
+     uni.scss         编译期 SCSS 变量，不随角色变化（间距/圆角/字号…）
+     本文件           运行期 CSS 变量，随角色变化（主色/渐变/浅底色）
+
+   角色主色由 composables/useRoleTheme.js 生成同一组变量，绑在**页面根
+   <view>** 上覆盖这里的默认值。
+
+   为什么不绑在 page 上：小程序里 page 是全局单例选择器，写进去对所有
+   角色页同时生效，无法按角色切换。绑根节点后，wot 组件作为子树会自然继承。
+   ========================================================== */
+
+page {
+  /* 默认取学生绿。角色页会在根节点覆盖，未登录页（登录/注册）用中性色。 */
+  --color-primary: #{$role-student};
+  --color-primary-weak: #e8f5e9;
+  --gradient-hero: linear-gradient(135deg, #{$role-student}, #81c784);
+
+  /* 语义色：含义跨角色固定 */
+  --color-success: #{$color-success};
+  --color-warning: #{$color-warning};
+  --color-danger: #{$color-danger};
+  --color-info: #{$color-info};
+  --color-pending: #{$color-pending};
+
+  /* 预警三级 */
+  --level-1: #{$level-1};
+  --level-2: #{$level-2};
+  --level-3: #{$level-3};
+
+  /* 中性色 */
+  --color-bg: #{$color-bg};
+  --color-card: #{$color-card};
+  --color-text: #{$color-text};
+  --color-text-secondary: #{$color-text-secondary};
+  --color-text-hint: #{$color-text-hint};
+  --color-border: #{$color-border};
+  --color-divider: #{$color-divider};
+
+  /* 圆角 */
+  --radius-sm: #{$radius-sm};
+  --radius-md: #{$radius-md};
+  --radius-lg: #{$radius-lg};
+  --radius-xl: #{$radius-xl};
+  --radius-pill: #{$radius-pill};
+
+  /* 阴影 */
+  --shadow-card: #{$shadow-card};
+  --shadow-raised: #{$shadow-raised};
+  --shadow-overlay: #{$shadow-overlay};
+
+  /* ---------------- wot-design-uni 主题映射 ----------------
+     wot 组件全部由 CSS 变量驱动，把它的主题色指到语义层，
+     这样角色切换时组件跟着变，不需要逐个组件传 theme-vars。
+     变量名以 node_modules/wot-design-uni 的实际定义为准
+     （v1 与 v2 命名有差异，改版本时要回来核对）。 */
+  --wot-color-theme: var(--color-primary);
+  --wot-color-success: var(--color-success);
+  --wot-color-warning: var(--color-warning);
+  --wot-color-danger: var(--color-danger);
+  --wot-color-info: var(--color-info);
+  --wot-color-title: var(--color-text);
+  --wot-color-content: var(--color-text);
+  --wot-color-secondary: var(--color-text-secondary);
+  --wot-color-border: var(--color-border);
+  --wot-color-bg: var(--color-bg);
+}

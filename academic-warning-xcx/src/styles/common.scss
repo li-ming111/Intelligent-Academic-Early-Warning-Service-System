@@ -1,0 +1,161 @@
+/* ==========================================================
+   全局基础样式与通用类
+   App.vue 里 import 一次。只放跨页面复用的东西；
+   单页专有的样式写在各页 <style scoped> 里。
+   ========================================================== */
+
+page {
+  background-color: $color-bg;
+  color: var(--color-text);
+  font-size: $font-base;
+  font-family: -apple-system, BlinkMacSystemFont, 'Helvetica Neue', 'PingFang SC', sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+view,
+text,
+scroll-view,
+button,
+input,
+textarea {
+  box-sizing: border-box;
+}
+
+/* ---------- 页面骨架 ---------- */
+.page-root {
+  min-height: 100vh;
+  background-color: var(--color-bg);
+}
+
+.page-body {
+  padding: $page-padding;
+}
+
+/* 底部有 tabBar / 固定按钮时给内容留出空间 */
+.page-body--tabbar {
+  padding-bottom: calc(#{$tap-min} + env(safe-area-inset-bottom) + #{$spacing-2xl});
+}
+
+/* Hero 渐变头与区块标题**不再在这里定义** ——
+   它们已经由 components/role-hero 与 components/section-title 两个组件承载。
+   同名全局类会和组件的 scoped 样式打架（scoped 只是提高选择器优先级，
+   并不会阻止全局规则里没被覆盖的属性生效，比如 justify-content），
+   所以这里一份都不留。 */
+
+/* ---------- 卡片 ---------- */
+.card {
+  @include card;
+  padding: $spacing-xl;
+  margin-bottom: $spacing-lg;
+}
+
+.card--flush {
+  padding: 0;
+  overflow: hidden;
+}
+
+
+.divider {
+  height: 1rpx;
+  background: var(--color-divider);
+}
+
+/* ---------- 标签 ---------- */
+.tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 4rpx 16rpx;
+  border-radius: var(--radius-pill);
+  font-size: $font-xs;
+  line-height: 1.6;
+  white-space: nowrap;
+}
+
+.tag--success { background: rgba(34, 197, 94, 0.12);  color: $color-success; }
+.tag--warning { background: rgba(245, 158, 11, 0.14); color: #b45309; }
+.tag--danger  { background: rgba(239, 68, 68, 0.12);  color: $color-danger; }
+.tag--info    { background: rgba(59, 130, 246, 0.12); color: $color-info; }
+/* "待录入"专用：中性灰。绝不能落成 danger 红。 */
+.tag--pending { background: rgba(156, 163, 175, 0.16); color: #6b7280; }
+
+/* 预警三级。类名带 level 数字，与 utils/warning.js 的 level(1/2/3) 直接对应，
+   不再经过 warningLevelKey() 二次映射（那个函数产出的是 danger/medium/low，
+   与本文件的类名不同源，是最容易写错的一处）。 */
+.tag--level-1 { background: rgba(245, 158, 11, 0.14); color: #b45309; }
+.tag--level-2 { background: rgba(249, 115, 22, 0.14); color: #c2410c; }
+.tag--level-3 { background: rgba(239, 68, 68, 0.12);  color: $color-danger; }
+
+/* ---------- 成绩数值 ----------
+   与 utils/score.js 的 scoreClass() 一一对应。
+   `.score--pending` 必须是中性灰：期末未录入 ≠ 考了 0 分，
+   把它落成 fail 红是这个项目最初那个视觉 bug 的根源。 */
+.score--excellent { color: #16a34a; font-weight: 600; }
+.score--good      { color: #2563eb; }
+.score--medium    { color: $color-text; }
+.score--pass      { color: #b45309; }
+.score--fail      { color: $color-danger; font-weight: 600; }
+.score--pending   { color: $color-pending; }
+
+/* ---------- 布局辅助 ----------
+   刻意**不提供 .gap-* 系列**：flex 的 gap 在微信小程序里有门槛
+   （iOS 端依赖 WKWebView 14.1+，约等于 iOS 14.5 以下全不生效），
+   属性会被静默忽略、间距变 0，是那种"在我机器上好好的"的 bug。
+   需要间距请用 margin。 */
+.row        { display: flex; align-items: center; }
+.row-between{ display: flex; align-items: center; justify-content: space-between; }
+.col        { display: flex; flex-direction: column; }
+.flex-1     { flex: 1; min-width: 0; }
+
+.ellipsis   { @include ellipsis; }
+.ellipsis-2 { @include ellipsis-multi(2); }
+
+.text-secondary { color: var(--color-text-secondary); }
+.text-hint      { color: var(--color-text-hint); }
+.text-sm        { font-size: $font-sm; }
+.text-xs        { font-size: $font-xs; }
+
+/* ---------- 统计格 ----------
+   横向排布的 stat-card 容器。用 `> *` 而不是给组件加 flex 属性，
+   是因为组件根节点（自定义元素）同样能被 `> *` 命中，而 mini-program
+   里 `> view` 这类标签选择器命中不到组件根。
+   `> * + *` 用 margin 代替 gap，原因见上面 .gap-* 的说明。 */
+.stat-grid {
+  display: flex;
+}
+
+.stat-grid > * {
+  flex: 1;
+  min-width: 0;
+}
+
+.stat-grid > * + * {
+  margin-left: $spacing-md;
+}
+
+/* ---------- 按钮 ---------- */
+.btn-primary {
+  @include flex-center;
+  height: $tap-min;
+  border-radius: var(--radius-md);
+  background: var(--color-primary);
+  color: #fff;
+  font-size: $font-md;
+  font-weight: 500;
+}
+
+.btn-primary--disabled {
+  opacity: 0.45;
+}
+
+/* ---------- 列表行 ---------- */
+.list-row {
+  display: flex;
+  align-items: center;
+  min-height: $tap-min;
+  padding: $spacing-md 0;
+  border-bottom: 1rpx solid var(--color-divider);
+
+  &:last-child {
+    border-bottom: none;
+  }
+}
