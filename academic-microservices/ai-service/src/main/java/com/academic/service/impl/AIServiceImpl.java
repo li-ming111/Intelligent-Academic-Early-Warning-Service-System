@@ -1,5 +1,6 @@
 package com.academic.service.impl;
 
+import com.academic.common.constant.ScoreCaliber;
 import com.academic.service.AIService;
 import com.academic.service.TongYiService;
 import org.slf4j.Logger;
@@ -41,6 +42,17 @@ public class AIServiceImpl implements AIService {
             return result;
         }
 
+        // 统计口径统一走 ScoreCaliber：按课程去重、取最新一次有效成绩、排除期末未录入。
+        // 旧实现直接遍历原始列表、并用 toDouble(..., 0) 兜底缺值，于是同一门课的重修记录
+        // 被重复计数、期末未录入的课被按 0 分算成挂科 —— "挂科 9 门"这类虚高数字就来自这里。
+        List<Map<String, Object>> latestScores = ScoreCaliber.latestPerCourse(scores);
+        if (latestScores.isEmpty()) {
+            result.put("totalCourses", 0);
+            result.put("averageScore", 0.0);
+            result.put("suggestion", "暂无可统计的成绩（期末成绩尚未录入），请在期末成绩录入后重试");
+            return result;
+        }
+
         // 计算统计指标
         double totalScore = 0;
         double totalCredits = 0;
@@ -50,7 +62,7 @@ public class AIServiceImpl implements AIService {
         List<Map<String, Object>> weakSubjects = new ArrayList<>();
         List<Map<String, Object>> strongSubjects = new ArrayList<>();
 
-        for (Map<String, Object> score : scores) {
+        for (Map<String, Object> score : latestScores) {
             double courseScore = toDouble(score.get("scoreTotal"), 0);
             double credits = toDouble(score.get("credits"), 0);
             double gradePoint = toDouble(score.get("gradePoint"), 0);
@@ -77,7 +89,7 @@ public class AIServiceImpl implements AIService {
             }
         }
 
-        int totalCourses = scores.size();
+        int totalCourses = latestScores.size();
         double avgScore = totalCourses > 0 ? totalScore / totalCourses : 0;
         // GPA = 总绩点学分 / 总学分
         double gpa = totalCredits > 0 ? totalGradePoints / totalCredits : 0;

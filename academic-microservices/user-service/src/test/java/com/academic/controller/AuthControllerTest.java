@@ -1,6 +1,6 @@
 package com.academic.controller;
 
-import com.academic.common.ApiResponse;
+import com.academic.common.dto.ApiResponse;
 import com.academic.service.UserService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;

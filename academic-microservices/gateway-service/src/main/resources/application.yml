@@ -65,12 +65,14 @@ spring:
           filters:
             - StripPrefix=2
             - RewritePath=/majors, /majors/all
+        # 注意：这里**不能**加 StripPrefix=1。user-service 是全部 13 个服务里
+        # 唯一配了 server.servlet.context-path: /api 的，它对外暴露的路径本来就带 /api。
+        # 加上 StripPrefix=1 会剥成 /users/**，服务端要的是 /api/users/** → 一律 404。
+        # 下面 auth-service-main 指向同一个服务、没有 StripPrefix，所以一直是好的。
         - id: user-service
           uri: lb://user-service
           predicates:
             - Path=/api/users/**
-          filters:
-            - StripPrefix=1
         - id: auth-service-main
           uri: lb://user-service
           predicates:

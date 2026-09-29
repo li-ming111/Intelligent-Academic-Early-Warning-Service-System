@@ -9,6 +9,7 @@ import com.academic.common.entity.Student;
 import com.academic.common.entity.TeacherProfile;
 import com.academic.common.entity.CounselorProfile;
 import com.academic.common.entity.AcademicWarning;
+import com.academic.common.entity.Score;
 import com.academic.common.entity.ScoreRecord;
 import com.academic.entity.*;
 import com.academic.service.CollegeService;
@@ -29,6 +30,7 @@ import com.academic.mapper.CounselorProfileMapper;
 import com.academic.mapper.ScoreRecordMapper;
 import com.academic.mapper.AcademicWarningMapper;
 
+import java.math.BigDecimal;
 import java.util.ArrayList;
 import com.academic.feign.MessageServiceClient;
 import com.academic.feign.WarningServiceClient;
@@ -130,10 +132,61 @@ public class AdminController {
     
     @Autowired
     private ScoreRecordMapper scoreRecordMapper;
-    
+
+    @Autowired
+    private com.academic.mapper.ScoreMapper scoreMapper;
+
     @Autowired
     private ScoreRecordService scoreRecordService;
-    
+
+    /**
+     * 把一条录入记录同步进 {@code scores}（权威成绩源）。
+     *
+     * <p>查重键是 (student_id, course_id, semester) —— 带学期才能让重修成为新的一行，
+     * 而不是覆盖旧学期成绩。学期未提供时兜底为该生已有的最大学期序号，
+     * 避免新记录比历史记录更旧而被"取最新一次成绩"的口径丢弃。
+     *
+     * <p>只覆盖调用方明确提供的字段。{@code final_score} 缺失时用总评成绩补齐：
+     * 该列为空会被"期末未录入"口径整体排除，导入的成绩就永远不会参与预警。
+     *
+     * <p>折算部分走 {@link com.academic.common.util.ScoreSyncSupport#applyToAuthoritative}，
+     * 与教师端录入共用同一份实现。此前这里自己写了一份，并且把等级/绩点的重算
+     * 包在 {@code if (score.getGrade() == null)} 里 —— 更新一条已有成绩时旧值非空
+     * 就会跳过重算，于是导入一个修正后的分数，{@code score_total} 变了、
+     * {@code grade}/{@code grade_point} 还停在旧值上，
+     * 把已经统一好的口径重新写歪。
+     */
+    private void syncToScores(ScoreRecord sr) {
+        if (sr.getStudentId() == null || sr.getCourseId() == null) return;
+
+        String semester = sr.getSemester();
+        if (semester == null || semester.trim().isEmpty()) {
+            Integer max = scoreMapper.selectMaxSemester(sr.getStudentId());
+            semester = String.valueOf(max != null ? max : 1);
+        }
+
+        Score existing = scoreMapper.selectByStudentCourseSemester(
+                sr.getStudentId(), sr.getCourseId(), semester);
+        boolean isNew = existing == null;
+        Score score = isNew ? new Score() : existing;
+        score.setStudentId(sr.getStudentId());
+        score.setCourseId(sr.getCourseId());
+        score.setSemester(semester);
+
+        com.academic.common.util.ScoreSyncSupport.applyToAuthoritative(
+                score, sr.getScore(), sr.getRegularScore(), sr.getFinalScore());
+        if (sr.getYear() != null) {
+            score.setYear(sr.getYear());
+        }
+
+        if (isNew) {
+            score.setCreatedAt(LocalDateTime.now());
+            scoreMapper.insert(score);
+        } else {
+            scoreMapper.updateById(score);
+        }
+    }
+
 
     @Autowired
     private MessageServiceClient messageServiceClient;
@@ -1632,7 +1685,7 @@ public class AdminController {
     @PostMapping("/import/scores")
     public ApiResponse<Map<String, Object>> importScores(@RequestBody List<Map<String, Object>> data) {
         Map<String, Object> result = new HashMap<>();
-        int successCount = 0, skipCount = 0, updateCount = 0;
+        int successCount = 0, skipCount = 0, updateCount = 0, syncedCount = 0, syncFailCount = 0;
         List<Map<String, Object>> errors = new ArrayList<>();
         List<ScoreRecord> batchToInsert = new ArrayList<>();
 
@@ -1700,9 +1753,16 @@ public class AdminController {
                     errors.add(Map.of("row", rowNum, "reason", "课程不存在: " + courseName)); skipCount++; continue;
                 }
 
-                // 查重
-                ScoreRecord existing = scoreRecordMapper.selectOne(
-                    new QueryWrapper<ScoreRecord>().eq("student_id", profile.getId()).eq("course_id", course.getId()));
+                // 查重：带上学期。不带的话重修会覆盖旧学期记录，
+                // 使 score_record 与 scores 两表的行数对不上。
+                String rowSemester = getStr(item, "semester");
+                QueryWrapper<ScoreRecord> dupQuery = new QueryWrapper<ScoreRecord>()
+                        .eq("student_id", profile.getId())
+                        .eq("course_id", course.getId());
+                if (rowSemester != null && !rowSemester.trim().isEmpty()) {
+                    dupQuery.eq("semester", rowSemester.trim());
+                }
+                ScoreRecord existing = scoreRecordMapper.selectOne(dupQuery);
 
                 ScoreRecord sr = existing != null ? existing : new ScoreRecord();
                 sr.setStudentId(profile.getId());
@@ -1737,10 +1797,23 @@ public class AdminController {
                     batchToInsert.add(sr);
                 }
                 successCount++;
+
+                // 同步到 scores 表（权威成绩源）。不写这一步，导入的成绩
+                // 在预警引擎和学生端统计里就等于不存在。
+                try {
+                    syncToScores(sr);
+                    syncedCount++;
+                } catch (Exception e) {
+                    log.warn("同步成绩到 scores 表失败: studentId={}, courseId={}: {}",
+                            sr.getStudentId(), sr.getCourseId(), e.getMessage());
+                    syncFailCount++;
+                }
             }
 
             if (!batchToInsert.isEmpty()) scoreRecordService.saveBatch(batchToInsert);
 
+            result.put("synced", syncedCount);
+            result.put("syncFailed", syncFailCount);
             result.put("total", data.size());
             result.put("success", successCount);
             result.put("inserted", batchToInsert.size());
@@ -1969,7 +2042,7 @@ public class AdminController {
                 }
                 row.createCell(3).setCellValue(score.getCourseId() != null ? score.getCourseId() : 0);
                 row.createCell(4).setCellValue(courseName);
-                row.createCell(5).setCellValue(score.getScoreTotal() != null ? score.getScoreTotal() : 0);
+                row.createCell(5).setCellValue(score.getScore() != null ? score.getScore() : 0);
                 row.createCell(6).setCellValue(credit);
                 row.createCell(7).setCellValue(score.getSemester() != null ? score.getSemester() : "");
                 row.createCell(8).setCellValue("");

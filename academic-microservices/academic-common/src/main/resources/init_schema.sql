@@ -1,812 +1,907 @@
 -- ========================================
 -- 智能学业预警服务系统 - 完整建表脚本
--- 与 academic_warning_system.sql 完全对齐
--- 使用 CREATE TABLE IF NOT EXISTS，多服务并行启动安全幂等
+-- 由线上库结构导出（mysqldump --no-data）后生成，是全新库的唯一权威结构。
+-- 与线上库不一致时以线上库为准重新生成，不要手工改本文件。
+-- 索引内联在 CREATE TABLE 中：MySQL 8 不支持 CREATE INDEX IF NOT EXISTS，
+-- 写成独立语句只会静默失败，让全新库上的表没有索引。
+-- 使用 CREATE TABLE IF NOT EXISTS，多服务并行启动安全幂等。
+--
+-- 前置条件：本脚本只建表，不建库（不含 CREATE DATABASE / USE），各服务的
+-- JDBC URL 也没有 createDatabaseIfNotExist=true。因此在一台没有该库的 MySQL 上，
+-- 服务连数据库时就已失败，DataInitializer 根本没机会执行本脚本。
+-- 全新安装必须手工先建库：
+--     CREATE DATABASE academic_warning_system
+--       DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 -- ========================================
 
 -- ==================== 基础表（无外键依赖） ====================
 
 CREATE TABLE IF NOT EXISTS `colleges` (
-    `id`            bigint auto_increment primary key,
-    `name`          varchar(100)                        not null,
-    `code`          varchar(50)                         null,
-    `description`   varchar(500)                        null,
-    `status`        int       default 1                 null,
-    `student_count` int       default 0                 null,
-    `teacher_count` int       default 0                 null,
-    `created_at`    timestamp default CURRENT_TIMESTAMP null,
-    `updated_at`    timestamp default CURRENT_TIMESTAMP null on update CURRENT_TIMESTAMP,
-    constraint `uk_colleges_name` unique (`name`)
-);
+    `id` bigint NOT NULL AUTO_INCREMENT,
+    `name` varchar(100) NOT NULL,
+    `code` varchar(50) DEFAULT NULL,
+    `description` varchar(500) DEFAULT NULL,
+    `status` int DEFAULT '1',
+    `student_count` int DEFAULT '0',
+    `teacher_count` int DEFAULT '0',
+    `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+    `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_colleges_name` (`name`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `users` (
-    `id`         bigint auto_increment primary key,
-    `username`   varchar(50)                          not null,
-    `password`   varchar(255)                         not null,
-    `name`       varchar(100)                         null,
-    `email`      varchar(100)                         null,
-    `phone`      varchar(20)                          null,
-    `role`       tinyint(1)                           not null comment '1-学生, 2-教师, 3-辅导员, 4-管理员',
-    `status`     tinyint(1) default 1                 null,
-    `created_at` timestamp  default CURRENT_TIMESTAMP null,
-    `updated_at` timestamp  default CURRENT_TIMESTAMP null on update CURRENT_TIMESTAMP,
-    `deleted_at` timestamp                            null,
-    constraint `uk_users_username` unique (`username`)
-);
-CREATE INDEX IF NOT EXISTS `idx_users_role` ON `users` (`role`);
-CREATE INDEX IF NOT EXISTS `idx_users_status` ON `users` (`status`);
+    `id` bigint NOT NULL AUTO_INCREMENT,
+    `username` varchar(50) NOT NULL,
+    `password` varchar(255) NOT NULL,
+    `name` varchar(100) DEFAULT NULL,
+    `email` varchar(100) DEFAULT NULL,
+    `phone` varchar(20) DEFAULT NULL,
+    `role` tinyint(1) NOT NULL COMMENT '1-学生, 2-教师, 3-辅导员, 4-管理员',
+    `status` tinyint(1) DEFAULT '1',
+    `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+    `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    `deleted_at` timestamp NULL DEFAULT NULL,
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_users_username` (`username`),
+    KEY `idx_users_role` (`role`),
+    KEY `idx_users_status` (`status`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `roles` (
-    `id`          bigint auto_increment primary key,
-    `name`        varchar(50)                         not null,
-    `code`        varchar(50)                         not null,
-    `description` varchar(255)                        null,
-    `status`      int       default 1                 null,
-    `created_at`  timestamp default CURRENT_TIMESTAMP null,
-    `updated_at`  timestamp default CURRENT_TIMESTAMP null on update CURRENT_TIMESTAMP,
-    constraint `uk_roles_code` unique (`code`)
-);
+    `id` bigint NOT NULL AUTO_INCREMENT,
+    `name` varchar(50) NOT NULL,
+    `code` varchar(50) NOT NULL,
+    `description` varchar(255) DEFAULT NULL,
+    `status` int DEFAULT '1',
+    `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+    `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_roles_code` (`code`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `permissions` (
-    `id`          bigint auto_increment primary key,
-    `name`        varchar(100)                        not null,
-    `code`        varchar(100)                        not null,
-    `description` varchar(500)                        null,
-    `status`      int       default 1                 null,
-    `created_at`  timestamp default CURRENT_TIMESTAMP null,
-    `updated_at`  timestamp default CURRENT_TIMESTAMP null on update CURRENT_TIMESTAMP,
-    constraint `uk_permissions_code` unique (`code`)
-);
+    `id` bigint NOT NULL AUTO_INCREMENT,
+    `name` varchar(100) NOT NULL,
+    `code` varchar(100) NOT NULL,
+    `description` varchar(500) DEFAULT NULL,
+    `status` int DEFAULT '1',
+    `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+    `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_permissions_code` (`code`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `role_permissions` (
-    `id`            bigint auto_increment primary key,
-    `role_id`       bigint                              not null,
-    `permission_id` bigint                              not null,
-    `created_at`    timestamp default CURRENT_TIMESTAMP null,
-    `updated_at`    timestamp default CURRENT_TIMESTAMP null on update CURRENT_TIMESTAMP,
-    constraint `uk_role_permissions_role_permission` unique (`role_id`, `permission_id`),
-    constraint `fk_role_permissions_role_id` foreign key (`role_id`) references `roles` (`id`),
-    constraint `fk_role_permissions_permission_id` foreign key (`permission_id`) references `permissions` (`id`)
-);
-CREATE INDEX IF NOT EXISTS `idx_role_permissions_role_id` ON `role_permissions` (`role_id`);
-CREATE INDEX IF NOT EXISTS `idx_role_permissions_permission_id` ON `role_permissions` (`permission_id`);
+    `id` bigint NOT NULL AUTO_INCREMENT,
+    `role_id` bigint NOT NULL,
+    `permission_id` bigint NOT NULL,
+    `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+    `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_role_permissions_role_permission` (`role_id`,`permission_id`),
+    KEY `idx_role_permissions_role_id` (`role_id`),
+    KEY `idx_role_permissions_permission_id` (`permission_id`),
+    CONSTRAINT `fk_role_permissions_permission_id` FOREIGN KEY (`permission_id`) REFERENCES `permissions` (`id`),
+    CONSTRAINT `fk_role_permissions_role_id` FOREIGN KEY (`role_id`) REFERENCES `roles` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `elective_modules` (
-    `id`          bigint auto_increment primary key,
-    `module_code` varchar(20)                         not null,
-    `module_name` varchar(100)                        not null,
-    `description` text                                null,
-    `created_at`  timestamp default CURRENT_TIMESTAMP null,
-    `updated_at`  timestamp default CURRENT_TIMESTAMP null on update CURRENT_TIMESTAMP,
-    constraint `uk_elective_modules_module_code` unique (`module_code`)
-) comment '选修课模块表';
-
-CREATE TABLE IF NOT EXISTS `warning_rule` (
-    `id`            bigint auto_increment primary key,
-    `rule_name`     varchar(100)                        not null,
-    `rule_code`     varchar(50)                         not null,
-    `description`   text                                null,
-    `warning_level` int                                 not null,
-    `expression`    text                                null,
-    `status`        int       default 1                 null,
-    `created_by`    varchar(100)                        null,
-    `created_at`    timestamp default CURRENT_TIMESTAMP null,
-    `updated_by`    varchar(100)                        null,
-    `updated_at`    timestamp default CURRENT_TIMESTAMP null on update CURRENT_TIMESTAMP,
-    constraint `uk_warning_rule_rule_code` unique (`rule_code`)
-);
-CREATE INDEX IF NOT EXISTS `idx_warning_rule_warning_level` ON `warning_rule` (`warning_level`);
+    `id` bigint NOT NULL AUTO_INCREMENT,
+    `module_code` varchar(20) NOT NULL,
+    `module_name` varchar(100) NOT NULL,
+    `description` text,
+    `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+    `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_elective_modules_module_code` (`module_code`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci comment '选修课模块表';
 
 CREATE TABLE IF NOT EXISTS `warning_rules` (
-    `id`                        bigint auto_increment primary key,
-    `name`                      varchar(100)                       not null comment '规则名称',
-    `description`               text                               null comment '规则描述',
-    `level`                     int      default 1                 null comment '预警等级：1-低, 2-中, 3-高',
-    `rule_condition`            text                               null comment '触发条件表达式',
-    `status`                    int      default 1                 null comment '状态：0-禁用，1-启用',
-    `created_at`                datetime default CURRENT_TIMESTAMP null comment '创建时间',
-    `updated_at`                datetime default CURRENT_TIMESTAMP null on update CURRENT_TIMESTAMP comment '更新时间',
-    `rule_code`                 varchar(50)                        null comment '规则编码',
-    `created_by`                bigint                             null comment '创建人ID',
-    `updated_by`                bigint                             null comment '更新人ID',
-    `fail_definition`           text                               null comment '挂科定义标准',
-    `statistic_cycle`           varchar(50)                        null comment '统计周期',
-    `trigger_type`              varchar(50)                        null comment '触发机制',
-    `release_condition`         text                               null comment '预警解除条件',
-    `intervention_plan`         text                               null comment '学业干预方案',
-    `notification_flow`         text                               null comment '通知流程',
-    `responsible_person`        varchar(100)                       null comment '责任人',
-    `tracking_mechanism`        text                               null comment '跟踪反馈机制',
-    `archive_spec`              text                               null comment '归档规范',
-    `data_caliber`              text                               null comment '数据统计口径',
-    `department_responsibility` text                               null comment '部门职责分工',
-    `appeal_process`            text                               null comment '申诉复议流程',
-    `exception_handling`        text                               null comment '例外情况处理办法'
-) comment '预警规则表';
-CREATE INDEX IF NOT EXISTS `idx_warning_rules_status` ON `warning_rules` (`status`);
-CREATE INDEX IF NOT EXISTS `idx_warning_rules_level` ON `warning_rules` (`level`);
+    `id` bigint NOT NULL AUTO_INCREMENT,
+    `name` varchar(100) NOT NULL COMMENT '规则名称',
+    `description` text COMMENT '规则描述',
+    `level` int DEFAULT '1' COMMENT '预警等级：1-低, 2-中, 3-高',
+    `rule_condition` text COMMENT '触发条件表达式',
+    `status` int DEFAULT '1' COMMENT '状态：0-禁用，1-启用',
+    `created_at` datetime DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `updated_at` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    `rule_code` varchar(50) DEFAULT NULL COMMENT '规则编码',
+    `created_by` bigint DEFAULT NULL COMMENT '创建人ID',
+    `updated_by` bigint DEFAULT NULL COMMENT '更新人ID',
+    `fail_definition` text COMMENT '挂科定义标准',
+    `statistic_cycle` varchar(50) DEFAULT NULL COMMENT '统计周期',
+    `trigger_type` varchar(50) DEFAULT NULL COMMENT '触发机制',
+    `release_condition` text COMMENT '预警解除条件',
+    `intervention_plan` text COMMENT '学业干预方案',
+    `notification_flow` text COMMENT '通知流程',
+    `responsible_person` varchar(100) DEFAULT NULL COMMENT '责任人',
+    `tracking_mechanism` text COMMENT '跟踪反馈机制',
+    `archive_spec` text COMMENT '归档规范',
+    `data_caliber` text COMMENT '数据统计口径',
+    `department_responsibility` text COMMENT '部门职责分工',
+    `appeal_process` text COMMENT '申诉复议流程',
+    `exception_handling` text COMMENT '例外情况处理办法',
+    PRIMARY KEY (`id`),
+    KEY `idx_warning_level` (`level`),
+    KEY `idx_status` (`status`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci comment '预警规则表';
 
 CREATE TABLE IF NOT EXISTS `support_resource` (
-    `id`          bigint auto_increment primary key,
-    `title`       varchar(200)                        not null,
-    `description` text                                null,
-    `type`        varchar(50)                         null,
-    `category`    varchar(50)                         null,
-    `content`     text                                null,
-    `url`         varchar(500)                        null,
-    `file_path`   varchar(500)                        null,
-    `file_size`   bigint                              null,
-    `file_type`   varchar(50)                         null,
-    `author`      varchar(100)                        null,
-    `views`       int       default 0                 null,
-    `downloads`   int       default 0                 null,
-    `status`      int       default 1                 null,
-    `created_at`  timestamp default CURRENT_TIMESTAMP null,
-    `updated_at`  timestamp default CURRENT_TIMESTAMP null on update CURRENT_TIMESTAMP
-);
-CREATE INDEX IF NOT EXISTS `idx_support_resource_type` ON `support_resource` (`type`);
-CREATE INDEX IF NOT EXISTS `idx_support_resource_category` ON `support_resource` (`category`);
-CREATE INDEX IF NOT EXISTS `idx_support_resource_status` ON `support_resource` (`status`);
+    `id` bigint NOT NULL AUTO_INCREMENT,
+    `title` varchar(200) NOT NULL,
+    `description` text,
+    `type` varchar(50) DEFAULT NULL,
+    `category` varchar(50) DEFAULT NULL,
+    `content` text,
+    `url` varchar(500) DEFAULT NULL,
+    `file_path` varchar(500) DEFAULT NULL,
+    `file_size` bigint DEFAULT NULL,
+    `file_type` varchar(50) DEFAULT NULL,
+    `author` varchar(100) DEFAULT NULL,
+    `views` int DEFAULT '0',
+    `downloads` int DEFAULT '0',
+    `status` int DEFAULT '1',
+    `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+    `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    KEY `idx_support_resource_type` (`type`),
+    KEY `idx_support_resource_category` (`category`),
+    KEY `idx_support_resource_status` (`status`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `export_history` (
-    `id`           bigint auto_increment primary key,
-    `data_type`    varchar(50)                         not null,
-    `file_name`    varchar(255)                        not null,
-    `record_count` int       default 0                 null,
-    `exported_by`  bigint                              null,
-    `created_at`   timestamp default CURRENT_TIMESTAMP null
-);
-CREATE INDEX IF NOT EXISTS `idx_export_history_data_type` ON `export_history` (`data_type`);
-CREATE INDEX IF NOT EXISTS `idx_export_history_created_at` ON `export_history` (`created_at`);
+    `id` bigint NOT NULL AUTO_INCREMENT,
+    `data_type` varchar(50) NOT NULL,
+    `file_name` varchar(255) NOT NULL,
+    `record_count` int DEFAULT '0',
+    `exported_by` bigint DEFAULT NULL,
+    `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    KEY `idx_export_history_data_type` (`data_type`),
+    KEY `idx_export_history_created_at` (`created_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `report_templates` (
+    `id` bigint NOT NULL AUTO_INCREMENT,
+    `name` varchar(200) NOT NULL,
+    `description` varchar(500) DEFAULT NULL,
+    `file_path` varchar(500) DEFAULT NULL,
+    `file_name` varchar(200) DEFAULT NULL,
+    `file_size` bigint DEFAULT '0',
+    `file_type` varchar(50) DEFAULT NULL,
+    `status` tinyint DEFAULT '1',
+    `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+    `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ==================== 依赖 colleges 的表 ====================
 
 CREATE TABLE IF NOT EXISTS `majors` (
-    `id`          bigint auto_increment primary key,
-    `college_id`  bigint                              not null,
-    `name`        varchar(100)                        not null,
-    `code`        varchar(50)                         not null,
-    `description` varchar(500)                        null,
-    `status`      int       default 1                 null,
-    `created_at`  timestamp default CURRENT_TIMESTAMP null,
-    `updated_at`  timestamp default CURRENT_TIMESTAMP null on update CURRENT_TIMESTAMP,
-    constraint `uk_majors_code` unique (`code`),
-    constraint `fk_majors_college_id` foreign key (`college_id`) references `colleges` (`id`)
-);
-CREATE INDEX IF NOT EXISTS `idx_majors_college_id` ON `majors` (`college_id`);
+    `id` bigint NOT NULL AUTO_INCREMENT,
+    `college_id` bigint NOT NULL,
+    `name` varchar(100) NOT NULL,
+    `code` varchar(50) NOT NULL,
+    `short_name` varchar(20) DEFAULT NULL COMMENT '专业简称',
+    `description` varchar(500) DEFAULT NULL,
+    `status` int DEFAULT '1',
+    `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+    `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_majors_code` (`code`),
+    KEY `idx_majors_college_id` (`college_id`),
+    CONSTRAINT `fk_majors_college_id` FOREIGN KEY (`college_id`) REFERENCES `colleges` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `classes` (
-    `id`           bigint auto_increment primary key,
-    `name`         varchar(50)                         not null,
-    `college_id`   bigint                              not null,
-    `major_id`     bigint                              null,
-    `teacher_id`   bigint                              null,
-    `counselor_id` bigint                              null,
-    `created_at`   timestamp default CURRENT_TIMESTAMP null,
-    `updated_at`   timestamp default CURRENT_TIMESTAMP null on update CURRENT_TIMESTAMP,
-    constraint `fk_classes_college_id` foreign key (`college_id`) references `colleges` (`id`)
-);
-CREATE INDEX IF NOT EXISTS `idx_classes_college_id` ON `classes` (`college_id`);
+    `id` bigint NOT NULL AUTO_INCREMENT,
+    `name` varchar(50) NOT NULL,
+    `college_id` bigint NOT NULL,
+    `major_id` bigint DEFAULT NULL,
+    `teacher_id` bigint DEFAULT NULL,
+    `counselor_id` bigint DEFAULT NULL,
+    `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+    `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    KEY `idx_classes_college_id` (`college_id`),
+    CONSTRAINT `fk_classes_college_id` FOREIGN KEY (`college_id`) REFERENCES `colleges` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `teacher_profile` (
-    `id`             bigint auto_increment primary key,
-    `user_id`        bigint                              not null,
-    `name`           varchar(50)                         null,
-    `college_id`     bigint                              not null,
-    `title`          varchar(50)                         null,
-    `research_areas` varchar(200)                        null,
-    `created_at`     timestamp default CURRENT_TIMESTAMP null,
-    `updated_at`     timestamp default CURRENT_TIMESTAMP null on update CURRENT_TIMESTAMP,
-    constraint `uk_teacher_profile_user_id` unique (`user_id`),
-    constraint `fk_teacher_profile_college_id` foreign key (`college_id`) references `colleges` (`id`),
-    constraint `fk_teacher_profile_user_id` foreign key (`user_id`) references `users` (`id`)
-);
-CREATE INDEX IF NOT EXISTS `idx_teacher_profile_college_id` ON `teacher_profile` (`college_id`);
+    `id` bigint NOT NULL AUTO_INCREMENT,
+    `user_id` bigint NOT NULL,
+    `name` varchar(50) DEFAULT NULL,
+    `college_id` bigint NOT NULL,
+    `title` varchar(50) DEFAULT NULL,
+    `research_areas` varchar(200) DEFAULT NULL,
+    `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+    `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_teacher_profile_user_id` (`user_id`),
+    KEY `idx_teacher_profile_college_id` (`college_id`),
+    CONSTRAINT `fk_teacher_profile_college_id` FOREIGN KEY (`college_id`) REFERENCES `colleges` (`id`),
+    CONSTRAINT `fk_teacher_profile_user_id` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ==================== 依赖 users + colleges 的表 ====================
 
 CREATE TABLE IF NOT EXISTS `admin_profile` (
-    `id`         bigint auto_increment primary key,
-    `user_id`    bigint                              not null,
-    `name`       varchar(100)                        null,
-    `phone`      varchar(20)                         null,
-    `email`      varchar(100)                        null,
-    `department` varchar(100)                        null,
-    `created_at` timestamp default CURRENT_TIMESTAMP null,
-    `updated_at` timestamp default CURRENT_TIMESTAMP null on update CURRENT_TIMESTAMP,
-    constraint `uk_admin_profile_user_id` unique (`user_id`),
-    constraint `fk_admin_profile_user_id` foreign key (`user_id`) references `users` (`id`)
-);
+    `id` bigint NOT NULL AUTO_INCREMENT,
+    `user_id` bigint NOT NULL,
+    `name` varchar(100) DEFAULT NULL,
+    `phone` varchar(20) DEFAULT NULL,
+    `email` varchar(100) DEFAULT NULL,
+    `department` varchar(100) DEFAULT NULL,
+    `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+    `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_admin_profile_user_id` (`user_id`),
+    CONSTRAINT `fk_admin_profile_user_id` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `counselor_profiles` (
-    `id`              bigint auto_increment primary key,
-    `user_id`         bigint                             not null comment '用户ID',
-    `college_id`      bigint                             null comment '学院ID',
-    `counselor_id`    varchar(50)                        null comment '辅导员编号',
-    `name`            varchar(100)                       null comment '姓名',
-    `gender`          varchar(10)                        null comment '性别',
-    `phone`           varchar(20)                        null comment '联系电话',
-    `email`           varchar(100)                       null comment '邮箱',
-    `department`      varchar(100)                       null comment '部门',
-    `title`           varchar(50)                        null comment '职称',
-    `education`       varchar(50)                        null comment '学历',
-    `introduction`    text                               null comment '个人简介',
-    `status`          int      default 1                 null comment '状态：0-禁用，1-启用',
-    `created_at`      datetime default CURRENT_TIMESTAMP null comment '创建时间',
-    `updated_at`      datetime default CURRENT_TIMESTAMP null on update CURRENT_TIMESTAMP comment '更新时间',
-    `college_name`    varchar(100)                       null comment '学院名称',
-    `staff_id`        varchar(50)                        null comment '员工编号',
-    `office_location` varchar(200)                       null comment '办公地点',
-    `duty_phone`      varchar(20)                        null comment '值班电话',
-    `class_count`     int      default 0                 null comment '管理班级数',
-    `student_count`   int      default 0                 null comment '管理学生数',
-    constraint `uk_counselor_profiles_user_id` unique (`user_id`)
-) comment '辅导员信息表';
-CREATE INDEX IF NOT EXISTS `idx_counselor_profiles_user_id` ON `counselor_profiles` (`user_id`);
-CREATE INDEX IF NOT EXISTS `idx_counselor_profiles_college_id` ON `counselor_profiles` (`college_id`);
-CREATE INDEX IF NOT EXISTS `idx_counselor_profiles_status` ON `counselor_profiles` (`status`);
+    `id` bigint NOT NULL AUTO_INCREMENT,
+    `user_id` bigint NOT NULL COMMENT '用户ID',
+    `college_id` bigint DEFAULT NULL COMMENT '学院ID',
+    `counselor_id` varchar(50) DEFAULT NULL COMMENT '辅导员编号',
+    `name` varchar(100) DEFAULT NULL COMMENT '姓名',
+    `gender` varchar(10) DEFAULT NULL COMMENT '性别',
+    `phone` varchar(20) DEFAULT NULL COMMENT '联系电话',
+    `email` varchar(100) DEFAULT NULL COMMENT '邮箱',
+    `department` varchar(100) DEFAULT NULL COMMENT '部门',
+    `title` varchar(50) DEFAULT NULL COMMENT '职称',
+    `education` varchar(50) DEFAULT NULL COMMENT '学历',
+    `introduction` text COMMENT '个人简介',
+    `status` int DEFAULT '1' COMMENT '状态：0-禁用，1-启用',
+    `created_at` datetime DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `updated_at` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    `college_name` varchar(100) DEFAULT NULL COMMENT '学院名称',
+    `staff_id` varchar(50) DEFAULT NULL COMMENT '员工编号',
+    `office_location` varchar(200) DEFAULT NULL COMMENT '办公地点',
+    `duty_phone` varchar(20) DEFAULT NULL COMMENT '值班电话',
+    `class_count` int DEFAULT '0' COMMENT '管理班级数',
+    `student_count` int DEFAULT '0' COMMENT '管理学生数',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `user_id` (`user_id`),
+    KEY `idx_user_id` (`user_id`),
+    KEY `idx_college_id` (`college_id`),
+    KEY `idx_status` (`status`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci comment '辅导员信息表';
+
+CREATE TABLE IF NOT EXISTS `college_admin_profile` (
+    `id` bigint NOT NULL AUTO_INCREMENT,
+    `user_id` bigint NOT NULL COMMENT '关联 users.id',
+    `name` varchar(50) NOT NULL COMMENT '姓名',
+    `college_id` bigint NOT NULL COMMENT '所属学院',
+    `phone` varchar(20) DEFAULT NULL,
+    `email` varchar(100) DEFAULT NULL,
+    `title` varchar(50) DEFAULT NULL COMMENT '职称',
+    `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
+    `updated_at` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    KEY `idx_college_admin_user` (`user_id`),
+    KEY `idx_college_admin_college` (`college_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci comment '学院管理员档案';
 
 CREATE TABLE IF NOT EXISTS `student_profile` (
-    `id`            bigint auto_increment primary key,
-    `user_id`       bigint                               not null,
-    `student_id`    varchar(20)                          not null comment '学号',
-    `name`          varchar(50)                          not null,
-    `college_id`    bigint                               null,
-    `major_id`      bigint                               null,
-    `class_id`      bigint                               null,
-    `class_name`    varchar(255)                         null,
-    `privacy_level` tinyint(1) default 2                 null,
-    `created_at`    timestamp  default CURRENT_TIMESTAMP null,
-    `updated_at`    timestamp  default CURRENT_TIMESTAMP null on update CURRENT_TIMESTAMP,
-    constraint `uk_student_profile_student_id` unique (`student_id`),
-    constraint `uk_student_profile_user_id` unique (`user_id`),
-    constraint `fk_student_profile_user_id` foreign key (`user_id`) references `users` (`id`),
-    constraint `fk_student_profile_college_id` foreign key (`college_id`) references `colleges` (`id`),
-    constraint `fk_student_profile_major_id` foreign key (`major_id`) references `majors` (`id`),
-    constraint `fk_student_profile_class_id` foreign key (`class_id`) references `classes` (`id`)
-);
-CREATE INDEX IF NOT EXISTS `idx_student_profile_college_id` ON `student_profile` (`college_id`);
-CREATE INDEX IF NOT EXISTS `idx_student_profile_class_id` ON `student_profile` (`class_id`);
-CREATE INDEX IF NOT EXISTS `idx_student_profile_major_id` ON `student_profile` (`major_id`);
-
-CREATE TABLE IF NOT EXISTS `student` (
-    `id`         bigint auto_increment primary key,
-    `name`       varchar(100)                       not null comment '学生姓名',
-    `student_id` varchar(50)                        not null comment '学号',
-    `class_id`   bigint                             null comment '班级ID',
-    `college_id` bigint                             null comment '学院ID',
-    `major_id`   bigint                             null comment '专业ID',
-    `gender`     varchar(10)                        null comment '性别',
-    `phone`      varchar(20)                        null comment '联系电话',
-    `email`      varchar(100)                       null comment '邮箱',
-    `status`     int      default 1                 null comment '状态：0-禁用，1-启用',
-    `created_at` datetime default CURRENT_TIMESTAMP null comment '创建时间',
-    `updated_at` datetime default CURRENT_TIMESTAMP null on update CURRENT_TIMESTAMP comment '更新时间',
-    constraint `uk_student_student_id` unique (`student_id`)
-) comment '学生表';
-CREATE INDEX IF NOT EXISTS `idx_student_class_id` ON `student` (`class_id`);
-CREATE INDEX IF NOT EXISTS `idx_student_college_id` ON `student` (`college_id`);
-CREATE INDEX IF NOT EXISTS `idx_student_major_id` ON `student` (`major_id`);
+    `id` bigint NOT NULL AUTO_INCREMENT,
+    `user_id` bigint NOT NULL,
+    `student_id` varchar(20) NOT NULL COMMENT '学号',
+    `name` varchar(50) NOT NULL,
+    `gender` varchar(10) DEFAULT NULL COMMENT '性别',
+    `college_id` bigint DEFAULT NULL,
+    `major_id` bigint DEFAULT NULL,
+    `class_id` bigint DEFAULT NULL,
+    `class_name` varchar(255) DEFAULT NULL,
+    `enrollment_year` int DEFAULT NULL COMMENT '入学年份',
+    `privacy_level` tinyint(1) DEFAULT '2',
+    `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+    `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_student_profile_user_id` (`user_id`),
+    UNIQUE KEY `uk_student_profile_student_id` (`student_id`),
+    KEY `idx_student_profile_college_id` (`college_id`),
+    KEY `idx_student_profile_class_id` (`class_id`),
+    KEY `idx_student_profile_major_id` (`major_id`),
+    CONSTRAINT `fk_student_profile_class_id` FOREIGN KEY (`class_id`) REFERENCES `classes` (`id`),
+    CONSTRAINT `fk_student_profile_college_id` FOREIGN KEY (`college_id`) REFERENCES `colleges` (`id`),
+    CONSTRAINT `fk_student_profile_major_id` FOREIGN KEY (`major_id`) REFERENCES `majors` (`id`),
+    CONSTRAINT `fk_student_profile_user_id` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ==================== 安全/审计表 ====================
 
 CREATE TABLE IF NOT EXISTS `security_logs` (
-    `id`            bigint auto_increment primary key,
-    `user_id`       bigint                               not null,
-    `ip_address`    varchar(50)                          null,
-    `login_time`    timestamp                            null,
-    `is_successful` tinyint(1) default 1                 null,
-    `action`        varchar(100)                         null,
-    `created_at`    timestamp  default CURRENT_TIMESTAMP null,
-    constraint `fk_security_logs_user_id` foreign key (`user_id`) references `users` (`id`)
-);
-CREATE INDEX IF NOT EXISTS `idx_security_logs_user_id` ON `security_logs` (`user_id`);
+    `id` bigint NOT NULL AUTO_INCREMENT,
+    `user_id` bigint NOT NULL,
+    `ip_address` varchar(50) DEFAULT NULL,
+    `login_time` timestamp NULL DEFAULT NULL,
+    `is_successful` tinyint(1) DEFAULT '1',
+    `action` varchar(100) DEFAULT NULL,
+    `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    KEY `idx_security_logs_user_id` (`user_id`),
+    CONSTRAINT `fk_security_logs_user_id` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `login_logs` (
+    `id` bigint NOT NULL AUTO_INCREMENT,
+    `user_id` bigint NOT NULL,
+    `username` varchar(100) DEFAULT NULL,
+    `login_time` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+    `ip_address` varchar(50) DEFAULT NULL,
+    `device` varchar(200) DEFAULT NULL,
+    `location` varchar(100) DEFAULT NULL,
+    `status` varchar(20) DEFAULT 'success',
+    PRIMARY KEY (`id`),
+    KEY `idx_user_id` (`user_id`),
+    KEY `idx_login_time` (`login_time`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `audit_logs` (
-    `id`          bigint auto_increment primary key,
-    `user_id`     bigint                              null,
-    `action_type` varchar(50)                         null,
-    `entity_type` varchar(50)                         null,
-    `entity_id`   bigint                              null,
-    `details`     text                                null,
-    `created_at`  timestamp default CURRENT_TIMESTAMP null,
-    constraint `fk_audit_logs_user_id` foreign key (`user_id`) references `users` (`id`)
-);
-CREATE INDEX IF NOT EXISTS `idx_audit_logs_user_id` ON `audit_logs` (`user_id`);
-CREATE INDEX IF NOT EXISTS `idx_audit_logs_action_type` ON `audit_logs` (`action_type`);
+    `id` bigint NOT NULL AUTO_INCREMENT,
+    `user_id` bigint DEFAULT NULL,
+    `action_type` varchar(50) DEFAULT NULL,
+    `entity_type` varchar(50) DEFAULT NULL,
+    `entity_id` bigint DEFAULT NULL,
+    `details` text,
+    `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    KEY `idx_audit_logs_action_type` (`action_type`),
+    KEY `idx_audit_logs_user_id` (`user_id`),
+    CONSTRAINT `fk_audit_logs_user_id` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ==================== 课程相关 ====================
 
 CREATE TABLE IF NOT EXISTS `courses` (
-    `id`             bigint auto_increment primary key,
-    `code`           varchar(20)                         not null,
-    `name`           varchar(100)                        not null,
-    `credits`        decimal(5, 2)                       not null,
-    `type`           varchar(20)                         not null,
-    `description`    varchar(500)                        null,
-    `module_id`      bigint                              null,
-    `score_template` varchar(50)                         null,
-    `teacher_id`     bigint                              null,
-    `created_at`     timestamp default CURRENT_TIMESTAMP null,
-    `updated_at`     timestamp default CURRENT_TIMESTAMP null on update CURRENT_TIMESTAMP,
-    constraint `uk_courses_code` unique (`code`),
-    constraint `fk_courses_module_id` foreign key (`module_id`) references `elective_modules` (`id`)
-);
-CREATE INDEX IF NOT EXISTS `idx_courses_code` ON `courses` (`code`);
-CREATE INDEX IF NOT EXISTS `idx_courses_module_id` ON `courses` (`module_id`);
+    `id` bigint NOT NULL AUTO_INCREMENT,
+    `code` varchar(20) NOT NULL,
+    `name` varchar(100) NOT NULL,
+    `credits` decimal(5,2) NOT NULL,
+    `type` varchar(20) NOT NULL,
+    `description` varchar(500) DEFAULT NULL,
+    `module_id` bigint DEFAULT NULL,
+    `score_template` varchar(50) DEFAULT NULL,
+    `teacher_id` bigint DEFAULT NULL,
+    `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+    `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_courses_code` (`code`),
+    KEY `idx_courses_code` (`code`),
+    KEY `idx_courses_module_id` (`module_id`),
+    CONSTRAINT `fk_courses_module_id` FOREIGN KEY (`module_id`) REFERENCES `elective_modules` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `teacher_course` (
-    `id`         bigint auto_increment primary key,
-    `teacher_id` bigint                              not null,
-    `course_id`  bigint                              not null,
-    `semester`   int                                 null,
-    `year`       int                                 null,
-    `created_at` timestamp default CURRENT_TIMESTAMP null,
-    `updated_at` timestamp default CURRENT_TIMESTAMP null on update CURRENT_TIMESTAMP,
-    constraint `uk_teacher_course` unique (`teacher_id`, `course_id`),
-    constraint `fk_teacher_course_teacher_id` foreign key (`teacher_id`) references `teacher_profile` (`id`),
-    constraint `fk_teacher_course_course_id` foreign key (`course_id`) references `courses` (`id`)
-);
-CREATE INDEX IF NOT EXISTS `idx_teacher_course_teacher_id` ON `teacher_course` (`teacher_id`);
-CREATE INDEX IF NOT EXISTS `idx_teacher_course_course_id` ON `teacher_course` (`course_id`);
+    `id` bigint NOT NULL AUTO_INCREMENT,
+    `teacher_id` bigint NOT NULL,
+    `course_id` bigint NOT NULL,
+    `semester` int DEFAULT NULL,
+    `year` int DEFAULT NULL,
+    `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+    `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_teacher_course` (`teacher_id`,`course_id`),
+    KEY `idx_teacher_course_teacher_id` (`teacher_id`),
+    KEY `idx_teacher_course_course_id` (`course_id`),
+    CONSTRAINT `fk_teacher_course_course_id` FOREIGN KEY (`course_id`) REFERENCES `courses` (`id`),
+    CONSTRAINT `fk_teacher_course_teacher_id` FOREIGN KEY (`teacher_id`) REFERENCES `teacher_profile` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `course_plans` (
-    `id`           bigint auto_increment primary key,
-    `course_id`    bigint                              not null,
-    `teacher_id`   bigint                              null,
-    `semester`     varchar(20)                         null,
-    `year`         int                                 null,
-    `start_date`   date                                null,
-    `end_date`     date                                null,
-    `class_time`   varchar(100)                        null,
-    `location`     varchar(200)                        null,
-    `max_students` int       default 50                null,
-    `status`       int       default 1                 null,
-    `created_at`   timestamp default CURRENT_TIMESTAMP null,
-    `updated_at`   timestamp default CURRENT_TIMESTAMP null on update CURRENT_TIMESTAMP,
-    constraint `fk_course_plans_course_id` foreign key (`course_id`) references `courses` (`id`)
-);
-CREATE INDEX IF NOT EXISTS `idx_course_plans_course_id` ON `course_plans` (`course_id`);
-CREATE INDEX IF NOT EXISTS `idx_course_plans_semester` ON `course_plans` (`semester`);
+    `id` bigint NOT NULL AUTO_INCREMENT,
+    `course_id` bigint NOT NULL,
+    `teacher_id` bigint DEFAULT NULL,
+    `semester` varchar(20) DEFAULT NULL,
+    `year` int DEFAULT NULL,
+    `start_date` date DEFAULT NULL,
+    `end_date` date DEFAULT NULL,
+    `class_time` varchar(100) DEFAULT NULL,
+    `location` varchar(200) DEFAULT NULL,
+    `max_students` int DEFAULT '50',
+    `status` int DEFAULT '1',
+    `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+    `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    KEY `idx_course_plans_course_id` (`course_id`),
+    KEY `idx_course_plans_semester` (`semester`),
+    CONSTRAINT `fk_course_plans_course_id` FOREIGN KEY (`course_id`) REFERENCES `courses` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `enrollments` (
-    `id`         bigint auto_increment primary key,
-    `student_id` bigint                              not null,
-    `course_id`  bigint                              not null,
-    `class_id`   bigint                              null,
-    `status`     int       default 0                 null,
-    `semester`   int                                 null,
-    `year`       int                                 null,
-    `created_at` timestamp default CURRENT_TIMESTAMP null,
-    `updated_at` timestamp default CURRENT_TIMESTAMP null on update CURRENT_TIMESTAMP,
-    constraint `fk_enrollments_student_id` foreign key (`student_id`) references `student_profile` (`id`),
-    constraint `fk_enrollments_course_id` foreign key (`course_id`) references `courses` (`id`),
-    constraint `fk_enrollments_class_id` foreign key (`class_id`) references `classes` (`id`)
-);
-CREATE INDEX IF NOT EXISTS `idx_enrollments_student_id` ON `enrollments` (`student_id`);
-CREATE INDEX IF NOT EXISTS `idx_enrollments_course_id` ON `enrollments` (`course_id`);
+    `id` bigint NOT NULL AUTO_INCREMENT,
+    `student_id` bigint NOT NULL,
+    `course_id` bigint NOT NULL,
+    `class_id` bigint DEFAULT NULL,
+    `status` int DEFAULT '0',
+    `semester` int DEFAULT NULL,
+    `year` int DEFAULT NULL,
+    `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+    `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    KEY `idx_enrollments_student_id` (`student_id`),
+    KEY `idx_enrollments_course_id` (`course_id`),
+    KEY `fk_enrollments_class_id` (`class_id`),
+    CONSTRAINT `fk_enrollments_class_id` FOREIGN KEY (`class_id`) REFERENCES `classes` (`id`),
+    CONSTRAINT `fk_enrollments_course_id` FOREIGN KEY (`course_id`) REFERENCES `courses` (`id`),
+    CONSTRAINT `fk_enrollments_student_id` FOREIGN KEY (`student_id`) REFERENCES `student_profile` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `teaching_resources` (
-    `id`          bigint auto_increment primary key,
-    `course_id`   bigint                              null,
-    `title`       varchar(200)                        not null,
-    `description` text                                null,
-    `type`        varchar(50)                         null,
-    `url`         varchar(500)                        null,
-    `file_path`   varchar(500)                        null,
-    `file_size`   bigint                              null,
-    `file_type`   varchar(50)                         null,
-    `downloads`   int       default 0                 null,
-    `status`      int       default 1                 null,
-    `created_by`  varchar(100)                        null,
-    `created_at`  timestamp default CURRENT_TIMESTAMP null,
-    `updated_by`  varchar(100)                        null,
-    `updated_at`  timestamp default CURRENT_TIMESTAMP null on update CURRENT_TIMESTAMP,
-    constraint `fk_teaching_resources_course_id` foreign key (`course_id`) references `courses` (`id`)
-);
-CREATE INDEX IF NOT EXISTS `idx_teaching_resources_course_id` ON `teaching_resources` (`course_id`);
-CREATE INDEX IF NOT EXISTS `idx_teaching_resources_uploader_id` ON `teaching_resources` (`created_by`);
+    `id` bigint NOT NULL AUTO_INCREMENT,
+    `course_id` bigint DEFAULT NULL,
+    `title` varchar(200) NOT NULL,
+    `description` text,
+    `type` varchar(50) DEFAULT NULL,
+    `url` varchar(500) DEFAULT NULL,
+    `file_path` varchar(500) DEFAULT NULL,
+    `file_size` bigint DEFAULT NULL,
+    `file_type` varchar(50) DEFAULT NULL,
+    `downloads` int DEFAULT '0',
+    `status` int DEFAULT '1',
+    `created_by` varchar(100) DEFAULT NULL,
+    `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+    `updated_by` varchar(100) DEFAULT NULL,
+    `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    KEY `idx_teaching_resources_course_id` (`course_id`),
+    KEY `idx_teaching_resources_uploader_id` (`created_by`),
+    CONSTRAINT `fk_teaching_resources_course_id` FOREIGN KEY (`course_id`) REFERENCES `courses` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ==================== 成绩相关 ====================
 
 CREATE TABLE IF NOT EXISTS `scores` (
-    `id`                bigint auto_increment primary key,
-    `student_id`        bigint                              not null,
-    `course_id`         bigint                              not null,
-    `semester`          int                                 not null,
-    `year`              int                                 null,
-    `regular_score`     decimal(5, 2)                       null,
-    `final_score`       decimal(5, 2)                       null,
-    `score_total`       decimal(5, 2)                       not null,
-    `grade`             varchar(20)                         null,
-    `grade_point`       decimal(5, 2)                       null,
-    `reason_for_change` varchar(500)                        null,
-    `modified_by`       bigint                              null,
-    `created_at`        timestamp default CURRENT_TIMESTAMP null,
-    `updated_at`        timestamp default CURRENT_TIMESTAMP null on update CURRENT_TIMESTAMP,
-    constraint `fk_scores_student_id` foreign key (`student_id`) references `student_profile` (`id`),
-    constraint `fk_scores_course_id` foreign key (`course_id`) references `courses` (`id`)
-);
-CREATE INDEX IF NOT EXISTS `idx_scores_student_id` ON `scores` (`student_id`);
-CREATE INDEX IF NOT EXISTS `idx_scores_course_id` ON `scores` (`course_id`);
-CREATE INDEX IF NOT EXISTS `idx_scores_semester` ON `scores` (`semester`);
-CREATE INDEX IF NOT EXISTS `idx_scores_student_id_semester` ON `scores` (`student_id`, `semester`);
+    `id` bigint NOT NULL AUTO_INCREMENT,
+    `student_id` bigint NOT NULL,
+    `course_id` bigint NOT NULL,
+    `semester` int NOT NULL,
+    `year` int DEFAULT NULL,
+    `regular_score` decimal(5,2) DEFAULT NULL,
+    `final_score` decimal(5,2) DEFAULT NULL,
+    `score_total` decimal(5,2) NOT NULL,
+    `grade` varchar(20) DEFAULT NULL,
+    `grade_point` decimal(5,2) DEFAULT NULL,
+    `reason_for_change` varchar(500) DEFAULT NULL,
+    `modified_by` bigint DEFAULT NULL,
+    `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+    `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    KEY `idx_scores_student_id` (`student_id`),
+    KEY `idx_scores_course_id` (`course_id`),
+    KEY `idx_scores_semester` (`semester`),
+    KEY `idx_scores_student_id_semester` (`student_id`,`semester`),
+    CONSTRAINT `fk_scores_course_id` FOREIGN KEY (`course_id`) REFERENCES `courses` (`id`),
+    CONSTRAINT `fk_scores_student_id` FOREIGN KEY (`student_id`) REFERENCES `student_profile` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `score_record` (
-    `id`           bigint auto_increment primary key,
-    `course_id`    bigint                             not null,
-    `student_id`   bigint                             not null,
-    `teacher_id`   bigint                             not null,
-    `student_name` varchar(100)                       null,
-    `class_name`   varchar(100)                       null,
-    `score`        decimal(5, 2)                      null,
-    `score_level`  int                                null,
-    `remark`       varchar(500)                       null,
-    `create_time`  datetime default CURRENT_TIMESTAMP null,
-    `update_time`  datetime default CURRENT_TIMESTAMP null on update CURRENT_TIMESTAMP
-) comment '成绩记录表';
-CREATE INDEX IF NOT EXISTS `idx_score_record_student_id` ON `score_record` (`student_id`);
-CREATE INDEX IF NOT EXISTS `idx_score_record_course_id` ON `score_record` (`course_id`);
-CREATE INDEX IF NOT EXISTS `idx_score_record_teacher_id` ON `score_record` (`teacher_id`);
+    `id` bigint NOT NULL AUTO_INCREMENT,
+    `course_id` bigint NOT NULL,
+    `student_id` bigint NOT NULL,
+    `teacher_id` bigint NOT NULL,
+    `student_name` varchar(100) DEFAULT NULL,
+    `class_name` varchar(100) DEFAULT NULL,
+    `score` decimal(5,2) DEFAULT NULL,
+    `score_level` int DEFAULT NULL,
+    `semester` varchar(20) DEFAULT NULL COMMENT '学期',
+    `year` int DEFAULT NULL COMMENT '学年',
+    `remark` varchar(500) DEFAULT NULL,
+    `create_time` datetime DEFAULT CURRENT_TIMESTAMP,
+    `update_time` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    `regular_score` decimal(5,2) DEFAULT NULL,
+    `final_score` decimal(5,2) DEFAULT NULL,
+    `score_total` decimal(5,2) DEFAULT NULL,
+    `grade` varchar(20) DEFAULT NULL,
+    `grade_point` decimal(3,2) DEFAULT NULL,
+    `reason_for_change` varchar(500) DEFAULT NULL,
+    `modified_by` bigint DEFAULT NULL,
+    `created_at` datetime DEFAULT NULL,
+    `updated_at` datetime DEFAULT NULL,
+    PRIMARY KEY (`id`),
+    KEY `idx_course_id` (`course_id`),
+    KEY `idx_student_id` (`student_id`),
+    KEY `idx_teacher_id` (`teacher_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci comment '成绩记录表';
 
 CREATE TABLE IF NOT EXISTS `score_appeals` (
-    `id`          bigint auto_increment primary key,
-    `warning_id`  bigint                              null,
-    `student_id`  bigint                              not null,
-    `score_id`    bigint                              null,
-    `course_id`   bigint                              null,
-    `reason`      text                                null,
-    `attachments` varchar(500)                        null,
-    `status`      int       default 0                 null,
-    `reply`       text                                null,
-    `created_at`  timestamp default CURRENT_TIMESTAMP null,
-    `updated_at`  timestamp default CURRENT_TIMESTAMP null on update CURRENT_TIMESTAMP,
-    constraint `fk_score_appeals_student_id` foreign key (`student_id`) references `student_profile` (`id`),
-    constraint `fk_score_appeals_score_id` foreign key (`score_id`) references `scores` (`id`)
-);
-CREATE INDEX IF NOT EXISTS `idx_score_appeals_student_id` ON `score_appeals` (`student_id`);
+    `id` bigint NOT NULL AUTO_INCREMENT,
+    `warning_id` bigint DEFAULT NULL,
+    `student_id` bigint NOT NULL,
+    `score_id` bigint DEFAULT NULL,
+    `course_id` bigint DEFAULT NULL,
+    `reason` text,
+    `attachments` varchar(500) DEFAULT NULL,
+    `status` int DEFAULT '0',
+    `reply` text,
+    `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+    `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    KEY `idx_score_appeals_student_id` (`student_id`),
+    KEY `fk_score_appeals_score_id` (`score_id`),
+    CONSTRAINT `fk_score_appeals_score_id` FOREIGN KEY (`score_id`) REFERENCES `scores` (`id`),
+    CONSTRAINT `fk_score_appeals_student_id` FOREIGN KEY (`student_id`) REFERENCES `student_profile` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `score_audit_log` (
+    `id` bigint NOT NULL AUTO_INCREMENT,
+    `student_id` bigint NOT NULL,
+    `student_name` varchar(100) DEFAULT NULL,
+    `course_id` bigint DEFAULT NULL,
+    `course_name` varchar(100) DEFAULT NULL,
+    `teacher_id` bigint NOT NULL,
+    `old_score` decimal(5,2) DEFAULT NULL,
+    `new_score` decimal(5,2) DEFAULT NULL,
+    `difference` decimal(5,2) GENERATED ALWAYS AS ((`new_score` - `old_score`)) STORED,
+    `reason` varchar(500) DEFAULT NULL,
+    `modified_by` varchar(100) DEFAULT NULL,
+    `modified_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `fail_records` (
-    `id`            bigint auto_increment primary key,
-    `student_id`    bigint                             not null comment '学生ID',
-    `course_id`     bigint                             null comment '课程ID',
-    `course_name`   varchar(100)                       null comment '课程名称',
-    `exam_time`     datetime                           null comment '考试时间',
-    `score`         decimal(5, 2)                      null comment '成绩',
-    `fail_type`     varchar(50)                        null comment '挂科类型：fail-不及格, absent-缺考, cheat-作弊',
-    `semester`      varchar(20)                        null comment '学期',
-    `academic_year` varchar(20)                        null comment '学年',
-    `status`        int      default 0                 null comment '状态：0-挂科, 1-补考通过, 2-重修通过',
-    `created_at`    datetime default CURRENT_TIMESTAMP null comment '创建时间',
-    `updated_at`    datetime default CURRENT_TIMESTAMP null on update CURRENT_TIMESTAMP comment '更新时间'
-) comment '挂科记录表';
-CREATE INDEX IF NOT EXISTS `idx_fail_records_student_id` ON `fail_records` (`student_id`);
-CREATE INDEX IF NOT EXISTS `idx_fail_records_course_id` ON `fail_records` (`course_id`);
-CREATE INDEX IF NOT EXISTS `idx_fail_records_status` ON `fail_records` (`status`);
+    `id` bigint NOT NULL AUTO_INCREMENT,
+    `student_id` bigint NOT NULL COMMENT '学生ID',
+    `course_id` bigint DEFAULT NULL COMMENT '课程ID',
+    `course_name` varchar(100) DEFAULT NULL COMMENT '课程名称',
+    `exam_time` datetime DEFAULT NULL COMMENT '考试时间',
+    `score` decimal(5,2) DEFAULT NULL COMMENT '成绩',
+    `fail_type` varchar(50) DEFAULT NULL COMMENT '挂科类型：fail-不及格, absent-缺考, cheat-作弊',
+    `semester` varchar(20) DEFAULT NULL COMMENT '学期',
+    `academic_year` varchar(20) DEFAULT NULL COMMENT '学年',
+    `status` int DEFAULT '0' COMMENT '状态：0-挂科, 1-补考通过, 2-重修通过',
+    `created_at` datetime DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `updated_at` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    PRIMARY KEY (`id`),
+    KEY `idx_student_id` (`student_id`),
+    KEY `idx_course_id` (`course_id`),
+    KEY `idx_status` (`status`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci comment '挂科记录表';
 
 -- ==================== 预警相关 ====================
 
 CREATE TABLE IF NOT EXISTS `academic_warning` (
-    `id`              bigint auto_increment primary key,
-    `student_id`      bigint                                not null,
-    `student_name`    varchar(100)                          null,
-    `rule_id`         bigint                                null,
-    `type`            int                                   null,
-    `title`           varchar(100)                          null,
-    `description`     text                                  null,
-    `warning_level`   int                                   not null,
-    `warning_message` text                                  null,
-    `trigger_score`   decimal(5, 2)                         null,
-    `gpa_before`      decimal(5, 2)                         null,
-    `gpa_after`       decimal(5, 2)                         null,
-    `status`          int         default 0                 null,
-    `appeal_status`   varchar(20) default 'none'            null,
-    `handled_by`      varchar(100)                          null,
-    `handle_result`   text                                  null,
-    `handled_at`      timestamp                             null,
-    `created_by`      varchar(100)                          null,
-    `created_at`      timestamp   default CURRENT_TIMESTAMP null,
-    `updated_by`      varchar(100)                          null,
-    `updated_at`      timestamp   default CURRENT_TIMESTAMP null on update CURRENT_TIMESTAMP,
-    constraint `fk_academic_warning_student_id` foreign key (`student_id`) references `student_profile` (`id`),
-    constraint `fk_academic_warning_rule_id` foreign key (`rule_id`) references `warning_rule` (`id`)
-);
-CREATE INDEX IF NOT EXISTS `idx_academic_warning_student_id` ON `academic_warning` (`student_id`);
-CREATE INDEX IF NOT EXISTS `idx_academic_warning_rule_id` ON `academic_warning` (`rule_id`);
-
-CREATE TABLE IF NOT EXISTS `academic_warnings` (
-    `id`            bigint auto_increment primary key,
-    `student_id`    bigint                             not null comment '学生ID',
-    `student_name`  varchar(100)                       null comment '学生姓名',
-    `warning_level` int      default 1                 null comment '预警等级：1-低, 2-中, 3-高',
-    `warning_type`  varchar(50)                        null comment '预警类型',
-    `description`   text                               null comment '预警描述',
-    `status`        int      default 0                 null comment '状态：0-待处理, 1-已处理, 2-已解除',
-    `rule_id`       bigint                             null comment '关联规则ID',
-    `created_at`    datetime default CURRENT_TIMESTAMP null comment '创建时间',
-    `updated_at`    datetime default CURRENT_TIMESTAMP null on update CURRENT_TIMESTAMP comment '更新时间',
-    `processed_by`  bigint                             null comment '处理人ID',
-    `process_time`  datetime                           null comment '处理时间',
-    `process_note`  text                               null comment '处理备注'
-) comment '预警记录表';
-CREATE INDEX IF NOT EXISTS `idx_academic_warnings_student_id` ON `academic_warnings` (`student_id`);
-CREATE INDEX IF NOT EXISTS `idx_academic_warnings_rule_id` ON `academic_warnings` (`rule_id`);
-CREATE INDEX IF NOT EXISTS `idx_academic_warnings_status` ON `academic_warnings` (`status`);
-CREATE INDEX IF NOT EXISTS `idx_academic_warnings_warning_level` ON `academic_warnings` (`warning_level`);
+    `id` bigint NOT NULL AUTO_INCREMENT,
+    `student_id` bigint NOT NULL,
+    `student_name` varchar(100) DEFAULT NULL,
+    `rule_id` bigint DEFAULT NULL,
+    `type` int DEFAULT NULL,
+    `title` varchar(100) DEFAULT NULL,
+    `description` text,
+    `warning_level` int NOT NULL,
+    `warning_message` text,
+    `trigger_score` decimal(5,2) DEFAULT NULL,
+    `gpa_before` decimal(5,2) DEFAULT NULL,
+    `gpa_after` decimal(5,2) DEFAULT NULL,
+    `status` int DEFAULT '0',
+    `appeal_status` varchar(20) DEFAULT 'none',
+    `handled_by` varchar(100) DEFAULT NULL,
+    `handle_result` text,
+    `handled_at` timestamp NULL DEFAULT NULL,
+    `created_by` varchar(100) DEFAULT NULL,
+    `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+    `updated_by` varchar(100) DEFAULT NULL,
+    `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    KEY `idx_academic_warning_rule_id` (`rule_id`),
+    KEY `idx_academic_warning_student_id` (`student_id`),
+    CONSTRAINT `fk_academic_warning_student_id` FOREIGN KEY (`student_id`) REFERENCES `student_profile` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `warning_release_records` (
-    `id`             bigint auto_increment primary key,
-    `warning_id`     bigint                             not null comment '关联预警记录ID',
-    `student_id`     bigint                             not null comment '学生ID',
-    `release_reason` varchar(50)                        null comment '解除原因：makeup_pass-补考通过, retake_pass-重修合格, other-其他',
-    `release_note`   text                               null comment '解除备注',
-    `release_by`     bigint                             null comment '解除人ID',
-    `release_time`   datetime default CURRENT_TIMESTAMP null comment '解除时间'
-) comment '预警解除记录表';
-CREATE INDEX IF NOT EXISTS `idx_warning_release_records_warning_id` ON `warning_release_records` (`warning_id`);
-CREATE INDEX IF NOT EXISTS `idx_warning_release_records_student_id` ON `warning_release_records` (`student_id`);
+    `id` bigint NOT NULL AUTO_INCREMENT,
+    `warning_id` bigint NOT NULL COMMENT '关联预警记录ID',
+    `student_id` bigint NOT NULL COMMENT '学生ID',
+    `release_reason` varchar(50) DEFAULT NULL COMMENT '解除原因：makeup_pass-补考通过, retake_pass-重修合格, other-其他',
+    `release_note` text COMMENT '解除备注',
+    `release_by` bigint DEFAULT NULL COMMENT '解除人ID',
+    `release_time` datetime DEFAULT CURRENT_TIMESTAMP COMMENT '解除时间',
+    PRIMARY KEY (`id`),
+    KEY `idx_warning_id` (`warning_id`),
+    KEY `idx_student_id` (`student_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci comment '预警解除记录表';
 
 CREATE TABLE IF NOT EXISTS `warning_tracking_records` (
-    `id`               bigint auto_increment primary key,
-    `warning_id`       bigint                             not null comment '关联预警记录ID',
-    `tracking_time`    datetime default CURRENT_TIMESTAMP null comment '跟踪时间',
-    `tracking_content` text                               null comment '跟踪内容',
-    `tracking_by`      bigint                             null comment '跟踪人ID',
-    `next_follow_time` datetime                           null comment '下次跟进时间'
-) comment '预警跟踪记录表';
-CREATE INDEX IF NOT EXISTS `idx_warning_tracking_records_warning_id` ON `warning_tracking_records` (`warning_id`);
+    `id` bigint NOT NULL AUTO_INCREMENT,
+    `warning_id` bigint NOT NULL COMMENT '关联预警记录ID',
+    `tracking_time` datetime DEFAULT CURRENT_TIMESTAMP COMMENT '跟踪时间',
+    `tracking_content` text COMMENT '跟踪内容',
+    `tracking_by` bigint DEFAULT NULL COMMENT '跟踪人ID',
+    `next_follow_time` datetime DEFAULT NULL COMMENT '下次跟进时间',
+    PRIMARY KEY (`id`),
+    KEY `idx_warning_id` (`warning_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci comment '预警跟踪记录表';
 
 -- ==================== 帮扶计划 ====================
 
 CREATE TABLE IF NOT EXISTS `assistance_plans` (
-    `id`           bigint auto_increment primary key,
-    `counselor_id` bigint                              null,
-    `student_id`   bigint                              not null,
-    `content`      text                                null,
-    `status`       int       default 0                 null,
-    `created_at`   timestamp default CURRENT_TIMESTAMP null,
-    `updated_at`   timestamp default CURRENT_TIMESTAMP null on update CURRENT_TIMESTAMP,
-    constraint `fk_assistance_plans_student_id` foreign key (`student_id`) references `student_profile` (`id`)
-);
-CREATE INDEX IF NOT EXISTS `idx_assistance_plans_student_id` ON `assistance_plans` (`student_id`);
-CREATE INDEX IF NOT EXISTS `idx_assistance_plans_counselor_id` ON `assistance_plans` (`counselor_id`);
+    `id` bigint NOT NULL AUTO_INCREMENT,
+    `counselor_id` bigint DEFAULT NULL,
+    `student_id` bigint NOT NULL,
+    `content` text,
+    `status` int DEFAULT '0',
+    `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+    `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    `progress` tinyint NOT NULL DEFAULT '0' COMMENT '完成进度百分比 0-100',
+    PRIMARY KEY (`id`),
+    KEY `idx_assistance_plans_counselor_id` (`counselor_id`),
+    KEY `idx_assistance_plans_student_id` (`student_id`),
+    CONSTRAINT `fk_assistance_plans_student_id` FOREIGN KEY (`student_id`) REFERENCES `student_profile` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `assistance_evaluations` (
-    `id`           bigint auto_increment primary key,
-    `plan_id`      bigint                              not null,
-    `counselor_id` bigint                              null,
-    `content`      text                                null,
-    `score`        int                                 null,
-    `created_at`   timestamp default CURRENT_TIMESTAMP null,
-    `updated_at`   timestamp default CURRENT_TIMESTAMP null on update CURRENT_TIMESTAMP,
-    constraint `fk_assistance_evaluations_plan_id` foreign key (`plan_id`) references `assistance_plans` (`id`)
-);
-CREATE INDEX IF NOT EXISTS `idx_assistance_evaluations_plan_id` ON `assistance_evaluations` (`plan_id`);
-CREATE INDEX IF NOT EXISTS `idx_assistance_evaluations_counselor_id` ON `assistance_evaluations` (`counselor_id`);
+    `id` bigint NOT NULL AUTO_INCREMENT,
+    `plan_id` bigint NOT NULL,
+    `counselor_id` bigint DEFAULT NULL,
+    `content` text,
+    `score` int DEFAULT NULL,
+    `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+    `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    KEY `idx_assistance_evaluations_plan_id` (`plan_id`),
+    KEY `idx_assistance_evaluations_counselor_id` (`counselor_id`),
+    CONSTRAINT `fk_assistance_evaluations_plan_id` FOREIGN KEY (`plan_id`) REFERENCES `assistance_plans` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ==================== 消息与通知 ====================
 
 CREATE TABLE IF NOT EXISTS `messages` (
-    `id`          bigint auto_increment primary key,
-    `sender_id`   bigint                              not null,
-    `receiver_id` bigint                              not null,
-    `title`       varchar(255)                        null,
-    `content`     text                                not null,
-    `type`        int       default 1                 not null,
-    `status`      int       default 0                 null,
-    `created_at`  timestamp default CURRENT_TIMESTAMP null,
-    `updated_at`  timestamp default CURRENT_TIMESTAMP null on update CURRENT_TIMESTAMP,
-    `read_at`     datetime                            null,
-    constraint `fk_messages_sender_id` foreign key (`sender_id`) references `users` (`id`),
-    constraint `fk_messages_receiver_id` foreign key (`receiver_id`) references `users` (`id`)
-);
+    `id` bigint NOT NULL AUTO_INCREMENT,
+    `sender_id` bigint NOT NULL,
+    `receiver_id` bigint NOT NULL,
+    `title` varchar(255) DEFAULT NULL,
+    `content` text NOT NULL,
+    `type` int NOT NULL DEFAULT '1',
+    `status` int DEFAULT '0',
+    `extra` varchar(500) DEFAULT NULL,
+    `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+    `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    `read_at` datetime DEFAULT NULL,
+    PRIMARY KEY (`id`),
+    KEY `fk_messages_sender_id` (`sender_id`),
+    KEY `fk_messages_receiver_id` (`receiver_id`),
+    CONSTRAINT `fk_messages_receiver_id` FOREIGN KEY (`receiver_id`) REFERENCES `users` (`id`) ON DELETE CASCADE,
+    CONSTRAINT `fk_messages_sender_id` FOREIGN KEY (`sender_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `notifications` (
-    `id`           bigint auto_increment primary key,
-    `user_id`      bigint                                not null,
-    `title`        varchar(100)                          null,
-    `content`      text                                  not null,
-    `type`         varchar(50)                           null,
-    `warning_id`   bigint                                null,
-    `push_channel` varchar(50) default 'app'             null,
-    `is_read`      int         default 0                 null,
-    `is_deleted`   int         default 0                 null,
-    `created_at`   timestamp   default CURRENT_TIMESTAMP null,
-    `updated_at`   timestamp   default CURRENT_TIMESTAMP null on update CURRENT_TIMESTAMP,
-    constraint `fk_notifications_user_id` foreign key (`user_id`) references `users` (`id`)
-);
-CREATE INDEX IF NOT EXISTS `idx_notifications_user_id` ON `notifications` (`user_id`);
+    `id` bigint NOT NULL AUTO_INCREMENT,
+    `user_id` bigint NOT NULL,
+    `title` varchar(100) DEFAULT NULL,
+    `content` text NOT NULL,
+    `type` varchar(50) DEFAULT NULL,
+    `warning_id` bigint DEFAULT NULL,
+    `push_channel` varchar(50) DEFAULT 'app',
+    `is_read` int DEFAULT '0',
+    `is_deleted` int DEFAULT '0',
+    `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+    `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    KEY `idx_notifications_user_id` (`user_id`),
+    CONSTRAINT `fk_notifications_user_id` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `communication_logs` (
-    `id`           bigint auto_increment primary key,
-    `counselor_id` bigint                              null,
-    `teacher_id`   bigint                              null,
-    `student_id`   bigint                              null,
-    `warning_id`   bigint                              null,
-    `content`      text                                null,
-    `category`     varchar(50)                         null,
-    `status`       int       default 0                 null,
-    `reply`        text                                null,
-    `created_at`   timestamp default CURRENT_TIMESTAMP null,
-    `updated_at`   timestamp default CURRENT_TIMESTAMP null on update CURRENT_TIMESTAMP
-);
-CREATE INDEX IF NOT EXISTS `idx_communication_logs_counselor_id` ON `communication_logs` (`counselor_id`);
-CREATE INDEX IF NOT EXISTS `idx_communication_logs_student_id` ON `communication_logs` (`student_id`);
-CREATE INDEX IF NOT EXISTS `idx_communication_logs_warning_id` ON `communication_logs` (`warning_id`);
+    `id` bigint NOT NULL AUTO_INCREMENT,
+    `counselor_id` bigint DEFAULT NULL,
+    `teacher_id` bigint DEFAULT NULL,
+    `student_id` bigint DEFAULT NULL,
+    `warning_id` bigint DEFAULT NULL,
+    `content` text,
+    `category` varchar(50) DEFAULT NULL,
+    `status` int DEFAULT '0',
+    `reply` text,
+    `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+    `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    KEY `idx_communication_logs_counselor_id` (`counselor_id`),
+    KEY `idx_communication_logs_student_id` (`student_id`),
+    KEY `idx_communication_logs_warning_id` (`warning_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `communication_record` (
-    `id`           bigint auto_increment primary key,
-    `teacher_id`   bigint                             not null,
-    `student_id`   bigint                             not null,
-    `content`      text                               null,
-    `type`         varchar(50)                        null,
-    `student_name` varchar(100)                       null,
-    `create_time`  datetime default CURRENT_TIMESTAMP null
-) comment '沟通记录表';
-CREATE INDEX IF NOT EXISTS `idx_communication_record_student_id` ON `communication_record` (`student_id`);
-CREATE INDEX IF NOT EXISTS `idx_communication_record_teacher_id` ON `communication_record` (`teacher_id`);
-CREATE INDEX IF NOT EXISTS `idx_communication_record_type` ON `communication_record` (`type`);
+    `id` bigint NOT NULL AUTO_INCREMENT,
+    `teacher_id` bigint NOT NULL,
+    `student_id` bigint NOT NULL,
+    `content` text,
+    `type` varchar(50) DEFAULT NULL,
+    `student_name` varchar(100) DEFAULT NULL,
+    `create_time` datetime DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    KEY `idx_teacher_id` (`teacher_id`),
+    KEY `idx_student_id` (`student_id`),
+    KEY `idx_type` (`type`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci comment '沟通记录表';
 
 -- ==================== 反馈 ====================
 
 CREATE TABLE IF NOT EXISTS `feedbacks` (
-    `id`            bigint auto_increment primary key,
-    `teacher_id`    bigint                              not null,
-    `student_id`    bigint                              not null,
-    `content`       text                                not null,
-    `category`      varchar(50)                         null,
-    `rating`        int                                 null,
-    `status`        varchar(50)                         null,
-    `reply_content` text                                null,
-    `replied_at`    timestamp                           null,
-    `created_at`    timestamp default CURRENT_TIMESTAMP null,
-    `updated_at`    timestamp default CURRENT_TIMESTAMP null on update CURRENT_TIMESTAMP,
-    constraint `fk_feedbacks_teacher_id` foreign key (`teacher_id`) references `users` (`id`),
-    constraint `fk_feedbacks_student_id` foreign key (`student_id`) references `student_profile` (`id`)
-);
-CREATE INDEX IF NOT EXISTS `idx_feedbacks_teacher_id` ON `feedbacks` (`teacher_id`);
-CREATE INDEX IF NOT EXISTS `idx_feedbacks_student_id` ON `feedbacks` (`student_id`);
+    `id` bigint NOT NULL AUTO_INCREMENT,
+    `teacher_id` bigint NOT NULL,
+    `student_id` bigint NOT NULL,
+    `content` text NOT NULL,
+    `category` varchar(50) DEFAULT NULL,
+    `rating` int DEFAULT NULL,
+    `status` varchar(50) DEFAULT NULL,
+    `reply_content` text,
+    `replied_at` timestamp NULL DEFAULT NULL,
+    `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+    `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    KEY `idx_feedbacks_teacher_id` (`teacher_id`),
+    KEY `idx_feedbacks_student_id` (`student_id`),
+    CONSTRAINT `fk_feedbacks_student_id` FOREIGN KEY (`student_id`) REFERENCES `student_profile` (`id`),
+    CONSTRAINT `fk_feedbacks_teacher_id` FOREIGN KEY (`teacher_id`) REFERENCES `users` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `feedback` (
-    `id`          bigint auto_increment primary key,
-    `teacher_id`  bigint                             not null,
-    `category`    varchar(50)                        null,
-    `content`     text                               null,
-    `reply`       text                               null,
-    `status`      int      default 0                 null comment '0-未回复, 1-已回复',
-    `create_time` datetime default CURRENT_TIMESTAMP null,
-    `update_time` datetime default CURRENT_TIMESTAMP null on update CURRENT_TIMESTAMP
-) comment '反馈表';
-CREATE INDEX IF NOT EXISTS `idx_feedback_teacher_id` ON `feedback` (`teacher_id`);
-CREATE INDEX IF NOT EXISTS `idx_feedback_category` ON `feedback` (`category`);
-CREATE INDEX IF NOT EXISTS `idx_feedback_status` ON `feedback` (`status`);
+    `id` bigint NOT NULL AUTO_INCREMENT,
+    `teacher_id` bigint NOT NULL,
+    `category` varchar(50) DEFAULT NULL,
+    `content` text,
+    `reply` text,
+    `status` int DEFAULT '0' COMMENT '0-未回复, 1-已回复',
+    `create_time` datetime DEFAULT CURRENT_TIMESTAMP,
+    `update_time` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    KEY `idx_teacher_id` (`teacher_id`),
+    KEY `idx_category` (`category`),
+    KEY `idx_status` (`status`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci comment '反馈表';
 
 -- ==================== 班级管理申请 ====================
 
 CREATE TABLE IF NOT EXISTS `class_management_request` (
-    `id`            bigint auto_increment primary key,
-    `teacher_id`    bigint                                not null,
-    `class_id`      bigint                                not null,
-    `counselor_id`  bigint                                null,
-    `user_type`     varchar(20)                           null,
-    `status`        varchar(20) default 'pending'         null,
-    `reason`        varchar(500)                          null,
-    `reject_reason` varchar(500)                          null,
-    `created_at`    timestamp   default CURRENT_TIMESTAMP null,
-    `updated_at`    timestamp   default CURRENT_TIMESTAMP null on update CURRENT_TIMESTAMP,
-    constraint `uk_class_management_request_teacher_class` unique (`teacher_id`, `class_id`),
-    constraint `fk_class_management_request_teacher_id` foreign key (`teacher_id`) references `users` (`id`),
-    constraint `fk_class_management_request_class_id` foreign key (`class_id`) references `classes` (`id`)
-) comment '班级管理申请表';
-CREATE INDEX IF NOT EXISTS `idx_class_management_request_class_id` ON `class_management_request` (`class_id`);
-CREATE INDEX IF NOT EXISTS `idx_class_management_request_status` ON `class_management_request` (`status`);
+    `id` bigint NOT NULL AUTO_INCREMENT,
+    `teacher_id` bigint NOT NULL,
+    `class_id` bigint NOT NULL,
+    `counselor_id` bigint DEFAULT NULL,
+    `user_type` varchar(20) DEFAULT NULL,
+    `status` varchar(20) DEFAULT 'pending',
+    `reason` varchar(500) DEFAULT NULL,
+    `reject_reason` varchar(500) DEFAULT NULL,
+    `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+    `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_class_management_request_teacher_class` (`teacher_id`,`class_id`),
+    KEY `idx_class_management_request_class_id` (`class_id`),
+    KEY `idx_class_management_request_status` (`status`),
+    CONSTRAINT `fk_class_management_request_class_id` FOREIGN KEY (`class_id`) REFERENCES `classes` (`id`),
+    CONSTRAINT `fk_class_management_request_teacher_id` FOREIGN KEY (`teacher_id`) REFERENCES `users` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci comment '班级管理申请表';
 
 CREATE TABLE IF NOT EXISTS `teacher_class_application` (
-    `id`               bigint auto_increment primary key,
-    `teacher_id`       bigint                             not null,
-    `class_id`         bigint                             not null,
-    `reason`           text                               null,
-    `status`           int      default 0                 null comment '0-待审核, 1-通过, 2-拒绝',
-    `create_time`      datetime default CURRENT_TIMESTAMP null,
-    `update_time`      datetime default CURRENT_TIMESTAMP null on update CURRENT_TIMESTAMP,
-    `class_name`       varchar(100)                       null,
-    `teacher_name`     varchar(100)                       null,
-    `teacher_username` varchar(50)                        null,
-    `application_type` int      default 0                 null comment '申请类型：0-申请管理，1-解除管理',
-    `reject_reason`    varchar(500)                       null comment '拒绝原因'
-) comment '教师班级管理申请表';
-CREATE INDEX IF NOT EXISTS `idx_teacher_class_application_teacher_id` ON `teacher_class_application` (`teacher_id`);
-CREATE INDEX IF NOT EXISTS `idx_teacher_class_application_class_id` ON `teacher_class_application` (`class_id`);
-CREATE INDEX IF NOT EXISTS `idx_teacher_class_application_status` ON `teacher_class_application` (`status`);
-CREATE INDEX IF NOT EXISTS `idx_teacher_class_application_type` ON `teacher_class_application` (`application_type`);
+    `id` bigint NOT NULL AUTO_INCREMENT,
+    `teacher_id` bigint NOT NULL,
+    `class_id` bigint NOT NULL,
+    `reason` text,
+    `status` int DEFAULT '0' COMMENT '0-待审核, 1-通过, 2-拒绝',
+    `create_time` datetime DEFAULT CURRENT_TIMESTAMP,
+    `update_time` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    `class_name` varchar(100) DEFAULT NULL,
+    `teacher_name` varchar(100) DEFAULT NULL,
+    `teacher_username` varchar(50) DEFAULT NULL,
+    `application_type` int DEFAULT '0' COMMENT '申请类型：0-申请管理，1-解除管理',
+    `reject_reason` varchar(500) DEFAULT NULL COMMENT '拒绝原因',
+    PRIMARY KEY (`id`),
+    KEY `idx_teacher_id` (`teacher_id`),
+    KEY `idx_class_id` (`class_id`),
+    KEY `idx_status` (`status`),
+    KEY `idx_application_type` (`application_type`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci comment '教师班级管理申请表';
 
 CREATE TABLE IF NOT EXISTS `counselor_class_application` (
-    `id`               bigint auto_increment primary key,
-    `counselor_id`     bigint                             not null,
-    `class_id`         bigint                             not null,
-    `reason`           text                               null,
-    `status`           int      default 0                 null comment '0-待审核, 1-通过, 2-拒绝',
-    `create_time`      datetime default CURRENT_TIMESTAMP null,
-    `update_time`      datetime default CURRENT_TIMESTAMP null on update CURRENT_TIMESTAMP,
-    `class_name`       varchar(100)                       null,
-    `counselor_name`   varchar(100)                       null,
-    `application_type` int      default 0                 null comment '申请类型：0-申请管理，1-解除管理'
-) comment '辅导员班级管理申请表';
-CREATE INDEX IF NOT EXISTS `idx_counselor_class_application_counselor_id` ON `counselor_class_application` (`counselor_id`);
-CREATE INDEX IF NOT EXISTS `idx_counselor_class_application_class_id` ON `counselor_class_application` (`class_id`);
-CREATE INDEX IF NOT EXISTS `idx_counselor_class_application_status` ON `counselor_class_application` (`status`);
-CREATE INDEX IF NOT EXISTS `idx_counselor_class_application_type` ON `counselor_class_application` (`application_type`);
+    `id` bigint NOT NULL AUTO_INCREMENT,
+    `counselor_id` bigint NOT NULL,
+    `class_id` bigint NOT NULL,
+    `reason` text,
+    `status` int DEFAULT '0' COMMENT '0-待审核, 1-通过, 2-拒绝',
+    `create_time` datetime DEFAULT CURRENT_TIMESTAMP,
+    `update_time` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    `class_name` varchar(100) DEFAULT NULL,
+    `counselor_name` varchar(100) DEFAULT NULL,
+    `application_type` int DEFAULT '0' COMMENT '申请类型：0-申请管理，1-解除管理',
+    PRIMARY KEY (`id`),
+    KEY `idx_counselor_id` (`counselor_id`),
+    KEY `idx_class_id` (`class_id`),
+    KEY `idx_status` (`status`),
+    KEY `idx_application_type` (`application_type`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci comment '辅导员班级管理申请表';
 
 CREATE TABLE IF NOT EXISTS `counselor_class_management` (
-    `id`           bigint auto_increment primary key,
-    `counselor_id` bigint                             not null comment '辅导员ID',
-    `class_id`     bigint                             not null comment '班级ID',
-    `class_name`   varchar(100)                       null comment '班级名称',
-    `status`       int      default 1                 null comment '状态: 0-解除管理, 1-管理中',
-    `created_at`   datetime default CURRENT_TIMESTAMP null,
-    `updated_at`   datetime default CURRENT_TIMESTAMP null on update CURRENT_TIMESTAMP,
-    constraint `uk_counselor_class` unique (`counselor_id`, `class_id`)
-) comment '辅导员班级管理表';
-CREATE INDEX IF NOT EXISTS `idx_counselor_class_management_counselor_id` ON `counselor_class_management` (`counselor_id`);
-CREATE INDEX IF NOT EXISTS `idx_counselor_class_management_class_id` ON `counselor_class_management` (`class_id`);
-CREATE INDEX IF NOT EXISTS `idx_counselor_class_management_status` ON `counselor_class_management` (`status`);
+    `id` bigint NOT NULL AUTO_INCREMENT,
+    `counselor_id` bigint NOT NULL COMMENT '辅导员ID',
+    `class_id` bigint NOT NULL COMMENT '班级ID',
+    `class_name` varchar(100) DEFAULT NULL COMMENT '班级名称',
+    `status` int DEFAULT '1' COMMENT '状态: 0-解除管理, 1-管理中',
+    `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
+    `updated_at` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_counselor_class` (`counselor_id`,`class_id`),
+    KEY `idx_counselor_id` (`counselor_id`),
+    KEY `idx_class_id` (`class_id`),
+    KEY `idx_status` (`status`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci comment '辅导员班级管理表';
 
 -- ==================== 学生设置与偏好 ====================
 
 CREATE TABLE IF NOT EXISTS `student_settings` (
-    `id`                   bigint auto_increment primary key,
-    `student_id`           bigint                                not null,
-    `notification_enabled` tinyint(1)  default 1                 null,
-    `email_notifications`  tinyint(1)  default 1                 null,
-    `theme`                varchar(50) default 'light'           null,
-    `created_at`           timestamp   default CURRENT_TIMESTAMP null,
-    `updated_at`           timestamp   default CURRENT_TIMESTAMP null on update CURRENT_TIMESTAMP,
-    constraint `fk_student_settings_student_id` foreign key (`student_id`) references `student_profile` (`id`)
-);
-CREATE INDEX IF NOT EXISTS `idx_student_settings_student_id` ON `student_settings` (`student_id`);
+    `id` bigint NOT NULL AUTO_INCREMENT,
+    `student_id` bigint NOT NULL,
+    `notification_enabled` tinyint(1) DEFAULT '1',
+    `email_notifications` tinyint(1) DEFAULT '1',
+    `theme` varchar(50) DEFAULT 'light',
+    `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+    `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    KEY `idx_student_settings_student_id` (`student_id`),
+    CONSTRAINT `fk_student_settings_student_id` FOREIGN KEY (`student_id`) REFERENCES `student_profile` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `user_settings` (
+    `id` bigint NOT NULL AUTO_INCREMENT,
+    `user_id` bigint NOT NULL COMMENT 'users.id（不是 student_profile.id）',
+    `warning_notification` tinyint(1) NOT NULL DEFAULT '1' COMMENT '接收预警通知',
+    `system_message` tinyint(1) NOT NULL DEFAULT '1' COMMENT '接收系统消息',
+    `class_notification` tinyint(1) NOT NULL DEFAULT '1' COMMENT '接收班级通知',
+    `student_feedback` tinyint(1) NOT NULL DEFAULT '1' COMMENT '接收学生反馈',
+    `email_reminder` tinyint(1) NOT NULL DEFAULT '0' COMMENT '邮件提醒',
+    `office_location` varchar(200) CHARACTER SET utf8mb4 DEFAULT NULL COMMENT '办公地点',
+    `office_phone` varchar(20) CHARACTER SET utf8mb4 DEFAULT NULL COMMENT '办公电话',
+    `office_hours` varchar(100) CHARACTER SET utf8mb4 DEFAULT NULL COMMENT '办公时间',
+    `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+    `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_user_settings_user_id` (`user_id`),
+    CONSTRAINT `fk_user_settings_user_id` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `subscription_preferences` (
-    `id`                   bigint auto_increment primary key,
-    `student_id`           bigint                               not null,
-    `subscribe_warnings`   tinyint(1) default 1                 null,
-    `subscribe_low`        tinyint(1) default 0                 null,
-    `subscribe_medium`     tinyint(1) default 1                 null,
-    `subscribe_high`       tinyint(1) default 1                 null,
-    `subscribe_assistance` tinyint(1) default 1                 null,
-    `subscribe_system`     tinyint(1) default 1                 null,
-    `push_email`           tinyint(1) default 1                 null,
-    `push_sms`             tinyint(1) default 0                 null,
-    `push_app`             tinyint(1) default 1                 null,
-    `created_at`           timestamp  default CURRENT_TIMESTAMP null,
-    `updated_at`           timestamp  default CURRENT_TIMESTAMP null on update CURRENT_TIMESTAMP,
-    constraint `uk_subscription_preferences_student_id` unique (`student_id`),
-    constraint `fk_subscription_preferences_student_id` foreign key (`student_id`) references `student_profile` (`id`)
-);
+    `id` bigint NOT NULL AUTO_INCREMENT,
+    `student_id` bigint NOT NULL,
+    `subscribe_warnings` tinyint(1) DEFAULT '1',
+    `subscribe_low` tinyint(1) DEFAULT '0',
+    `subscribe_medium` tinyint(1) DEFAULT '1',
+    `subscribe_high` tinyint(1) DEFAULT '1',
+    `subscribe_assistance` tinyint(1) DEFAULT '1',
+    `subscribe_system` tinyint(1) DEFAULT '1',
+    `push_email` tinyint(1) DEFAULT '1',
+    `push_sms` tinyint(1) DEFAULT '0',
+    `push_app` tinyint(1) DEFAULT '1',
+    `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+    `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_subscription_preferences_student_id` (`student_id`),
+    CONSTRAINT `fk_subscription_preferences_student_id` FOREIGN KEY (`student_id`) REFERENCES `student_profile` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ==================== 基准分析 ====================
 
 CREATE TABLE IF NOT EXISTS `benchmark_analysis` (
-    `id`               bigint auto_increment primary key,
-    `student_id`       bigint                              not null,
-    `class_id`         bigint                              null,
-    `major_id`         bigint                              null,
-    `semester`         varchar(50)                         null,
-    `student_gpa`      decimal(5, 3)                       null,
-    `class_avg_gpa`    decimal(5, 3)                       null,
-    `major_avg_gpa`    decimal(5, 3)                       null,
-    `class_rank`       int                                 null,
-    `class_total`      int                                 null,
-    `major_rank`       int                                 null,
-    `major_total`      int                                 null,
-    `courses_passed`   int       default 0                 null,
-    `courses_failed`   int       default 0                 null,
-    `required_credits` decimal(5, 2)                       null,
-    `credits_on_track` int       default 1                 null,
-    `created_at`       timestamp default CURRENT_TIMESTAMP null,
-    `updated_at`       timestamp default CURRENT_TIMESTAMP null on update CURRENT_TIMESTAMP,
-    constraint `uk_benchmark_analysis_student_semester` unique (`student_id`, `semester`),
-    constraint `fk_benchmark_analysis_student_id` foreign key (`student_id`) references `student_profile` (`id`)
-);
-CREATE INDEX IF NOT EXISTS `idx_benchmark_analysis_student_id` ON `benchmark_analysis` (`student_id`);
-CREATE INDEX IF NOT EXISTS `idx_benchmark_analysis_class_id` ON `benchmark_analysis` (`class_id`);
-CREATE INDEX IF NOT EXISTS `idx_benchmark_analysis_major_id` ON `benchmark_analysis` (`major_id`);
+    `id` bigint NOT NULL AUTO_INCREMENT,
+    `student_id` bigint NOT NULL,
+    `class_id` bigint DEFAULT NULL,
+    `major_id` bigint DEFAULT NULL,
+    `semester` varchar(50) DEFAULT NULL,
+    `student_gpa` decimal(5,3) DEFAULT NULL,
+    `class_avg_gpa` decimal(5,3) DEFAULT NULL,
+    `major_avg_gpa` decimal(5,3) DEFAULT NULL,
+    `class_rank` int DEFAULT NULL,
+    `class_total` int DEFAULT NULL,
+    `major_rank` int DEFAULT NULL,
+    `major_total` int DEFAULT NULL,
+    `courses_passed` int DEFAULT '0',
+    `courses_failed` int DEFAULT '0',
+    `required_credits` decimal(5,2) DEFAULT NULL,
+    `credits_on_track` int DEFAULT '1',
+    `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+    `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_benchmark_analysis_student_semester` (`student_id`,`semester`),
+    KEY `idx_benchmark_analysis_student_id` (`student_id`),
+    KEY `idx_benchmark_analysis_class_id` (`class_id`),
+    KEY `idx_benchmark_analysis_major_id` (`major_id`),
+    CONSTRAINT `fk_benchmark_analysis_student_id` FOREIGN KEY (`student_id`) REFERENCES `student_profile` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

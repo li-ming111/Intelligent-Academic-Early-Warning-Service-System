@@ -1,5 +1,6 @@
 package com.academic.controller;
 
+import com.academic.common.constant.ScoreCaliber;
 import com.academic.common.dto.ApiResponse;
 import com.academic.common.entity.CounselorProfile;
 import com.academic.common.entity.AssistancePlan;
@@ -444,18 +445,53 @@ public class CounselorController {
      * 更新帮扶计划状态
      */
     @PatchMapping("/assistance-plans/{id}/status")
-    public ApiResponse<String> updateAssistancePlanStatus(@PathVariable Long id, @RequestBody Map<String, String> statusMap) {
+    public ApiResponse<String> updateAssistancePlanStatus(@PathVariable Long id, @RequestBody Map<String, Object> statusMap) {
         try {
-            String status = statusMap.get("status");
-            boolean success = assistancePlanService.updatePlanStatus(id, status);
+            Object raw = statusMap.get("status");
+            if (raw == null) {
+                return ApiResponse.badRequest("缺少 status 字段");
+            }
+            boolean success = assistancePlanService.updatePlanStatus(id, raw.toString());
             if (success) {
                 return ApiResponse.success("帮扶计划状态更新成功");
             } else {
                 return ApiResponse.notFound("帮扶计划不存在");
             }
+        } catch (IllegalArgumentException e) {
+            // 状态值非法属于客户端问题，返回 400 而不是 500
+            return ApiResponse.badRequest(e.getMessage());
         } catch (Exception e) {
             log.error("更新帮扶计划状态失败: {}", e.getMessage());
             return ApiResponse.serverError("更新帮扶计划状态失败: " + e.getMessage());
+        }
+    }
+
+    /**
+     * 更新帮扶计划进度（0~100）。
+     *
+     * <p>与 {@code /status} 分开：状态是枚举，进度是百分比。此前只有 status 一个入口，
+     * 学生端把百分比塞进 status 写库，辅导员端把中文/英文状态名塞进去触发
+     * {@code NumberFormatException}。
+     */
+    @PatchMapping("/assistance-plans/{id}/progress")
+    public ApiResponse<String> updateAssistancePlanProgress(@PathVariable Long id,
+                                                            @RequestBody Map<String, Object> body) {
+        try {
+            Object raw = body.get("progress");
+            if (raw == null) {
+                return ApiResponse.badRequest("缺少 progress 字段");
+            }
+            boolean success = assistancePlanService.updatePlanProgress(
+                    id, new java.math.BigDecimal(raw.toString().trim()));
+            return success ? ApiResponse.success("帮扶计划进度更新成功")
+                           : ApiResponse.notFound("帮扶计划不存在");
+        } catch (NumberFormatException e) {
+            return ApiResponse.badRequest("进度必须是数字");
+        } catch (IllegalArgumentException e) {
+            return ApiResponse.badRequest(e.getMessage());
+        } catch (Exception e) {
+            log.error("更新帮扶计划进度失败: {}", e.getMessage());
+            return ApiResponse.serverError("更新帮扶计划进度失败: " + e.getMessage());
         }
     }
 
@@ -893,28 +929,43 @@ public class CounselorController {
     }
 
     /**
-     * 获取学分监控数据
+     * 获取学分监控数据。
+     *
+     * <p>原实现把"学分不足"写死为 0、"达标"写死为全部学生，{@code classMonitors} /
+     * {@code excellentClasses} / {@code lowClasses} 三个字段干脆没有返回，
+     * 于是前端"班级达标率对比"表永远是空的、"优秀班级/风险班级"恒为 0。
+     * 这里全部改为由 {@link #buildClassMonitors} 的真实统计得出。
      */
     @GetMapping("/credit-monitor")
     public ApiResponse<Map<String, Object>> getCreditMonitor(@RequestParam("counselor_id") Long counselorId) {
         try {
-            // 获取辅导员管理的班级列表
-            List<Map<String, Object>> classes = classInfoService.getClassesByCounselorId(counselorId);
-            
+            List<Map<String, Object>> classMonitors = buildClassMonitors(counselorId);
+
             int totalStudents = 0;
-            for (Map<String, Object> clazz : classes) {
-                Object countObj = clazz.get("studentCount");
-                if (countObj instanceof Number) {
-                    totalStudents += ((Number) countObj).intValue();
-                }
+            int gradedStudents = 0;
+            int achievementStudents = 0;
+            int excellentClasses = 0;
+            int lowClasses = 0;
+            for (Map<String, Object> clazz : classMonitors) {
+                totalStudents += intOf(clazz.get("studentCount"));
+                gradedStudents += intOf(clazz.get("gradedStudentCount"));
+                achievementStudents += intOf(clazz.get("creditAchievementCount"));
+                double rate = doubleOf(clazz.get("achievementRate"));
+                if (rate >= 80) excellentClasses++;
+                if (rate < 60) lowClasses++;
             }
-            
+
             Map<String, Object> creditData = new HashMap<>();
             creditData.put("totalStudents", totalStudents);
-            creditData.put("creditSufficient", totalStudents);
-            creditData.put("creditInsufficient", 0);
-            creditData.put("insufficientRate", 0);
-            
+            creditData.put("gradedStudents", gradedStudents);
+            creditData.put("creditSufficient", achievementStudents);
+            creditData.put("creditInsufficient", gradedStudents - achievementStudents);
+            creditData.put("insufficientRate", gradedStudents > 0
+                    ? Math.round((double) (gradedStudents - achievementStudents) / gradedStudents * 1000) / 10.0
+                    : 0);
+            creditData.put("excellentClasses", excellentClasses);
+            creditData.put("lowClasses", lowClasses);
+            creditData.put("classMonitors", classMonitors);
             return ApiResponse.success(creditData);
         } catch (Exception e) {
             log.error("获取学分监控数据失败: {}", e.getMessage());
@@ -923,30 +974,85 @@ public class CounselorController {
     }
 
     /**
-     * 获取学分不足的学生列表
+     * 各班达标情况，列名对齐前端 {@code CounselorCreditMonitor.vue} 的取值。
+     * "达标" = 已修课程全部通过（见 {@code ScoreMapper.getClassScoreStatsByCounselorId}）。
+     */
+    private List<Map<String, Object>> buildClassMonitors(Long counselorId) {
+        List<Map<String, Object>> stats = scoreMapper.getClassScoreStatsByCounselorId(counselorId);
+        List<Map<String, Object>> monitors = new ArrayList<>();
+        for (Map<String, Object> stat : stats) {
+            Map<String, Object> item = new HashMap<>();
+            item.put("classId", stat.get("class_id"));
+            item.put("className", stat.get("name"));
+            item.put("studentCount", intOf(stat.get("student_count")));
+            item.put("gradedStudentCount", intOf(stat.get("graded_student_count")));
+            item.put("creditAchievementCount", intOf(stat.get("credit_achievement_count")));
+            item.put("failStudentCount", intOf(stat.get("fail_student_count")));
+            // 无成绩记录的新生不计入分母，否则达标率被"还没考试的人"抬高
+            item.put("achievementRate", stat.get("achievement_rate") == null
+                    ? 0.0 : doubleOf(stat.get("achievement_rate")));
+            item.put("avgScore", stat.get("avg_score") == null ? 0.0 : doubleOf(stat.get("avg_score")));
+            monitors.add(item);
+        }
+        return monitors;
+    }
+
+    private static int intOf(Object value) {
+        return value instanceof Number ? ((Number) value).intValue() : 0;
+    }
+
+    private static double doubleOf(Object value) {
+        return value instanceof Number ? ((Number) value).doubleValue() : 0.0;
+    }
+
+    /**
+     * 取 Long 型主键。JDBC 驱动对 BIGINT 可能返回 Long 也可能返回 BigInteger，
+     * 因此不直接强转；无法识别时返回 null，让调用方走"无该班数据"分支而不是误配到 0 号班。
+     */
+    private static Long longOf(Object value) {
+        return value instanceof Number ? ((Number) value).longValue() : null;
+    }
+
+    /**
+     * 获取学分不足的学生列表。
+     *
+     * <p>原实现遍历班级花名册，把班里<b>每一个</b>学生都塞进结果（注释写着"简单统计"，
+     * 但那个统计根本没写），于是"学分不足"名单等于全校花名册；同时 {@code page} 参数
+     * 被接收却没有用于偏移，翻到第几页看到的都是第 1 页。这里改为真正按
+     * "已修学分 &lt; 应修学分（存在挂科）"筛选，并正确分页。
      */
     @GetMapping("/credit-insufficient")
     public ApiResponse<Map<String, Object>> getInsufficientCreditStudents(@RequestParam("counselor_id") Long counselorId,
                                                                   @RequestParam(defaultValue = "1") Integer page,
                                                                   @RequestParam(defaultValue = "20") Integer size) {
         try {
-            List<Map<String, Object>> classes = classInfoService.getClassesByCounselorId(counselorId);
+            List<Map<String, Object>> rows = scoreMapper.getInsufficientCreditStudents(counselorId);
             List<Map<String, Object>> students = new ArrayList<>();
-            for (Map<String, Object> clazz : classes) {
-                Long classId = (Long) clazz.get("id");
-                List<Map<String, Object>> classStudents = classInfoMapper.getStudentsByClassIdMap(classId);
-                // 获取该班级成绩，找出低分学生
-                List<Map<String, Object>> scores = scoreMapper.getScoresByClassId(classId);
-                for (Map<String, Object> student : classStudents) {
-                    // 简单统计：成绩数 < 预期即为学分不足的标记
-                    students.add(student);
-                }
+            for (Map<String, Object> row : rows) {
+                Map<String, Object> item = new HashMap<>();
+                item.put("studentId", row.get("student_no"));      // 学号，前端列头就是"学号"
+                item.put("profileId", row.get("profile_id"));      // profile.id，详情页跳转要用
+                item.put("studentName", row.get("student_name"));
+                item.put("className", row.get("class_name"));
+                item.put("score", row.get("earned_credits"));      // 已修得学分
+                item.put("attemptedCredits", row.get("attempted_credits"));
+                item.put("failCount", row.get("fail_count"));
+                item.put("riskLevel", intOf(row.get("fail_count")) >= 3 ? "red" : "yellow");
+                item.put("remarks", "已修 " + row.get("earned_credits") + " / 应修 "
+                        + row.get("attempted_credits") + " 学分，" + row.get("fail_count") + " 门未通过");
+                students.add(item);
             }
+
+            int currentPage = page == null || page < 1 ? 1 : page;
+            int pageSize = size == null || size < 1 ? 20 : size;
+            int from = Math.min((currentPage - 1) * pageSize, students.size());
+            int to = Math.min(from + pageSize, students.size());
+
             Map<String, Object> result = new HashMap<>();
             result.put("total", students.size());
-            result.put("page", page);
-            result.put("size", size);
-            result.put("list", students.subList(0, Math.min(size, students.size())));
+            result.put("page", currentPage);
+            result.put("size", pageSize);
+            result.put("list", students.subList(from, to));
             return ApiResponse.success(result);
         } catch (Exception e) {
             log.error("获取学分不足学生列表失败: {}", e.getMessage());
@@ -1011,7 +1117,9 @@ public class CounselorController {
                 }
             }
 
-            int total = scores.size();
+            // 分母用各档位之和而非 scores.size()：两者在数据源切换后未必相等，
+            // 用后者会出现"各档相加 ≠ 总数"，前端饼图百分比对不上。
+            int total = excellent + good + normal + pass + fail;
             distribution.put("total", total);
             distribution.put("excellent", excellent);
             distribution.put("good", good);
@@ -1027,18 +1135,19 @@ public class CounselorController {
         }
     }
 
+    /**
+     * 低分关注名单。
+     *
+     * <p>关注线是 {@link ScoreCaliber#ATTENTION_LINE}（70 分），<b>不是挂科线</b>：
+     * 这条线要捞出的是"成绩偏低但还没挂科"的学生，属于辅导员日常盯防范围。
+     * 挂科门数一律走 {@link ScoreCaliber#PASS_LINE}，两者不可混用。
+     */
     @GetMapping("/scores/low-score")
     public ApiResponse<List<Map<String, Object>>> getLowScoreStudents(
             @RequestParam("counselor_id") Long counselorId) {
         try {
-            List<Map<String, Object>> allScores = scoreMapper.getScoresByCounselorId(counselorId);
-            List<Map<String, Object>> lowScores = allScores.stream()
-                    .filter(s -> {
-                        Object scoreObj = s.get("score_total");
-                        return scoreObj instanceof Number && ((Number) scoreObj).doubleValue() < 70;
-                    })
-                    .collect(Collectors.toList());
-            return ApiResponse.success(lowScores);
+            return ApiResponse.success(
+                    scoreMapper.getLowScoresByCounselorId(counselorId, ScoreCaliber.ATTENTION_LINE));
         } catch (Exception e) {
             log.error("获取低分学生失败: {}", e.getMessage());
             return ApiResponse.serverError("获取低分学生失败: " + e.getMessage());
@@ -1058,6 +1167,14 @@ public class CounselorController {
 
     // ==================== 数据分析API ====================
 
+    /**
+     * 学分不足率。
+     *
+     * <p>原实现把每班的成绩<b>行数</b>当人数累加（"总人数"于是成了成绩条数），
+     * 再按"班级平均分 &lt; 60 则全计入不足"的方式统计 —— 一个班平均分低于 60
+     * 会把整班几十人都算作学分不足。这里改为按人去重统计：
+     * 分母是有成绩的学生数，分子是其中存在挂科的学生数。
+     */
     @GetMapping("/analytics/credit-insufficient")
     public ApiResponse<Map<String, Object>> getCreditInsufficientRate(
             @RequestParam("counselor_id") Long counselorId) {
@@ -1067,21 +1184,15 @@ public class CounselorController {
             int insufficientStudents = 0;
 
             for (Map<String, Object> stat : classStats) {
-                Object countObj = stat.get("score_count");
-                Object avgObj = stat.get("avg_score");
-                if (countObj instanceof Number) {
-                    int count = ((Number) countObj).intValue();
-                    totalStudents += count;
-                    if (avgObj instanceof Number && ((Number) avgObj).doubleValue() < 60) {
-                        insufficientStudents += count;
-                    }
-                }
+                totalStudents += intOf(stat.get("graded_student_count"));
+                insufficientStudents += intOf(stat.get("fail_student_count"));
             }
 
             Map<String, Object> result = new HashMap<>();
             result.put("totalStudents", totalStudents);
             result.put("insufficientStudents", insufficientStudents);
-            result.put("insufficientRate", totalStudents > 0 ? Math.round((double) insufficientStudents / totalStudents * 100) : 0);
+            result.put("insufficientRate", totalStudents > 0
+                    ? Math.round((double) insufficientStudents / totalStudents * 100) : 0);
             return ApiResponse.success(result);
         } catch (Exception e) {
             log.error("获取学分不足率失败: {}", e.getMessage());
@@ -1117,20 +1228,26 @@ public class CounselorController {
         }
     }
 
+    /**
+     * 班级学分达标率排名。
+     *
+     * <p>原实现把班级<b>平均分</b>直接当成"达标率"百分比（{@code Math.min(100, avgScore)}）：
+     * 平均 85 分就报"达标率 85%"。平均分和达标率是两个量纲，凑巧都在 0~100 之间而已。
+     * 现在用真正的达标率（无挂科学生数 / 有成绩学生数）。
+     */
     @GetMapping("/analytics/credit-achievement-ranking")
     public ApiResponse<List<Map<String, Object>>> getCreditAchievementRanking(
             @RequestParam("counselor_id") Long counselorId) {
         try {
             List<Map<String, Object>> classStats = scoreMapper.getClassScoreStatsByCounselorId(counselorId);
             List<Map<String, Object>> ranking = new ArrayList<>();
-            for (int i = 0; i < classStats.size(); i++) {
-                Map<String, Object> stat = classStats.get(i);
+            for (Map<String, Object> stat : classStats) {
                 Map<String, Object> item = new HashMap<>();
                 item.put("className", stat.get("name"));
-                Object avgObj = stat.get("avg_score");
-                double avgScore = avgObj instanceof Number ? ((Number) avgObj).doubleValue() : 0;
-                double achievementRate = Math.min(100, avgScore);
-                item.put("achievementRate", Math.round(achievementRate * 100.0) / 100.0);
+                item.put("studentCount", intOf(stat.get("graded_student_count")));
+                item.put("creditAchievementCount", intOf(stat.get("credit_achievement_count")));
+                item.put("achievementRate", stat.get("achievement_rate") == null
+                        ? 0.0 : doubleOf(stat.get("achievement_rate")));
                 ranking.add(item);
             }
             return ApiResponse.success(ranking);
@@ -1452,13 +1569,27 @@ public class CounselorController {
     public ApiResponse<List<Map<String, Object>>> compareClassWarnings(@RequestParam("counselor_id") Long counselorId) {
         try {
             List<Map<String, Object>> classes = classInfoService.getClassesByCounselorId(counselorId);
+            // 两个聚合各查一次，再在内存里按 classId 拼装 —— 避免在 for 循环里逐班查库。
+            Map<Long, Map<String, Object>> warningsByClass = new HashMap<>();
+            for (Map<String, Object> row : warningMapper.getWarningCountByClass(counselorId)) {
+                Long classId = longOf(row.get("classId"));
+                if (classId != null) {
+                    warningsByClass.put(classId, row);
+                }
+            }
             List<Map<String, Object>> comparison = new ArrayList<>();
             for (Map<String, Object> clazz : classes) {
+                Long classId = longOf(clazz.get("id"));
                 Map<String, Object> item = new HashMap<>();
-                item.put("classId", clazz.get("id"));
+                item.put("classId", classId);
                 item.put("className", clazz.get("name"));
-                item.put("warningCount", 0);
-                item.put("avgGpa", 3.0);
+                Map<String, Object> agg = classId == null ? null : warningsByClass.get(classId);
+                item.put("warningCount", agg == null ? 0 : intOf(agg.get("warningCount")));
+                item.put("pendingCount", agg == null ? 0 : intOf(agg.get("pendingCount")));
+                item.put("highRiskCount", agg == null ? 0 : intOf(agg.get("highRiskCount")));
+                Double avgGpa = classId == null ? null : scoreMapper.getClassAvgGpa(classId);
+                item.put("avgGpa", avgGpa == null ? null
+                        : java.math.BigDecimal.valueOf(avgGpa).setScale(2, java.math.RoundingMode.HALF_UP));
                 comparison.add(item);
             }
             return ApiResponse.success(comparison);

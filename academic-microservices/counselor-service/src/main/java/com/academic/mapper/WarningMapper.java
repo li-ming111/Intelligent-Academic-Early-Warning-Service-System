@@ -33,4 +33,21 @@ public interface WarningMapper extends BaseMapper<AcademicWarning> {
             "WHERE sp.class_id IN (SELECT id FROM classes WHERE counselor_id = #{counselorId})) " +
             "AND handled_at IS NOT NULL")
     Map<String, Object> getAvgHandleTimeByCounselor(@Param("counselorId") Long counselorId);
+
+    /**
+     * 辅导员名下按班级汇总的预警数。
+     * 列：{@code classId} / {@code warningCount} / {@code pendingCount}（未处理）/ {@code highRiskCount}（等级 ≥ 2）。
+     *
+     * <p>{@code academic_warning.student_id} 存的是 {@code student_profile.id}，
+     * 因此按 {@code sp.class_id} 关联 —— 直接 JOIN {@code classes} 会因为 ID 空间不同而全部失配。
+     * 班级预警对比此前把每班的 {@code warningCount} 写成 0。
+     */
+    @Select("SELECT sp.class_id AS classId, COUNT(*) AS warningCount, "
+          + "       SUM(CASE WHEN aw.status = 0 THEN 1 ELSE 0 END) AS pendingCount, "
+          + "       SUM(CASE WHEN aw.warning_level >= 2 THEN 1 ELSE 0 END) AS highRiskCount "
+          + "  FROM academic_warning aw "
+          + "  JOIN student_profile sp ON sp.id = aw.student_id "
+          + " WHERE sp.class_id IN (SELECT cl.id FROM classes cl WHERE cl.counselor_id = #{counselorId}) "
+          + " GROUP BY sp.class_id")
+    List<Map<String, Object>> getWarningCountByClass(@Param("counselorId") Long counselorId);
 }

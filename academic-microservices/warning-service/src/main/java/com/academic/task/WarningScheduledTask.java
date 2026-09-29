@@ -1,188 +1,267 @@
 package com.academic.task;
 
+import com.academic.common.constant.ScoreCaliber;
 import com.academic.common.entity.AcademicWarning;
-import com.academic.mapper.AcademicWarningMapper;
-import com.academic.mapper.ScoreRecordReadMapper;
-import com.academic.mapper.WarningRuleMapper;
 import com.academic.entity.WarningRule;
+import com.academic.mapper.AcademicWarningMapper;
+import com.academic.mapper.ScoreReadMapper;
+import com.academic.mapper.WarningRuleMapper;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.EnableScheduling;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.stream.Collectors;
 
 /**
- * 预警自动扫描定时任务
- * 每天凌晨 2 点自动扫描学生成绩，根据预警规则自动生成预警记录
+ * 预警自动扫描定时任务。
+ *
+ * <p>每天凌晨 2 点全量扫描，另外每 30 分钟增量扫描一次。两条路径共用
+ * {@link #runScan(boolean)}，逻辑只有一份。
+ *
+ * <p>扫描流程：一次聚合查出每名学生的挂科门数 → 按规则表匹配<b>唯一一条</b>规则
+ * → 每名学生只生成一条预警。旧实现分三段扫描（低分学生、多门挂科、按规则），
+ * 且 {@code existingWarningStudents} 只在开头加载一次、从不回写，
+ * 同一名学生会命中多个分支被重复插入。现在每人只可能出一条。
+ *
+ * <p>预警等级完全来自 {@code warning_rules.level}，没有任何硬编码档位。
  */
 @Slf4j
 @Component
 @EnableScheduling
 public class WarningScheduledTask {
 
-    private final ScoreRecordReadMapper scoreRecordReadMapper;
+    /** 预警文案里最多罗列几门挂科课程，超出部分以"等"省略。 */
+    private static final int MAX_COURSE_DETAIL = 5;
+
+    private final ScoreReadMapper scoreReadMapper;
     private final AcademicWarningMapper academicWarningMapper;
     private final WarningRuleMapper warningRuleMapper;
 
-    public WarningScheduledTask(ScoreRecordReadMapper scoreRecordReadMapper,
+    public WarningScheduledTask(ScoreReadMapper scoreReadMapper,
                                 AcademicWarningMapper academicWarningMapper,
                                 WarningRuleMapper warningRuleMapper) {
-        this.scoreRecordReadMapper = scoreRecordReadMapper;
+        this.scoreReadMapper = scoreReadMapper;
         this.academicWarningMapper = academicWarningMapper;
         this.warningRuleMapper = warningRuleMapper;
     }
 
-    /**
-     * 每天凌晨 2:00 执行自动预警扫描
-     */
+    /** 每天凌晨 2:00 全量扫描。 */
     @Scheduled(cron = "0 0 2 * * ?")
     public void scanAndGenerateWarnings() {
         log.info("========== 自动预警扫描开始 ==========");
         try {
-            // 1. 获取所有启用的预警规则
-            List<WarningRule> activeRules = warningRuleMapper.selectList(
-                    new QueryWrapper<WarningRule>().eq("status", 1)
-            );
-            log.info("加载到 {} 条启用的预警规则", activeRules.size());
-
-            // 2. 获取已有预警的学生ID（避免重复）
-            Set<Long> existingWarningStudents = scoreRecordReadMapper.findExistingWarningStudentIds()
-                    .stream().collect(Collectors.toSet());
-            log.info("已有 {} 名学生存在未处理预警", existingWarningStudents.size());
-
-            int generatedCount = 0;
-
-            // 3. 扫描低分学生（分数 < 60）
-            List<Map<String, Object>> lowScoreStudents = scoreRecordReadMapper.findLowScoreStudents(60.0);
-            for (Map<String, Object> student : lowScoreStudents) {
-                Long studentId = parseLong(student.get("studentId"));
-                if (studentId == null || existingWarningStudents.contains(studentId)) continue;
-
-                String studentName = (String) student.get("studentName");
-                String courseName = (String) student.get("courseName");
-                Object score = student.get("score");
-
-                createWarning(studentId, studentName, null, 2,
-                        String.format("%s同学《%s》课程成绩为%s分，未达到及格线，系统自动触发预警。",
-                                studentName, courseName, score));
-                generatedCount++;
-            }
-
-            // 4. 扫描多门挂科的学生（>= 2 门不及格）
-            List<Map<String, Object>> multiFailStudents = scoreRecordReadMapper.findStudentsWithMultipleFailures(2);
-            for (Map<String, Object> student : multiFailStudents) {
-                Long studentId = parseLong(student.get("studentId"));
-                if (studentId == null || existingWarningStudents.contains(studentId)) continue;
-
-                String studentName = (String) student.get("studentName");
-                Object failCount = student.get("failCount");
-                Object avgScore = student.get("avgScore");
-
-                createWarning(studentId, studentName, null, 3,
-                        String.format("%s同学已累计%s门课程不及格（均分%s），属于高风险学生，系统自动触发高级预警。",
-                                studentName, failCount, avgScore));
-                generatedCount++;
-            }
-
-            // 5. 根据规则条件进行更精细的扫描
-            for (WarningRule rule : activeRules) {
-                if (rule.getWarningLevel() == null) continue;
-                Double threshold = parseThreshold(rule);
-                if (threshold == null) continue;
-
-                List<Map<String, Object>> ruleStudents = scoreRecordReadMapper.findLowScoreStudents(threshold);
-                for (Map<String, Object> student : ruleStudents) {
-                    Long studentId = parseLong(student.get("studentId"));
-                    if (studentId == null || existingWarningStudents.contains(studentId)) continue;
-
-                    String studentName = (String) student.get("studentName");
-                    createWarning(studentId, studentName, rule.getId(), rule.getWarningLevel(),
-                            String.format("%s同学触发预警规则「%s」：%s",
-                                    studentName, rule.getRuleName(),
-                                    rule.getDescription() != null ? rule.getDescription() : "成绩低于" + threshold + "分"));
-                    generatedCount++;
-                }
-            }
-
-            log.info("========== 自动预警扫描完成，共生成 {} 条预警 ==========", generatedCount);
+            int generated = runScan(true);
+            log.info("========== 自动预警扫描完成，共生成 {} 条预警 ==========", generated);
         } catch (Exception e) {
             log.error("自动预警扫描异常: {}", e.getMessage(), e);
         }
     }
 
-    /**
-     * 每30分钟检查一次，补充新增的成绩数据
-     */
+    /** 每 30 分钟增量扫描，用于当天新录入的成绩尽快触发预警。 */
     @Scheduled(fixedRate = 1800000)
     public void incrementalScan() {
-        log.debug("增量预警扫描...");
         try {
-            Set<Long> existingWarningStudents = scoreRecordReadMapper.findExistingWarningStudentIds()
-                    .stream().collect(Collectors.toSet());
-
-            List<Map<String, Object>> lowScoreStudents = scoreRecordReadMapper.findLowScoreStudents(60.0);
-            int count = 0;
-            for (Map<String, Object> student : lowScoreStudents) {
-                Long studentId = parseLong(student.get("studentId"));
-                if (studentId == null || existingWarningStudents.contains(studentId)) continue;
-
-                String studentName = (String) student.get("studentName");
-                String courseName = (String) student.get("courseName");
-                Object score = student.get("score");
-
-                createWarning(studentId, studentName, null, 2,
-                        String.format("%s同学《%s》课程成绩为%s分，未达到及格线。",
-                                studentName, courseName, score));
-                count++;
-            }
-            if (count > 0) {
-                log.info("增量扫描发现 {} 名新预警学生", count);
+            int generated = runScan(false);
+            if (generated > 0) {
+                log.info("增量预警扫描发现 {} 名新预警学生", generated);
             }
         } catch (Exception e) {
-            log.debug("增量扫描异常: {}", e.getMessage());
+            log.error("增量扫描异常: {}", e.getMessage(), e);
         }
     }
 
-    private void createWarning(Long studentId, String studentName, Long ruleId,
-                               Integer warningLevel, String message) {
+    /**
+     * 手动全量扫描一次，供管理端触发接口与演示使用（否则只能等到凌晨 2 点）。
+     *
+     * @return 本次新生成的预警条数
+     */
+    public int triggerNow() {
+        return runScan(true);
+    }
+
+    /**
+     * 扫描并生成预警。
+     *
+     * @param verbose 是否输出完整诊断日志。全量扫描传 {@code true}；
+     *                每 30 分钟一次的增量扫描传 {@code false}，避免规则诊断日志刷屏
+     */
+    private int runScan(boolean verbose) {
+        List<FailCountRule> rules = loadRules(verbose);
+        if (rules.isEmpty()) {
+            log.warn("没有可用的挂科数预警规则，本次扫描不生成预警");
+            return 0;
+        }
+
+        Set<Long> pendingStudents = new HashSet<>(scoreReadMapper.findExistingWarningStudentIds());
+        if (verbose) {
+            log.info("已有 {} 名学生存在未处理预警", pendingStudents.size());
+        }
+
+        List<Map<String, Object>> failCountRows = scoreReadMapper.findFailCountByStudent();
+        int generated = 0;
+        for (Map<String, Object> row : failCountRows) {
+            Long studentId = toLong(row.get("studentId"));
+            if (studentId == null) {
+                log.warn("跳过一条缺少 studentId 的挂科统计记录: {}", row);
+                continue;
+            }
+            if (pendingStudents.contains(studentId)) {
+                continue;
+            }
+            Integer failCount = toInt(row.get("failCount"));
+            if (failCount == null || failCount <= 0) {
+                continue;
+            }
+
+            FailCountRule rule = pickRule(rules, failCount);
+            if (rule == null) {
+                log.debug("学生 {} 挂科 {} 门，无匹配规则，跳过", studentId, failCount);
+                continue;
+            }
+
+            List<Map<String, Object>> detail = scoreReadMapper.findFailDetailByStudent(studentId);
+            createWarning(studentId, (String) row.get("studentName"), rule, failCount, detail);
+
+            // 关键：立即回写，保证同一轮扫描内不会对同一名学生重复生成
+            pendingStudents.add(studentId);
+            generated++;
+        }
+        return generated;
+    }
+
+    /**
+     * 加载规则，只保留能判定挂科门数的那些。
+     * 无法解析的规则记日志后跳过 —— 不抛异常，也不静默忽略。
+     */
+    private List<FailCountRule> loadRules(boolean verbose) {
+        List<WarningRule> activeRules = warningRuleMapper.selectList(
+                new QueryWrapper<WarningRule>().eq("status", 1)
+        );
+
+        List<FailCountRule> usable = new ArrayList<>();
+        for (WarningRule rule : activeRules) {
+            if (rule.getWarningLevel() == null) {
+                log.warn("规则「{}」未配置预警等级，已跳过", rule.getRuleName());
+                continue;
+            }
+            RuleConditionParser.Range range =
+                    RuleConditionParser.parseFailCountRange(rule.getExpression());
+            if (range == null) {
+                if (RuleConditionParser.mentionsFailCount(rule.getExpression())) {
+                    // 挂了 fail_count 却解析不出来 —— 规则配错了，必须让人看见
+                    log.warn("规则「{}」的挂科数条件无法解析，已跳过：{}",
+                            rule.getRuleName(), rule.getExpression());
+                } else if (verbose) {
+                    // 如 GPA 规则：本身合法，只是不属于"挂科门数"这个指标
+                    log.info("规则「{}」不是挂科数规则，本次扫描不参与：{}",
+                            rule.getRuleName(), rule.getExpression());
+                }
+                continue;
+            }
+            usable.add(new FailCountRule(rule, range));
+        }
+
+        usable.sort(Comparator.comparingInt(r -> r.rule().getWarningLevel()));
+        if (verbose) {
+            log.info("加载到 {} 条启用的预警规则，其中 {} 条可用于挂科门数判定",
+                    activeRules.size(), usable.size());
+        }
+        return usable;
+    }
+
+    /** 区间命中时取等级最高的规则；命中多条（区间重叠）时高等级优先。 */
+    private FailCountRule pickRule(List<FailCountRule> rules, int failCount) {
+        FailCountRule best = null;
+        for (FailCountRule candidate : rules) {
+            if (!candidate.range().contains(failCount)) {
+                continue;
+            }
+            if (best == null
+                    || candidate.rule().getWarningLevel() > best.rule().getWarningLevel()) {
+                best = candidate;
+            }
+        }
+        return best;
+    }
+
+    private void createWarning(Long studentId, String studentName, FailCountRule rule,
+                               int failCount, List<Map<String, Object>> detail) {
+        // detail 已按分数升序，首条即最低分，用作 triggerScore
+        BigDecimal triggerScore = null;
+        List<String> courseTexts = new ArrayList<>();
+        int shown = Math.min(detail.size(), MAX_COURSE_DETAIL);
+        for (int i = 0; i < shown; i++) {
+            Map<String, Object> course = detail.get(i);
+            Double score = ScoreCaliber.toDouble(course.get("scoreTotal"));
+            if (i == 0 && score != null) {
+                triggerScore = BigDecimal.valueOf(score);
+            }
+            Object courseName = course.get("courseName");
+            courseTexts.add(String.format("%s %s分",
+                    courseName != null ? courseName : "未知课程", formatScore(score)));
+        }
+        String courses = String.join("、", courseTexts)
+                + (detail.size() > shown ? " 等" : "");
+
+        String message = String.format(
+                "%s同学已累计%d门课程不及格（%s），触发预警规则「%s」，系统自动生成预警。",
+                studentName, failCount, courses, rule.rule().getRuleName());
+
         AcademicWarning warning = new AcademicWarning()
                 .setStudentId(studentId)
                 .setStudentName(studentName)
-                .setRuleId(ruleId)
-                .setWarningLevel(warningLevel)
+                .setRuleId(rule.rule().getId())
+                .setType(1)
+                .setTitle(rule.rule().getRuleName())
+                // title 是短标签，description/warningMessage 存正文。
+                // 两个正文列都写，避免下游只读其中一个时拿到空值。
+                .setDescription(message)
+                .setWarningLevel(rule.rule().getWarningLevel())
                 .setWarningMessage(message)
+                .setTriggerScore(triggerScore)
                 .setStatus(0)
                 .setCreatedAt(LocalDateTime.now());
         academicWarningMapper.insert(warning);
+
+        log.info("生成预警：学生 {}（{}）挂科 {} 门，命中规则「{}」，等级 {}",
+                studentName, studentId, failCount, rule.rule().getRuleName(),
+                rule.rule().getWarningLevel());
     }
 
-    private Long parseLong(Object value) {
-        if (value == null) return null;
-        if (value instanceof Long) return (Long) value;
-        if (value instanceof Integer) return ((Integer) value).longValue();
-        try {
-            return Long.parseLong(value.toString());
-        } catch (NumberFormatException e) {
-            return null;
+    /** 40.0 → "40"，56.5 → "56.5"。 */
+    private static String formatScore(Double score) {
+        if (score == null) {
+            return ScoreCaliber.PENDING_TEXT;
         }
+        if (score == Math.floor(score) && !score.isInfinite()) {
+            return String.valueOf(score.intValue());
+        }
+        return String.valueOf(score);
     }
 
-    private Double parseThreshold(WarningRule rule) {
-        try {
-            if (rule.getExpression() != null && rule.getExpression().contains("<")) {
-                String num = rule.getExpression().replaceAll("[^0-9.]", "");
-                return Double.parseDouble(num);
-            }
-            if (rule.getFailDefinition() != null) {
-                return 60.0;
-            }
-        } catch (NumberFormatException ignored) {}
-        return null;
+    private static Long toLong(Object value) {
+        if (value instanceof Number) {
+            return ((Number) value).longValue();
+        }
+        Double parsed = ScoreCaliber.toDouble(value);
+        return parsed == null ? null : parsed.longValue();
+    }
+
+    private static Integer toInt(Object value) {
+        Double parsed = ScoreCaliber.toDouble(value);
+        return parsed == null ? null : parsed.intValue();
+    }
+
+    /** 一条可用于挂科门数判定的规则：原始规则 + 解析出的区间。 */
+    private record FailCountRule(WarningRule rule, RuleConditionParser.Range range) {
     }
 }

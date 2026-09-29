@@ -2,6 +2,7 @@ package com.academic.controller;
 
 import com.academic.common.dto.ApiResponse;
 import com.academic.service.IntelligentWarningService;
+import com.academic.task.WarningScheduledTask;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.*;
 
@@ -16,9 +17,29 @@ import java.util.Map;
 public class IntelligentWarningController {
 
     private final IntelligentWarningService intelligentWarningService;
+    private final WarningScheduledTask warningScheduledTask;
 
-    public IntelligentWarningController(IntelligentWarningService intelligentWarningService) {
+    public IntelligentWarningController(IntelligentWarningService intelligentWarningService,
+                                        WarningScheduledTask warningScheduledTask) {
         this.intelligentWarningService = intelligentWarningService;
+        this.warningScheduledTask = warningScheduledTask;
+    }
+
+    /**
+     * 手动触发一次全量预警扫描。
+     *
+     * <p>定时任务在凌晨 2:00 才跑，这个接口让录入成绩后可以立刻重算，
+     * 也方便演示。返回本次新生成的预警条数。
+     */
+    @PostMapping("/scan")
+    public ApiResponse<Object> triggerScan() {
+        try {
+            int generated = warningScheduledTask.triggerNow();
+            return ApiResponse.success(Map.of("generatedCount", generated));
+        } catch (Exception e) {
+            log.error("Manual warning scan failed: {}", e.getMessage(), e);
+            return ApiResponse.error(500, e.getMessage());
+        }
     }
 
     /**

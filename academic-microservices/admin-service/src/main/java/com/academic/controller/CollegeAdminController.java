@@ -23,10 +23,38 @@ public class CollegeAdminController {
     @Autowired private StudentProfileMapper studentProfileMapper;
     @Autowired private TeacherProfileMapper teacherProfileMapper;
     @Autowired private CounselorProfileMapper counselorProfileMapper;
-    @Autowired private ScoreRecordMapper scoreRecordMapper;
     @Autowired private AcademicWarningMapper academicWarningMapper;
     @Autowired private com.academic.mapper.MajorMapper majorMapper;
-    @Autowired private com.academic.mapper.CourseMapper courseMapper;
+    @Autowired private ScoreStatMapper scoreStatMapper;
+
+    /** 聚合查询返回的计数类字段。JDBC 对 COUNT() 可能给 Long，也可能给 BigDecimal。 */
+    private static int intOf(Object value) {
+        return value instanceof Number ? ((Number) value).intValue() : 0;
+    }
+
+    /** 聚合查询返回的比率类字段；无数据（NULL）返回 0。 */
+    private static double doubleOf(Object value) {
+        return value instanceof Number ? ((Number) value).doubleValue() : 0.0;
+    }
+
+    /** 平均分／GPA 统一保留两位小数。 */
+    private static double round2(double value) {
+        return Math.round(value * 100.0) / 100.0;
+    }
+
+    /** 平均分统一保留一位小数（成绩均分的展示习惯）。 */
+    private static double round1(double value) {
+        return Math.round(value * 10.0) / 10.0;
+    }
+
+    /**
+     * 及格率。分母为 0 时返回 0，且分子分母都来自同一份聚合结果 ——
+     * 此前多处用"整表记录数"当分母，把没成绩的学生也算进去。
+     */
+    private static int passRateOf(Object passCount, Object recordCount) {
+        int total = intOf(recordCount);
+        return total == 0 ? 0 : (int) Math.round(intOf(passCount) * 100.0 / total);
+    }
 
     @GetMapping("/profile/{userId}")
     public ApiResponse<Map<String, Object>> getProfile(@PathVariable Long userId) {
@@ -69,13 +97,11 @@ public class CollegeAdminController {
         long counselorCount = classes.stream().filter(c -> counselorClassIds.contains(c.get("id"))).count();
         d.put("counselorCount", (int) Math.min(counselorCount, allCounselors.size()));
 
+        // 原实现把整张预警表查回来，再逐条 selectById 查学生以判断班级 ——
+        // 预警数 × 学生表查询。改为一次聚合；academic_warning.student_id 存的是
+        // student_profile.id，故按 sp.class_id 关联。
         long warningCount = classIds.isEmpty() ? 0 :
-            academicWarningMapper.selectList(new QueryWrapper<>()).stream()
-                .filter(w -> {
-                    if (w.getStudentId() == null) return false;
-                    StudentProfile sp = studentProfileMapper.selectById(w.getStudentId());
-                    return sp != null && sp.getClassId() != null && classIds.contains(sp.getClassId());
-                }).count();
+            intOf(academicWarningMapper.selectCollegeWarningStats(collegeId).get("warning_count"));
         d.put("warningCount", (int) warningCount);
 
         List<Major> majors = majorMapper.selectList(new QueryWrapper<Major>().eq("college_id", collegeId));
@@ -88,31 +114,19 @@ public class CollegeAdminController {
         Long collegeId = getCollegeId(userId);
         if (collegeId == null) return ApiResponse.error("无权限");
         List<Map<String, Object>> classes = classesMapper.getClassesByCollegeId(collegeId);
-        // 为每个班级补允统计数据
+        // 班级统计一次查出后按 classId 取用，取代"逐班逐生查库"
+        Map<Long, Map<String, Object>> statsByClass = new HashMap<>();
+        for (Map<String, Object> row : scoreStatMapper.selectClassStats(collegeId)) {
+            statsByClass.put(((Number) row.get("class_id")).longValue(), row);
+        }
         for (Map<String, Object> c : classes) {
-            Long classId = (Long) c.get("id");
-            List<StudentProfile> students = studentProfileMapper.selectList(
-                new QueryWrapper<StudentProfile>().eq("class_id", classId));
-            c.put("studentCount", students.size());
-            double totalGpa = 0; int hasGpa = 0; int warnCount = 0;
-            for (StudentProfile sp : students) {
-                List<ScoreRecord> scores = scoreRecordMapper.selectList(
-                    new QueryWrapper<ScoreRecord>().eq("student_id", sp.getId()));
-                if (!scores.isEmpty()) {
-                    double t = 0; int p = 0;
-                    for (ScoreRecord sr : scores) {
-                        double s = sr.getScore() != null ? sr.getScore() : 0;
-                        t += s; if (s >= 60) p++;
-                    }
-                    totalGpa += t / scores.size() / 20.0;
-                    hasGpa++;
-                }
-                int wc = (int) academicWarningMapper.selectList(
-                    new QueryWrapper<AcademicWarning>().eq("student_id", sp.getId())).stream().count();
-                warnCount += wc;
-            }
-            c.put("avgGpa", hasGpa > 0 ? Math.round(totalGpa / hasGpa * 100.0) / 100.0 : 0);
-            c.put("warningCount", warnCount);
+            Map<String, Object> st = statsByClass.get(((Number) c.get("id")).longValue());
+            c.put("studentCount", st == null ? 0 : intOf(st.get("student_count")));
+            c.put("gradedStudentCount", st == null ? 0 : intOf(st.get("graded_student_count")));
+            // 无成绩的班级返回 null 而非 0：0 会被读成"全班 GPA 为零"
+            c.put("avgGpa", st == null || st.get("avg_gpa") == null
+                ? null : round2(doubleOf(st.get("avg_gpa"))));
+            c.put("warningCount", st == null ? 0 : intOf(st.get("warning_count")));
         }
         return ApiResponse.success(classes);
     }
@@ -126,6 +140,12 @@ public class CollegeAdminController {
         List<Map<String, Object>> classes = classesMapper.getClassesByCollegeId(collegeId);
         List<Long> classIds = classes.stream().map(c -> (Long) c.get("id")).collect(Collectors.toList());
         if (classIds.isEmpty()) return ApiResponse.success(Collections.emptyList());
+
+        // 全院成绩汇总一次查出，取代"每个学生查一次成绩表 + 查一次预警表"
+        Map<Long, Map<String, Object>> statsByStudent = new HashMap<>();
+        for (Map<String, Object> row : scoreStatMapper.selectStudentScoreStats(collegeId)) {
+            statsByStudent.put(((Number) row.get("profile_id")).longValue(), row);
+        }
 
         List<StudentProfile> all = studentProfileMapper.selectList(new QueryWrapper<>());
         List<Map<String, Object>> result = new ArrayList<>();
@@ -147,19 +167,12 @@ public class CollegeAdminController {
                 m.put("classId", sp.getClassId());
                 m.put("collegeId", sp.getCollegeId());
                 // 附加成绩统计
-                List<ScoreRecord> scores = scoreRecordMapper.selectList(
-                    new QueryWrapper<ScoreRecord>().eq("student_id", sp.getId()));
-                double total = 0; int pass = 0;
-                for (ScoreRecord sr : scores) {
-                    double sc = sr.getScore() != null ? sr.getScore() : 0;
-                    total += sc; if (sc >= 60) pass++;
-                }
-                m.put("gpa", scores.isEmpty() ? 0 : Math.round(total / scores.size() / 20.0 * 100.0) / 100.0);
-                m.put("totalCourses", scores.size());
-                m.put("passedCourses", pass);
-                m.put("failedCourses", scores.size() - pass);
-                m.put("warningCount", academicWarningMapper.selectList(
-                    new QueryWrapper<AcademicWarning>().eq("student_id", sp.getId())).size());
+                Map<String, Object> st = statsByStudent.get(sp.getId());
+                m.put("gpa", st == null || st.get("gpa") == null ? null : round2(doubleOf(st.get("gpa"))));
+                m.put("totalCourses", st == null ? 0 : intOf(st.get("total_courses")));
+                m.put("passedCourses", st == null ? 0 : intOf(st.get("passed_courses")));
+                m.put("failedCourses", st == null ? 0 : intOf(st.get("failed_courses")));
+                m.put("warningCount", st == null ? 0 : intOf(st.get("warning_count")));
                 result.add(m);
             }
         }
@@ -184,39 +197,27 @@ public class CollegeAdminController {
         detail.put("name", sp.getName());
         detail.put("className", sp.getClassName());
 
-        // 通过 ScoreMapper 的 JOIN 查询来拿课程名（已在 student-service ScoreMapper 中定义）
-        List<ScoreRecord> scores = scoreRecordMapper.selectList(
-            new QueryWrapper<ScoreRecord>().eq("student_id", profileId));
-        double total = 0; int pass = 0;
+        // 成绩明细直接带出课程名，不再逐行回查 courses 表
         List<Map<String, Object>> scoreList = new ArrayList<>();
-        for (ScoreRecord sr : scores) {
-            double sc = sr.getScore() != null ? sr.getScore() : 0;
-            if (sr.getScore() != null) { total += sc; if (sc >= 60) pass++; }
-            // 查询课程名
-            String courseName = "";
-            if (sr.getCourseId() != null) {
-                Course course = courseMapper.selectById(sr.getCourseId());
-                if (course != null) courseName = course.getName();
-            }
+        for (Map<String, Object> row : scoreStatMapper.selectStudentScoreRows(profileId)) {
             Map<String, Object> sm = new HashMap<>();
-            sm.put("id", sr.getId());
-            sm.put("courseId", sr.getCourseId());
-            sm.put("courseName", courseName);
-            sm.put("regularScore", sr.getRegularScore());   // 平时成绩
-            sm.put("finalScore", sr.getFinalScore());       // 期末成绩
-            sm.put("totalScore", sr.getScoreTotal());       // 总评成绩
-            sm.put("score", sc);                            // 原始成绩
-            sm.put("gradePoint", sr.getGradePoint());       // 绩点
-            sm.put("grade", sr.getGrade());                 // 等级
-            sm.put("semester", sr.getSemester());
-            sm.put("remark", sr.getRemark());
+            sm.put("id", row.get("id"));
+            sm.put("courseId", row.get("course_id"));
+            sm.put("courseName", row.get("course_name"));
+            sm.put("regularScore", row.get("regular_score"));   // 平时成绩
+            sm.put("finalScore", row.get("final_score"));       // 期末成绩；null 表示未录入
+            sm.put("totalScore", row.get("score_total"));       // 总评成绩
+            sm.put("gradePoint", row.get("grade_point"));       // 绩点
+            sm.put("grade", row.get("grade"));                  // 等级
+            sm.put("semester", row.get("semester"));
+            sm.put("credits", row.get("credits"));
             scoreList.add(sm);
         }
-        int courseCount = scores.size();
-        detail.put("gpa", courseCount == 0 ? 0 : Math.round(total / courseCount / 20.0 * 100.0) / 100.0);
-        detail.put("totalCourses", courseCount);
-        detail.put("passedCourses", pass);
-        detail.put("failedCourses", courseCount - pass);
+        Map<String, Object> st = scoreStatMapper.selectOneStudentScoreStats(profileId);
+        detail.put("gpa", st == null || st.get("gpa") == null ? null : round2(doubleOf(st.get("gpa"))));
+        detail.put("totalCourses", st == null ? 0 : intOf(st.get("total_courses")));
+        detail.put("passedCourses", st == null ? 0 : intOf(st.get("passed_courses")));
+        detail.put("failedCourses", st == null ? 0 : intOf(st.get("failed_courses")));
         detail.put("scores", scoreList);
 
         List<AcademicWarning> warnings = academicWarningMapper.selectList(
@@ -242,27 +243,25 @@ public class CollegeAdminController {
         List<TeacherProfile> all = teacherProfileMapper.selectList(new QueryWrapper<>()).stream()
             .filter(t -> t.getCollegeId() != null && t.getCollegeId().equals(collegeId))
             .collect(Collectors.toList());
+        // 授课统计一次查出，按 teacher_id（users.id）取用
+        Map<Long, Map<String, Object>> statsByTeacher = new HashMap<>();
+        for (Map<String, Object> row : scoreStatMapper.selectTeacherStats(collegeId)) {
+            statsByTeacher.put(((Number) row.get("teacher_id")).longValue(), row);
+        }
         List<Map<String, Object>> result = new ArrayList<>();
         for (TeacherProfile tp : all) {
-            List<ScoreRecord> scores = scoreRecordMapper.selectList(
-                new QueryWrapper<ScoreRecord>().eq("teacher_id", tp.getUserId()));
-            Set<Long> uniqueCourses = new HashSet<>();
-            List<String> courseNames = new ArrayList<>();
-            for (ScoreRecord sr : scores) {
-                if (sr.getCourseId() != null && !uniqueCourses.contains(sr.getCourseId())) {
-                    uniqueCourses.add(sr.getCourseId());
-                    Course course = courseMapper.selectById(sr.getCourseId());
-                    if (course != null) courseNames.add(course.getName());
-                }
-            }
+            Map<String, Object> st = statsByTeacher.get(tp.getUserId());
             Map<String, Object> m = new HashMap<>();
             m.put("id", tp.getId());
             m.put("name", tp.getName());
             m.put("title", tp.getTitle());
             m.put("researchAreas", tp.getResearchAreas());
-            m.put("courseCount", uniqueCourses.size());
-            m.put("studentCount", scores.size());
-            m.put("courses", String.join("、", courseNames));
+            m.put("courseCount", st == null ? 0 : intOf(st.get("course_count")));
+            // 授课学生数取去重后的人数，不是成绩记录条数
+            m.put("studentCount", st == null ? 0 : intOf(st.get("student_count")));
+            m.put("courses", st == null || st.get("course_names") == null ? "" : st.get("course_names").toString());
+            m.put("avgScore", st == null || st.get("avg_score") == null
+                ? null : round1(doubleOf(st.get("avg_score"))));
             result.add(m);
         }
         return ApiResponse.success(result);
@@ -273,27 +272,18 @@ public class CollegeAdminController {
         Long collegeId = getCollegeId(userId);
         if (collegeId == null) return ApiResponse.error("无权限");
 
-        List<Map<String, Object>> classes = classesMapper.getClassesByCollegeId(collegeId);
-        List<Long> classIds = classes.stream().map(c -> (Long) c.get("id")).collect(Collectors.toList());
-        if (classIds.isEmpty()) return ApiResponse.success(Collections.emptyList());
-
-        List<AcademicWarning> all = academicWarningMapper.selectList(new QueryWrapper<>());
         List<Map<String, Object>> result = new ArrayList<>();
-        for (AcademicWarning w : all) {
-            if (w.getStudentId() == null) continue;
-            StudentProfile sp = studentProfileMapper.selectById(w.getStudentId());
-            if (sp != null && sp.getClassId() != null && classIds.contains(sp.getClassId())) {
-                Map<String, Object> m = new HashMap<>();
-                m.put("id", w.getId());
-                m.put("studentId", w.getStudentId());
-                m.put("studentName", sp.getName());
-                m.put("className", sp.getClassName());
-                m.put("description", w.getDescription());
-                m.put("warningLevel", w.getWarningLevel());
-                m.put("status", w.getStatus());
-                m.put("createdAt", w.getCreatedAt());
-                result.add(m);
-            }
+        for (Map<String, Object> row : academicWarningMapper.selectWarningsByCollege(collegeId)) {
+            Map<String, Object> m = new HashMap<>();
+            m.put("id", row.get("id"));
+            m.put("studentId", row.get("student_id"));
+            m.put("studentName", row.get("student_name"));
+            m.put("className", row.get("class_name"));
+            m.put("description", row.get("description"));
+            m.put("warningLevel", row.get("warning_level"));
+            m.put("status", row.get("status"));
+            m.put("createdAt", row.get("created_at"));
+            result.add(m);
         }
         return ApiResponse.success(result);
     }
@@ -303,25 +293,14 @@ public class CollegeAdminController {
         Long collegeId = getCollegeId(userId);
         if (collegeId == null) return ApiResponse.error("无权限");
 
-        List<Map<String, Object>> classes = classesMapper.getClassesByCollegeId(collegeId);
-        List<Long> classIds = classes.stream().map(c -> (Long) c.get("id")).collect(Collectors.toList());
-        if (classIds.isEmpty()) return ApiResponse.success(Map.of("avgScore", 0, "passRate", 0));
-
-        List<ScoreRecord> records = scoreRecordMapper.selectList(new QueryWrapper<>());
-        double total = 0;
-        int count = 0, pass = 0;
-        for (ScoreRecord r : records) {
-            StudentProfile sp = studentProfileMapper.selectById(r.getStudentId());
-            if (sp != null && sp.getClassId() != null && classIds.contains(sp.getClassId())) {
-                double sc = r.getScore() != null ? r.getScore().doubleValue() : 0;
-                total += sc; count++;
-                if (sc >= 60) pass++;
-            }
-        }
+        Map<String, Object> overview = scoreStatMapper.selectCollegeScoreOverview(collegeId);
+        if (overview == null) overview = Map.of();
         Map<String, Object> stats = new HashMap<>();
-        stats.put("avgScore", count > 0 ? Math.round(total / count * 10) / 10.0 : 0);
-        stats.put("passRate", count > 0 ? Math.round(pass * 100.0 / count) : 0);
-        stats.put("recordCount", count);
+        stats.put("avgScore", overview.get("avg_score") == null
+            ? 0 : round1(doubleOf(overview.get("avg_score"))));
+        stats.put("passRate", passRateOf(overview.get("pass_count"), overview.get("record_count")));
+        stats.put("recordCount", intOf(overview.get("record_count")));
+        stats.put("studentCount", intOf(overview.get("student_count")));
         return ApiResponse.success(stats);
     }
 
@@ -330,57 +309,35 @@ public class CollegeAdminController {
     public ApiResponse<Map<String, Object>> scoreAnalysis(@PathVariable Long userId) {
         Long collegeId = getCollegeId(userId);
         if (collegeId == null) return ApiResponse.error("无权限");
-        List<Map<String, Object>> classes = classesMapper.getClassesByCollegeId(collegeId);
-        Set<Long> classIds = classes.stream().map(c -> (Long) c.get("id")).collect(Collectors.toSet());
-        if (classIds.isEmpty()) return ApiResponse.success(Map.of());
-        
-        List<ScoreRecord> records = scoreRecordMapper.selectList(new QueryWrapper<>());
+        Map<String, Object> band = scoreStatMapper.selectScoreDistribution(collegeId);
+        if (band == null) band = Map.of();
         Map<String, Integer> dist = new LinkedHashMap<>();
-        dist.put("90-100", 0); dist.put("80-89", 0); dist.put("70-79", 0);
-        dist.put("60-69", 0); dist.put("0-59", 0);
-        double total = 0; int cnt = 0, pass = 0;
-        
-        // 课程维度统计: courseId -> { count, total, pass }
-        Map<Long, double[]> courseBook = new HashMap<>();
-        
-        for (ScoreRecord r : records) {
-            StudentProfile sp = studentProfileMapper.selectById(r.getStudentId());
-            if (sp == null || sp.getClassId() == null || !classIds.contains(sp.getClassId())) continue;
-            double s = r.getScore() != null ? r.getScore() : 0;
-            total += s; cnt++;
-            if (s >= 60) pass++;
-            if (s >= 90) dist.put("90-100", dist.get("90-100") + 1);
-            else if (s >= 80) dist.put("80-89", dist.get("80-89") + 1);
-            else if (s >= 70) dist.put("70-79", dist.get("70-79") + 1);
-            else if (s >= 60) dist.put("60-69", dist.get("60-69") + 1);
-            else dist.put("0-59", dist.get("0-59") + 1);
-            
-            // 统计课程维度
-            if (r.getCourseId() != null) {
-                double[] acc = courseBook.computeIfAbsent(r.getCourseId(), k -> new double[]{0, 0, 0});
-                acc[0] += s; acc[1]++; if (s >= 60) acc[2]++;
-            }
-        }
-        
-        // 构建课程统计列表
+        dist.put("90-100", intOf(band.get("band1")));
+        dist.put("80-89", intOf(band.get("band2")));
+        dist.put("70-79", intOf(band.get("band3")));
+        dist.put("60-69", intOf(band.get("band4")));
+        dist.put("0-59", intOf(band.get("band5")));
+
+        // 课程维度统计已在 SQL 里聚合，且按平均分降序返回
         List<Map<String, Object>> courseStats = new ArrayList<>();
-        for (Map.Entry<Long, double[]> e : courseBook.entrySet()) {
-            Course course = courseMapper.selectById(e.getKey());
-            double[] acc = e.getValue();
+        double total = 0; int cnt = 0, pass = 0;
+        for (Map<String, Object> row : scoreStatMapper.selectCourseStats(collegeId)) {
             Map<String, Object> cs = new HashMap<>();
-            cs.put("courseId", e.getKey());
-            cs.put("courseName", course != null ? course.getName() : "未知课程");
-            cs.put("recordCount", (int) acc[1]);
-            cs.put("avgScore", acc[1] > 0 ? Math.round(acc[0] / acc[1] * 10) / 10.0 : 0);
-            cs.put("passRate", acc[1] > 0 ? Math.round(acc[2] * 100 / acc[1]) : 0);
+            cs.put("courseId", row.get("course_id"));
+            cs.put("courseName", row.get("course_name") != null ? row.get("course_name") : "未知课程");
+            cs.put("recordCount", intOf(row.get("record_count")));
+            cs.put("avgScore", row.get("avg_score") == null ? 0 : round1(doubleOf(row.get("avg_score"))));
+            cs.put("passRate", passRateOf(row.get("pass_count"), row.get("record_count")));
             courseStats.add(cs);
+            total += doubleOf(row.get("avg_score")) * intOf(row.get("record_count"));
+            cnt += intOf(row.get("record_count"));
+            pass += intOf(row.get("pass_count"));
         }
-        courseStats.sort((a, b) -> Double.compare((double) b.get("avgScore"), (double) a.get("avgScore")));
-        
+
         Map<String, Object> result = new HashMap<>();
         result.put("distribution", dist);
-        result.put("avgScore", cnt > 0 ? Math.round(total / cnt * 10) / 10.0 : 0);
-        result.put("passRate", cnt > 0 ? Math.round(pass * 100.0 / cnt) : 0);
+        result.put("avgScore", cnt > 0 ? round1(total / cnt) : 0);
+        result.put("passRate", passRateOf(pass, cnt));
         result.put("totalRecords", cnt);
         result.put("courseStats", courseStats);
         return ApiResponse.success(result);
@@ -391,27 +348,19 @@ public class CollegeAdminController {
     public ApiResponse<List<Map<String, Object>>> classComparison(@PathVariable Long userId) {
         Long collegeId = getCollegeId(userId);
         if (collegeId == null) return ApiResponse.error("无权限");
-        List<Map<String, Object>> classes = classesMapper.getClassesByCollegeId(collegeId);
+        List<Map<String, Object>> rows = scoreStatMapper.selectClassComparison(collegeId);
         List<Map<String, Object>> result = new ArrayList<>();
-        
-        for (Map<String, Object> c : classes) {
-            Long cid = (Long) c.get("id");
-            List<ScoreRecord> records = scoreRecordMapper.selectList(new QueryWrapper<>());
-            double total = 0; int cnt = 0, pass = 0;
-            Set<Long> seen = new HashSet<>();
-            for (ScoreRecord r : records) {
-                StudentProfile sp = studentProfileMapper.selectById(r.getStudentId());
-                if (sp == null || sp.getClassId() == null || !sp.getClassId().equals(cid)) continue;
-                double s = r.getScore() != null ? r.getScore() : 0;
-                total += s; cnt++; if (s >= 60) pass++;
-                seen.add(r.getStudentId());
-            }
+        // 在原实现里，下面整个统计过程写在 classes 的 for 循环内部，
+        // 每个班级都重新整表查询一次成绩 —— 班级数 × 成绩表行数。
+        for (Map<String, Object> row : rows) {
             Map<String, Object> item = new HashMap<>();
-            item.put("className", c.get("name"));
-            item.put("avgScore", cnt > 0 ? Math.round(total / cnt * 10) / 10.0 : 0);
-            item.put("passRate", cnt > 0 ? Math.round(pass * 100.0 / cnt) : 0);
-            item.put("studentCount", seen.size());
-            item.put("recordCount", cnt);
+            item.put("classId", row.get("class_id"));
+            item.put("className", row.get("class_name"));
+            item.put("avgScore", row.get("avg_score") == null
+                ? null : round1(doubleOf(row.get("avg_score"))));
+            item.put("passRate", passRateOf(row.get("pass_count"), row.get("record_count")));
+            item.put("studentCount", intOf(row.get("student_count")));
+            item.put("recordCount", intOf(row.get("record_count")));
             result.add(item);
         }
         return ApiResponse.success(result);
@@ -442,18 +391,15 @@ public class CollegeAdminController {
     public ApiResponse<List<Map<String, Object>>> getAssistance(@PathVariable Long userId) {
         Long collegeId = getCollegeId(userId);
         if (collegeId == null) return ApiResponse.error("无权限");
-        List<Map<String, Object>> classes = classesMapper.getClassesByCollegeId(collegeId);
-        Set<Long> classIds = classes.stream().map(c -> (Long) c.get("id")).collect(Collectors.toSet());
-        List<AcademicWarning> warnings = academicWarningMapper.selectList(new QueryWrapper<>());
         List<Map<String, Object>> result = new ArrayList<>();
-        for (AcademicWarning w : warnings) {
-            if (w.getStudentId() == null) continue;
-            StudentProfile sp = studentProfileMapper.selectById(w.getStudentId());
-            if (sp == null || sp.getClassId() == null || !classIds.contains(sp.getClassId())) continue;
+        for (Map<String, Object> row : academicWarningMapper.selectWarningsByCollege(collegeId)) {
             Map<String, Object> m = new HashMap<>();
-            m.put("studentName", sp.getName()); m.put("className", sp.getClassName());
-            m.put("level", w.getWarningLevel()); m.put("description", w.getDescription());
-            m.put("status", w.getStatus()); m.put("createdAt", w.getCreatedAt());
+            m.put("studentName", row.get("student_name"));
+            m.put("className", row.get("class_name"));
+            m.put("level", row.get("warning_level"));
+            m.put("description", row.get("description"));
+            m.put("status", row.get("status"));
+            m.put("createdAt", row.get("created_at"));
             result.add(m);
         }
         return ApiResponse.success(result);
@@ -470,38 +416,28 @@ public class CollegeAdminController {
         List<Map<String, Object>> result = new ArrayList<>();
         
         if ("scores".equals(type)) {
-            List<ScoreRecord> records = scoreRecordMapper.selectList(new QueryWrapper<>());
-            for (ScoreRecord r : records) {
-                StudentProfile sp = studentProfileMapper.selectById(r.getStudentId());
-                if (sp == null || sp.getClassId() == null || !classIds.contains(sp.getClassId())) continue;
-                // 查询课程名
-                String courseName = "";
-                if (r.getCourseId() != null) {
-                    Course course = courseMapper.selectById(r.getCourseId());
-                    if (course != null) courseName = course.getName();
-                }
+            for (Map<String, Object> row : scoreStatMapper.selectScoreRows(collegeId, null, null)) {
                 Map<String, Object> m = new HashMap<>();
-                m.put("studentName", sp.getName());
-                m.put("className", sp.getClassName());
-                m.put("courseName", courseName);
-                m.put("regularScore", r.getRegularScore());   // 平时成绩
-                m.put("finalScore", r.getFinalScore());       // 期末成绩
-                m.put("totalScore", r.getScoreTotal());       // 总评成绩
-                m.put("gradePoint", r.getGradePoint());       // 绩点
-                m.put("grade", r.getGrade());                 // 等级
-                m.put("semester", r.getSemester());
+                m.put("studentName", row.get("student_name"));
+                m.put("studentId", row.get("student_no"));
+                m.put("className", row.get("class_name"));
+                m.put("courseName", row.get("course_name"));
+                m.put("regularScore", row.get("regular_score"));   // 平时成绩
+                m.put("finalScore", row.get("final_score"));       // 期末成绩
+                m.put("totalScore", row.get("score_total"));       // 总评成绩
+                m.put("gradePoint", row.get("grade_point"));       // 绩点
+                m.put("grade", row.get("grade"));                  // 等级
+                m.put("semester", row.get("semester"));
                 result.add(m);
             }
         } else if ("warnings".equals(type)) {
-            List<AcademicWarning> warnings = academicWarningMapper.selectList(new QueryWrapper<>());
-            for (AcademicWarning w : warnings) {
-                if (w.getStudentId() == null) continue;
-                StudentProfile sp = studentProfileMapper.selectById(w.getStudentId());
-                if (sp == null || sp.getClassId() == null || !classIds.contains(sp.getClassId())) continue;
+            for (Map<String, Object> row : academicWarningMapper.selectWarningsByCollege(collegeId)) {
                 Map<String, Object> m = new HashMap<>();
-                m.put("studentName", sp.getName()); m.put("className", sp.getClassName());
-                m.put("description", w.getDescription()); m.put("warningLevel", w.getWarningLevel());
-                m.put("status", w.getStatus() == 1 ? "已处理" : "待处理");
+                m.put("studentName", row.get("student_name"));
+                m.put("className", row.get("class_name"));
+                m.put("description", row.get("description"));
+                m.put("warningLevel", row.get("warning_level"));
+                m.put("status", intOf(row.get("status")) == 1 ? "已处理" : "待处理");
                 result.add(m);
             }
         } else if ("students".equals(type)) {
@@ -538,29 +474,31 @@ public class CollegeAdminController {
         d.put("researchAreas", tp.getResearchAreas());
         d.put("collegeId", tp.getCollegeId());
 
-        List<ScoreRecord> scores = scoreRecordMapper.selectList(
-            new QueryWrapper<ScoreRecord>().eq("teacher_id", teacherId));
         List<Map<String, Object>> scoreList = new ArrayList<>();
         Set<Long> uniqueCourses = new HashSet<>();
         double total = 0; int sc = 0;
-        for (ScoreRecord sr : scores) {
+        for (Map<String, Object> row : scoreStatMapper.selectTeacherScoreRows(collegeId, tp.getUserId())) {
             Map<String, Object> sm = new HashMap<>();
-            sm.put("id", sr.getId()); sm.put("studentName", sr.getStudentName());
-            sm.put("score", sr.getScore()); sm.put("semester", sr.getSemester());
-            sm.put("className", sr.getClassName()); sm.put("courseId", sr.getCourseId());
-            // 查询课程名
-            if (sr.getCourseId() != null) {
-                uniqueCourses.add(sr.getCourseId());
-                Course course = courseMapper.selectById(sr.getCourseId());
-                sm.put("courseName", course != null ? course.getName() : "");
-            }
+            sm.put("studentName", row.get("student_name"));
+            sm.put("className", row.get("class_name"));
+            sm.put("courseId", row.get("course_id"));
+            sm.put("courseName", row.get("course_name"));
+            sm.put("regularScore", row.get("regular_score"));
+            sm.put("finalScore", row.get("final_score"));
+            sm.put("score", row.get("score_total"));
+            sm.put("semester", row.get("semester"));
             scoreList.add(sm);
-            if (sr.getScore() != null) { total += sr.getScore(); sc++; }
+            if (row.get("course_id") != null) {
+                uniqueCourses.add(((Number) row.get("course_id")).longValue());
+            }
+            Double v = row.get("score_total") instanceof Number
+                ? ((Number) row.get("score_total")).doubleValue() : null;
+            if (v != null) { total += v; sc++; }
         }
         d.put("scores", scoreList);
         d.put("courseCount", uniqueCourses.size());
-        d.put("studentCount", scores.size());
-        d.put("avgScore", sc > 0 ? Math.round(total / sc * 10) / 10.0 : 0);
+        d.put("studentCount", scoreList.size());
+        d.put("avgScore", sc > 0 ? round1(total / sc) : 0);
         return ApiResponse.success(d);
     }
 
@@ -593,24 +531,22 @@ public class CollegeAdminController {
         if (collegeId == null) return ApiResponse.error("无权限");
         List<StudentProfile> all = studentProfileMapper.selectList(
             new QueryWrapper<StudentProfile>().eq("class_id", classId));
+        // 成绩与预警统计一次查出，取代"每个学生查两次库"
+        Map<Long, Map<String, Object>> statsByStudent = new HashMap<>();
+        for (Map<String, Object> row : scoreStatMapper.selectStudentScoreStats(collegeId)) {
+            statsByStudent.put(((Number) row.get("profile_id")).longValue(), row);
+        }
         List<Map<String, Object>> result = new ArrayList<>();
         for (StudentProfile sp : all) {
             Map<String, Object> m = new HashMap<>();
             m.put("id", sp.getId()); m.put("studentId", sp.getStudentId());
             m.put("name", sp.getName()); m.put("className", sp.getClassName());
-            List<ScoreRecord> scores = scoreRecordMapper.selectList(
-                new QueryWrapper<ScoreRecord>().eq("student_id", sp.getId()));
-            double t = 0; int pass = 0;
-            for (ScoreRecord sr : scores) {
-                double s = sr.getScore() != null ? sr.getScore() : 0;
-                t += s; if (s >= 60) pass++;
-            }
-            m.put("gpa", scores.isEmpty() ? 0 : Math.round(t / scores.size() / 20.0 * 100.0) / 100.0);
-            m.put("totalCourses", scores.size());
-            m.put("passedCourses", pass);
-            m.put("failedCourses", scores.size() - pass);
-            m.put("warningCount", academicWarningMapper.selectList(
-                new QueryWrapper<AcademicWarning>().eq("student_id", sp.getId())).size());
+            Map<String, Object> st = statsByStudent.get(sp.getId());
+            m.put("gpa", st == null || st.get("gpa") == null ? null : round2(doubleOf(st.get("gpa"))));
+            m.put("totalCourses", st == null ? 0 : intOf(st.get("total_courses")));
+            m.put("passedCourses", st == null ? 0 : intOf(st.get("passed_courses")));
+            m.put("failedCourses", st == null ? 0 : intOf(st.get("failed_courses")));
+            m.put("warningCount", st == null ? 0 : intOf(st.get("warning_count")));
             result.add(m);
         }
         return ApiResponse.success(result);
@@ -624,50 +560,23 @@ public class CollegeAdminController {
             @RequestParam(required = false) String keyword) {
         Long collegeId = getCollegeId(userId);
         if (collegeId == null) return ApiResponse.error("无权限");
-        List<Map<String, Object>> classes = classesMapper.getClassesByCollegeId(collegeId);
-        Set<Long> classIds = classes.stream().map(c -> (Long) c.get("id")).collect(Collectors.toSet());
-        if (classIds.isEmpty()) return ApiResponse.success(Collections.emptyList());
-
-        List<ScoreRecord> records = scoreRecordMapper.selectList(new QueryWrapper<>());
+        // 班级与关键字过滤已下推到 SQL；排序也由 SQL 的 ORDER BY 完成
         List<Map<String, Object>> result = new ArrayList<>();
-        for (ScoreRecord r : records) {
-            StudentProfile sp = studentProfileMapper.selectById(r.getStudentId());
-            if (sp == null || sp.getClassId() == null || !classIds.contains(sp.getClassId())) continue;
-            // 班级筛选
-            if (classId != null && !sp.getClassId().equals(classId)) continue;
-            // 关键字搜索（学号/姓名）
-            if (keyword != null && !keyword.isEmpty()) {
-                String kw = keyword.toLowerCase();
-                boolean match = (sp.getName() != null && sp.getName().toLowerCase().contains(kw))
-                    || String.valueOf(sp.getStudentId()).contains(kw);
-                if (!match) continue;
-            }
-            // 课程名
-            String courseName = "";
-            if (r.getCourseId() != null) {
-                Course course = courseMapper.selectById(r.getCourseId());
-                if (course != null) courseName = course.getName();
-            }
+        for (Map<String, Object> row : scoreStatMapper.selectScoreRows(collegeId, classId, keyword)) {
             Map<String, Object> m = new HashMap<>();
-            m.put("id", r.getId());
-            m.put("studentName", sp.getName());
-            m.put("studentId", sp.getStudentId());
-            m.put("className", sp.getClassName());
-            m.put("courseName", courseName);
-            m.put("regularScore", r.getRegularScore());
-            m.put("finalScore", r.getFinalScore());
-            m.put("totalScore", r.getScoreTotal());
-            m.put("gradePoint", r.getGradePoint());
-            m.put("grade", r.getGrade());
-            m.put("semester", r.getSemester());
+            m.put("id", row.get("id"));
+            m.put("studentName", row.get("student_name"));
+            m.put("studentId", row.get("student_no"));
+            m.put("className", row.get("class_name"));
+            m.put("courseName", row.get("course_name"));
+            m.put("regularScore", row.get("regular_score"));
+            m.put("finalScore", row.get("final_score"));
+            m.put("totalScore", row.get("score_total"));
+            m.put("gradePoint", row.get("grade_point"));
+            m.put("grade", row.get("grade"));
+            m.put("semester", row.get("semester"));
             result.add(m);
         }
-        // 按学生姓名排序
-        result.sort((a, b) -> {
-            int cmp = String.valueOf(a.get("studentName")).compareTo(String.valueOf(b.get("studentName")));
-            if (cmp == 0) cmp = String.valueOf(a.get("courseName")).compareTo(String.valueOf(b.get("courseName")));
-            return cmp;
-        });
         return ApiResponse.success(result);
     }
 }
