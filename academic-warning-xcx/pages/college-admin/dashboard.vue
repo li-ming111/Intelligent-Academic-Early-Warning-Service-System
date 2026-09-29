@@ -102,7 +102,8 @@
           <template v-else-if="activeTab === 'warnings'">
             <text class="cc-name">{{ item.studentName }}</text>
             <text class="cc-sub">{{ item.description }}</text>
-            <text class="cc-tag" :class="(item.warningLevel || 0) >= 3 ? 'red' : 'yellow'">{{ (item.warningLevel || 0) >= 3 ? '严重' : '中度' }}</text>
+            <!-- 三级预警原来被压成两级（1 级也显示"中度"），与其它页面口径不一致 -->
+            <text class="cc-tag" :class="warnCls(item.warningLevel ?? item.level)">{{ warnText(item.warningLevel ?? item.level) }}</text>
           </template>
           <template v-else-if="activeTab === 'counselors'">
             <text class="cc-name">{{ item.name }}</text>
@@ -129,6 +130,7 @@
 
 <script>
 import { collegeAdminAPI } from '@/services/api.js'
+import { warningLevel, warningLevelText } from '@/utils/score.js'
 
 export default {
   data() {
@@ -154,6 +156,10 @@ export default {
   },
   onShow() { this.loadDashboard() },
   methods: {
+    // 等级映射收敛到 utils/score.js，与其它端同一口径
+    warnCls(l) { const lv = warningLevel(l); return lv >= 3 ? 'red' : lv === 2 ? 'yellow' : lv === 1 ? 'blue' : 'blue' },
+    warnText(l) { return warningLevelText(l) },
+
     async loadDashboard() {
       try {
         const uid = uni.getStorageSync('userId'); if (!uid) return
@@ -245,6 +251,7 @@ export default {
 .cc-tag { font-size: 20rpx; padding: 3rpx 14rpx; border-radius: 20rpx; font-weight: 500; flex-shrink: 0; }
 .cc-tag.red { background: #fef2f2; color: #ef4444; }
 .cc-tag.yellow { background: #fffbeb; color: #d97706; }
+.cc-tag.blue { background: #eff6ff; color: #3b82f6; }
 
 .empty-inline { text-align: center; padding: 48rpx; color: #94a3b8; font-size: 24rpx; }
 .empty-tip { text-align: center; padding: 60rpx; }

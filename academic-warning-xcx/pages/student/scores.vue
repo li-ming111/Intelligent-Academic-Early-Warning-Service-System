@@ -31,7 +31,7 @@
         <view v-for="c in scores" :key="c.id" class="table-row">
           <text class="td td-name">{{ c.courseName }}</text>
           <text :class="['td', 'td-score', scoreClass(c.scoreTotal)]">{{ scoreText(c.scoreTotal) }}</text>
-          <text class="td td-gpa">{{ c.gradePoint || calcGpa(c.scoreTotal) }}</text>
+          <text :class="['td', 'td-gpa', { pending: c.pending }]">{{ c.gradePoint || calcGpa(c.scoreTotal) }}</text>
         </view>
       </scroll-view>
 
@@ -46,6 +46,7 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import { studentAPI } from '@/services/api.js'
+import { scoreClass, scoreText, calcGpa, isPending } from '@/utils/score.js'
 
 const selectedIndex = ref(0)
 const scores = ref([])
@@ -60,35 +61,6 @@ const semesters = ref([
   { label: '2023-2024-02', value: '2023-2024-2' },
   { label: '2023-2024-01', value: '2023-2024-1' }
 ])
-
-const scoreClass = (s) => {
-  const n = Number(s) || 0
-  if (n >= 90) return 'excellent'
-  if (n >= 80) return 'good'
-  if (n >= 70) return 'medium'
-  if (n >= 60) return 'pass'
-  return 'fail'
-}
-
-const scoreText = (s) => {
-  const n = Number(s) || 0
-  if (n >= 90) return '优秀'
-  return String(n)
-}
-
-const calcGpa = (s) => {
-  const n = Number(s) || 0
-  if (n >= 90) return '4.0'
-  if (n >= 85) return '3.7'
-  if (n >= 82) return '3.3'
-  if (n >= 78) return '3.0'
-  if (n >= 75) return '2.7'
-  if (n >= 72) return '2.3'
-  if (n >= 68) return '2.0'
-  if (n >= 64) return '1.5'
-  if (n >= 60) return '1.0'
-  return '0'
-}
 
 const selectTerm = (idx) => {
   selectedIndex.value = idx
@@ -105,7 +77,12 @@ const loadScores = async () => {
     scores.value = arr.map(s => ({
       id: s.id || s.courseId,
       courseName: s.courseName || s.course_name || '',
-      scoreTotal: Number(s.scoreTotal || s.score_total || s.score || 0),
+      // 期末未录入时，scores.score_total 存的是"平时分折半"的中间值（如 40），
+      // 它不是成绩。从前这里 `Number(s.scoreTotal || 0)` 把它当成真实分数渲染，
+      // 于是待录入显示成红色的 0 分/40 分，和真正挂科在视觉上无法区分。
+      // 判定口径与后端一致：final_score IS NULL 即为待录入。
+      pending: isPending(s),
+      scoreTotal: isPending(s) ? null : (s.scoreTotal ?? s.score_total ?? s.score ?? null),
       gradePoint: s.gradePoint || s.grade_point || null
     }))
   } catch (e) {
@@ -225,6 +202,9 @@ onMounted(() => { loadScores() })
 .td-score.medium { color: #22c55e; }
 .td-score.pass { color: #666; }
 .td-score.fail { color: #ef4444; }
+/* 期末未录入是"暂无成绩"，不是"考了 0 分"，用灰色和挂科的红色区分开 */
+.td-score.pending { color: #94a3b8; }
+.td-gpa.pending { color: #94a3b8; }
 
 /* 空状态 */
 .empty {

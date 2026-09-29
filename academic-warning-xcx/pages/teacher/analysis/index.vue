@@ -56,9 +56,8 @@
           <view v-for="(s, i) in analysis.students.slice(0, 10)" :key="s.id || i" class="rank-row">
             <text class="rank-no" :class="i < 3 ? 'top' + (i + 1) : ''">{{ i + 1 }}</text>
             <text class="rank-name">{{ s.studentName || s.name }}</text>
-            <text class="rank-score" :class="(s.score || 0) >= 90 ? 'g-a' : (s.score || 0) >= 80 ? 'g-b' : (s.score || 0) >= 60 ? 'g-c' : 'g-d'">
-              {{ s.score || '--' }}
-            </text>
+            <!-- 未录入的成绩被 `(s.score || 0)` 折成 0 分并染红，与真正挂科无法区分 -->
+            <text class="rank-score" :class="rankScoreCls(s.score ?? s.scoreTotal)">{{ scoreText(s.score ?? s.scoreTotal) }}</text>
           </view>
         </view>
       </view>
@@ -72,6 +71,7 @@
 
 <script>
 import { teacherAPI } from '@/services/api.js'
+import { toNumber, scoreText } from '@/utils/score.js'
 
 export default {
   data() {
@@ -86,6 +86,16 @@ export default {
   },
   onShow() { this.loadClasses() },
   methods: {
+    /** 分数档位样式，口径与 utils/score.js 一致（未录入 → 灰色 pending）。 */
+    rankScoreCls(v) {
+      const n = toNumber(v)
+      if (n === null) return 'g-pending'
+      if (n >= 90) return 'g-a'
+      if (n >= 80) return 'g-b'
+      if (n >= 60) return 'g-c'
+      return 'g-d'
+    },
+
     async loadClasses() {
       try {
         const uid = uni.getStorageSync('teacherId') || uni.getStorageSync('userId'); if (!uid) return
@@ -149,6 +159,8 @@ export default {
 .rank-name { flex: 1; font-size: 26rpx; color: #1e293b; }
 .rank-score { font-size: 26rpx; font-weight: 700; }
 .g-a { color: #16a34a; } .g-b { color: #2563eb; } .g-c { color: #f59e0b; } .g-d { color: #ef4444; }
+/* 未录入是"暂无成绩"而非"考了 0 分"，用灰色与挂科的红色区分 */
+.g-pending { color: #94a3b8; }
 
 .empty { text-align: center; padding: 120rpx 0; }
 .empty-icon { font-size: 64rpx; display: block; margin-bottom: 16rpx; }

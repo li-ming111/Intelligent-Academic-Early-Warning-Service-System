@@ -44,12 +44,12 @@
         @tap="showDetailFn(w)"
       >
         <view class="card-left">
-          <view :class="['severity-bar', levelClass(w.level)]"></view>
+          <view :class="['severity-bar', levelClass(w.warningLevel ?? w.level)]"></view>
         </view>
         <view class="card-body">
           <view class="card-head">
             <text class="card-title">{{ w.title }}</text>
-            <view :class="['tag', levelClass(w.level)]">{{ levelText(w.level) }}</view>
+            <view :class="['tag', levelClass(w.warningLevel ?? w.level)]">{{ levelText(w.warningLevel ?? w.level) }}</view>
           </view>
           <text class="card-desc">{{ w.description }}</text>
           <view class="card-foot">
@@ -69,8 +69,8 @@
     <!-- 详情弹窗 -->
     <view v-if="showDetail" class="overlay" @tap="closeDetail">
       <view class="modal" @tap.stop>
-        <view :class="['modal-badge', levelClass(selectedWarning?.level)]">
-          <text class="badge-text">{{ levelText(selectedWarning?.level) }}</text>
+        <view :class="['modal-badge', levelClass(selectedWarning?.warningLevel ?? selectedWarning?.level)]">
+          <text class="badge-text">{{ levelText(selectedWarning?.warningLevel ?? selectedWarning?.level) }}</text>
         </view>
         <view class="modal-hd">
           <text class="modal-title">{{ selectedWarning?.title }}</text>
@@ -79,7 +79,7 @@
         <view class="modal-bd">
           <view class="mb-row">
             <text class="mb-lbl">预警等级</text>
-            <view :class="['tag', levelClass(selectedWarning?.level)]">{{ levelText(selectedWarning?.level) }}</view>
+            <view :class="['tag', levelClass(selectedWarning?.warningLevel ?? selectedWarning?.level)]">{{ levelText(selectedWarning?.warningLevel ?? selectedWarning?.level) }}</view>
           </view>
           <view class="mb-row">
             <text class="mb-lbl">预警描述</text>
@@ -106,6 +106,7 @@
 
 <script>
 import { studentAPI } from '@/services/api.js'
+import { warningLevelKey, warningLevelText } from '@/utils/score.js'
 
 export default {
   data() {
@@ -120,14 +121,14 @@ export default {
     stats() {
       return {
         total: this.warnings.length,
-        danger: this.warnings.filter(w => this.levelClass(w.level) === 'danger').length,
-        medium: this.warnings.filter(w => this.levelClass(w.level) === 'medium').length,
-        low: this.warnings.filter(w => this.levelClass(w.level) === 'low').length
+        danger: this.warnings.filter(w => this.levelClass(w.warningLevel ?? w.level) === 'danger').length,
+        medium: this.warnings.filter(w => this.levelClass(w.warningLevel ?? w.level) === 'medium').length,
+        low: this.warnings.filter(w => this.levelClass(w.warningLevel ?? w.level) === 'low').length
       }
     },
     filteredList() {
       if (this.activeFilter === 'all') return this.warnings
-      return this.warnings.filter(w => this.levelClass(w.level) === this.activeFilter)
+      return this.warnings.filter(w => this.levelClass(w.warningLevel ?? w.level) === this.activeFilter)
     }
   },
   onLoad() {
@@ -154,15 +155,13 @@ export default {
     closeDetail() {
       this.showDetail = false
     },
+    // 等级判定收敛到 utils/score.js：后端给的是数字 1/2/3，而从前的实现比的是
+    // 'high'/'medium'/'low' 字符串，两边永不相等 —— 所有预警都落进 else 显示成"轻度"。
     levelClass(l) {
-      const v = String(l || '')
-      if (v === 'high' || v === 'danger' || v === '严重') return 'danger'
-      if (v === 'medium' || v === '中等') return 'medium'
-      return 'low'
+      return warningLevelKey(l)
     },
     levelText(l) {
-      const m = { high: '严重', danger: '严重', medium: '中等', low: '轻微' }
-      return m[String(l || '')] || l || '轻微'
+      return warningLevelText(l)
     },
     fmtTime(t) {
       if (!t) return ''

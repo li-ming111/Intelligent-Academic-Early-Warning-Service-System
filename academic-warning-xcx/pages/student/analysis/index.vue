@@ -29,7 +29,9 @@
       <view v-if="scores.length" class="score-list">
         <view v-for="s in scores" :key="s.courseName||s.id" class="score-row">
           <text class="score-name">{{ s.courseName }}</text>
-          <text :class="['score-val', gradeClass(s.score||s.score_total)]">{{ s.score||s.score_total||'--' }}</text>
+          <!-- 期末未录入时 score_total 是"平时分折半"的中间值，不是成绩：
+               从前 `Number(s||0)` 把它折成 0 分并染红，与真正挂科无法区分 -->
+          <text :class="['score-val', scoreClass(s.scoreTotal ?? s.score_total)]">{{ scoreText(s.scoreTotal ?? s.score_total) }}</text>
         </view>
       </view>
       <view v-else class="empty-sm">暂无成绩数据</view>
@@ -39,6 +41,7 @@
 
 <script setup>
 import { ref, onMounted } from 'vue'
+import { scoreClass, scoreText } from '@/utils/score.js'
 import { studentAPI } from '@/services/api.js'
 
 const stats = ref({ gpa:'--', totalCredits:0, warningCount:0, classRank:'--' })
@@ -60,12 +63,6 @@ const loadData = async () => {
   } catch (e) {}
 }
 
-const gradeClass = (s) => {
-  const n = Number(s||0)
-  if (n >= 90) return 'a'
-  if (n >= 60) return 'b'
-  return 'c'
-}
 </script>
 
 <style scoped>
@@ -95,6 +92,8 @@ const gradeClass = (s) => {
 .score-val.a { color: #22c55e; background: #f0fdf4; }
 .score-val.b { color: #3b5ce8; background: #eef1ff; }
 .score-val.c { color: #ef4444; background: #fef2f2; }
+/* 未录入是"暂无成绩"而非"考了 0 分"，用灰色与挂科的红色区分 */
+.score-val.pending { color: #94a3b8; background: #f1f5f9; }
 
 .empty-sm { text-align: center; padding: 40rpx; color: #aeaeb2; font-size: 24rpx; }
 </style>

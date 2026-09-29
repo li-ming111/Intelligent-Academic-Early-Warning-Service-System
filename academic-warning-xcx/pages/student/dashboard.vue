@@ -71,6 +71,7 @@
 
 <script>
 import { studentAPI } from '@/services/api.js'
+import { warningLevelKey, warningLevelText } from '@/utils/score.js'
 
 export default {
   data() {
@@ -110,11 +111,18 @@ export default {
           this.stats[0].val = (dash.gpa || 0).toFixed(1)
           this.stats[1].val = dash.completedCredits || 0
           this.stats[2].val = dash.warningCount || 0
-          this.warnings = (dash.recentWarnings || []).slice(0, 3).map(w => ({
-            id: w.id, title: w.title || '预警',
-            cls: (w.warningLevel || 0) >= 3 ? 'danger' : (w.warningLevel || 0) >= 2 ? 'medium' : 'low',
-            lvl: (w.warningLevel || 0) >= 3 ? '严重' : (w.warningLevel || 0) >= 2 ? '中等' : '轻微'
-          }))
+          // 等级映射收敛到 utils/score.js：
+          //   1. 后端字段是 warningLevel，也兼容旧载荷的 level；
+          //   2. 文案从前第二档写"中等"、第一档写"轻微"，与预警页的"中度/轻度"不一致，
+          //      同一个等级在两个页面显示成两个词。现在全端统一。
+          this.warnings = (dash.recentWarnings || []).slice(0, 3).map(w => {
+            const level = w.warningLevel ?? w.level
+            return {
+              id: w.id, title: w.title || '预警',
+              cls: warningLevelKey(level),
+              lvl: warningLevelText(level)
+            }
+          })
         }
         const p = await studentAPI.getAssistancePlans(uid)
         if (p) this.plans = (Array.isArray(p) ? p : (p?.data || [])).slice(0, 2)

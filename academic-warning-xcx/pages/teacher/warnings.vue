@@ -58,6 +58,7 @@
 
 <script>
 import { teacherAPI } from '@/services/api.js'
+import { warningLevel, warningLevelText } from '@/utils/score.js'
 
 export default {
   data() {
@@ -73,12 +74,12 @@ export default {
         const wl = this.normLevel(w.warningLevel)
         if (this.activeTab === '3') return wl >= 3
         if (this.activeTab === '2') return wl === 2
-        return wl <= 1
+        return wl === 1
       })
     },
     severe() { return this.list.filter(w => this.normLevel(w.warningLevel) >= 3).length },
     medium() { return this.list.filter(w => this.normLevel(w.warningLevel) === 2).length },
-    mild() { return this.list.filter(w => this.normLevel(w.warningLevel) <= 1).length }
+    mild() { return this.list.filter(w => this.normLevel(w.warningLevel) === 1).length }
   },
   onShow() { this.loadData() },
   methods: {
@@ -89,14 +90,16 @@ export default {
         this.list = Array.isArray(res) ? res : (res?.data || [])
       } catch (e) {}
     },
+    // 等级归一化收敛到 utils/score.js。原实现在这里各写了一份，且无法识别时
+    // 兜底成 1（轻度）—— 等级缺失的预警会被算成一条"轻度预警"，统计数字里
+    // 始终有一条是虚的。现在无法识别返回 0，不计入任何一档。
     normLevel(wl) {
-      if (wl === '严重' || wl >= 3) return 3
-      if (wl === '中度' || wl === 2) return 2
-      return 1
+      return warningLevel(wl)
     },
-    lvColor(wl) { const lv = this.normLevel(wl); return lv >= 3 ? '#ef4444' : lv >= 2 ? '#f59e0b' : '#3b82f6' },
-    lvBg(wl) { const lv = this.normLevel(wl); return lv >= 3 ? '#fef2f2' : lv >= 2 ? '#fffbeb' : '#eff6ff' },
-    lvText(wl) { const lv = this.normLevel(wl); return lv >= 3 ? '严重' : lv >= 2 ? '中度' : '轻度' },
+    // 等级无法识别时给中性灰色，不再冒充"轻度"（蓝色）
+    lvColor(wl) { const lv = this.normLevel(wl); return lv >= 3 ? '#ef4444' : lv >= 2 ? '#f59e0b' : lv === 1 ? '#3b82f6' : '#94a3b8' },
+    lvBg(wl) { const lv = this.normLevel(wl); return lv >= 3 ? '#fef2f2' : lv >= 2 ? '#fffbeb' : lv === 1 ? '#eff6ff' : '#f1f5f9' },
+    lvText(wl) { return warningLevelText(wl) },
     fmtDate(d) { return d ? d.substring(0, 10) : '' },
     avGrad(id) {
       const cs = ['#2563eb,#1d4ed8','#7c3aed,#6d28d9','#16a34a,#15803d','#f59e0b,#d97706','#ef4444,#dc2626']
