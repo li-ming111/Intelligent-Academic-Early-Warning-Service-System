@@ -53,6 +53,16 @@
             <app-icon name="chevron" :size="26" color="#aeaeb2" />
           </view>
         </view>
+
+        <view class="note">
+          <text class="note__title">「有学生的班级」与「班级管理」页的「管理班级」不是同一个数</text>
+          <text class="note__text">
+            这里数的是**花名册上真的有人的班**（数据来自学生行）；
+            「班级管理」页数的是 `classes.counselor_id` 指向本辅导员的所有班，
+            含那些还没有学生档案的空班。两者标着同一个词但口径不同 ——
+            本页 1 个、那边 8 个，差额是 7 个空班，不是哪一边算错了。
+          </text>
+        </view>
       </template>
     </view>
 
@@ -269,7 +279,7 @@ const avatarText = computed(() => (counselorName.value ? String(counselorName.va
 
 const subtitle = computed(() => {
   const n = students.value.length
-  const c = classOptions.value.length
+  const c = classCount.value
   return n ? `共 ${n} 名学生${c > 1 ? ` · ${c} 个班` : ''}` : '所带班级的学生'
 })
 
@@ -287,7 +297,7 @@ const myPending = computed(() => myWarnings.value.filter(w => w.isPending).lengt
 
 const heroStats = computed(() => [
   { label: '学生总数', value: students.value.length },
-  { label: '班级', value: classOptions.value.length ? classOptions.value.length - 1 : 0 },
+  { label: '有学生的班级', value: classCount.value },
   { label: '存在挂科', value: Object.keys(insufficient.value).length },
   { label: '预警学生', value: warnedStudentIds.value.size }
 ])
@@ -309,6 +319,17 @@ const classOptions = computed(() => {
   return [{ label: '全部', value: '', count: students.value.length }]
     .concat(names.map(n => ({ label: n, value: n, count: students.value.filter(s => (s.className || classOf(s)) === n).length })))
 })
+
+/**
+ * **真实的班级数**。
+ *
+ * 这里必须只留一个出口：`classOptions` 的第 0 项是「全部」这个伪选项，
+ * 真实班级数永远是 `classOptions.length - 1`。原先副标题写的是 `classOptions.length`
+ * （忘了减 1），而 hero 的「班级」卡写的是 `- 1` —— 同一屏上于是同时出现
+ * 「共 24 名学生 · **2** 个班」和「班级 **1**」。只有 计科2306班 有人，
+ * 2 是错的、1 是对的。数值分散算两遍就会这样。
+ */
+const classCount = computed(() => Math.max(0, classOptions.value.length - 1))
 
 const visible = computed(() => {
   const kw = keyword.value.trim()
@@ -961,5 +982,29 @@ function openFocusFromQuery() {
 
 .textarea--short {
   min-height: 110rpx;
+}
+
+/* ---------- 说明 ---------- */
+.note {
+  margin-top: $spacing-md;
+  padding: $spacing-md;
+  border-radius: $radius-md;
+  background: $color-card;
+  box-shadow: $shadow-card;
+}
+
+.note__title {
+  display: block;
+  margin-bottom: $spacing-xs;
+  font-size: $font-sm;
+  font-weight: 600;
+  color: $color-text;
+}
+
+.note__text {
+  display: block;
+  font-size: $font-xs;
+  color: $color-text-hint;
+  line-height: 1.6;
 }
 </style>
