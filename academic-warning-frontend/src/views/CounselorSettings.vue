@@ -74,23 +74,57 @@ import { ElMessage } from 'element-plus'
 import { counselorAPI } from '@/api/index'
 import { getUserId } from '@/utils/userUtils'
 
-const counselorId = localStorage.getItem('counselorId') || getUserId()
+// 统一用 getUserId()（登录时写入的 localStorage.userId）。
+// 原写法先读 localStorage.counselorId，但全项目**没有任何地方写过这个键**，
+// 永远回退到 getUserId()——留着只会让人以为存在"按辅导员档案 id 查"的路径。
+const counselorId = getUserId()
 
 const pwdForm = ref({ oldPassword: '', newPassword: '', confirmPassword: '' })
 const profileForm = ref({ name: '', email: '', phone: '' })
 const notifyForm = ref({ warningNotification: true, systemMessage: true, classNotification: true, studentFeedback: true, emailReminder: false })
 const workForm = ref({ college: '', office: '', officePhone: '' })
+// 账户信息是否真的加载成功。没加载成功时表单是全空的，此时点"保存信息"
+// 会把 users 里真实的姓名/邮箱/电话**覆盖成空串**（空串不是 null，
+// MyBatis-Plus 的 NOT_NULL 策略不跳过），所以宁可不给保存。
+const profileLoaded = ref(false)
 
 onMounted(async () => {
+  // 三处请求来源不同、失败原因也不同，各自 try 掉：
+  // 任意一个挂了都只该让对应输入框空着，不该让整页白屏或静默全空。
   try {
     const info = await counselorAPI.getProfile(counselorId)
     if (info) {
       profileForm.value.name = info.name || ''
       profileForm.value.email = info.email || ''
       profileForm.value.phone = info.phone || ''
-      workForm.value.college = info.college_name || info.college || ''
+      profileLoaded.value = true
     }
-  } catch (e) { console.error('加载信息失败', e) }
+  } catch (e) { console.error('加载账户信息失败', e) }
+
+  // 学院不在 users 表，取自辅导员档案（dashboard 里的 counselor.college_name）。
+  // 这一格是只读展示，不参与保存。
+  try {
+    const dash = await counselorAPI.getDashboard(counselorId)
+    workForm.value.college = dash?.counselor?.collegeName || ''
+  } catch (e) { console.error('加载学院信息失败', e) }
+
+  try {
+    const s = await counselorAPI.getSettings(counselorId)
+    if (s) {
+      // 后端 GET 在无记录时返回默认值对象，字段是齐的；这里仍逐个 ?? 兜底，
+      // 免得以后加字段时旧响应把 v-model 变成 undefined（el-switch 会显示成关闭，
+      // 看起来像"用户关掉了通知"，其实是没数据）。
+      notifyForm.value = {
+        warningNotification: s.warningNotification ?? true,
+        systemMessage: s.systemMessage ?? true,
+        classNotification: s.classNotification ?? true,
+        studentFeedback: s.studentFeedback ?? true,
+        emailReminder: s.emailReminder ?? false
+      }
+      workForm.value.office = s.officeLocation || ''
+      workForm.value.officePhone = s.officePhone || ''
+    }
+  } catch (e) { console.error('加载偏好设置失败', e) }
 })
 
 const handleChangePwd = async () => {
@@ -99,30 +133,41 @@ const handleChangePwd = async () => {
   if (newPassword.length < 6) { ElMessage.error('新密码至少6位'); return }
   if (newPassword !== confirmPassword) { ElMessage.error('两次输入的密码不一致'); return }
   try {
-    const res = await counselorAPI.changePassword({ userId: Number(counselorId), oldPassword, newPassword })
-    if (res && (res.code === 200 || res.success)) {
-      ElMessage.success('密码修改成功')
-      pwdForm.value = { oldPassword: '', newPassword: '', confirmPassword: '' }
-    } else { ElMessage.error(res?.message || '密码修改失败') }
-  } catch (e) { ElMessage.error('密码修改失败') }
+    // 这里**只 await + catch**，不做返回值判定：client.js 的响应拦截器在
+    // code!==200 时已经 reject，成功时 res 是后端消息字符串而不是对象。
+    // 原写法 `res.code === 200 || res.success` 恒为假，导致改成功了反而弹"修改失败"。
+    await counselorAPI.changePassword({ userId: Number(counselorId), oldPassword, newPassword })
+    ElMessage.success('密码修改成功')
+    pwdForm.value = { oldPassword: '', newPassword: '', confirmPassword: '' }
+  } catch (e) { ElMessage.error(e?.message || '密码修改失败') }
 }
 const handleSaveProfile = async () => {
+  if (!profileLoaded.value) { ElMessage.error('账户信息未加载成功，请刷新页面后重试'); return }
   try {
-    await counselorAPI.updateProfile({ userId: Number(counselorId), name: profileForm.value.name, email: profileForm.value.email, phone: profileForm.value.phone })
+    await counselorAPI.updateProfile(Number(counselorId), {
+      name: profileForm.value.name, email: profileForm.value.email, phone: profileForm.value.phone
+    })
     ElMessage.success('个人信息已保存')
-  } catch (e) { ElMessage.error('保存失败') }
+  } catch (e) { ElMessage.error(e?.message || '保存失败') }
 }
 const handleSaveNotify = async () => {
   try {
     await counselorAPI.updateNotifyPrefs({ userId: Number(counselorId), ...notifyForm.value })
     ElMessage.success('通知偏好已保存')
-  } catch (e) { ElMessage.error('保存失败') }
+  } catch (e) { ElMessage.error(e?.message || '保存失败') }
 }
 const handleSaveWork = async () => {
   try {
-    await counselorAPI.updateWorkInfo({ userId: Number(counselorId), office: workForm.value.office, officePhone: workForm.value.officePhone, college: workForm.value.college })
+    // 只提交 user_settings 里真实存在的列名。原写法传的 office/college/counselorId
+    // 都不是列名，后端当未知字段忽略——弹"保存成功"但一个字节都没落库。
+    // 学院是只读展示、也不属于本表，故不提交。
+    await counselorAPI.updateWorkInfo({
+      userId: Number(counselorId),
+      officeLocation: workForm.value.office,
+      officePhone: workForm.value.officePhone
+    })
     ElMessage.success('工作设置已保存')
-  } catch (e) { ElMessage.error('保存失败') }
+  } catch (e) { ElMessage.error(e?.message || '保存失败') }
 }
 </script>
 

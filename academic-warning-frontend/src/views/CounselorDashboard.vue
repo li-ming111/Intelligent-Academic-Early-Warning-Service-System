@@ -145,7 +145,15 @@ const trendChart = ref(null)
 const stats = reactive({ studentCount: 0, warningCount: 0, redWarnings: 0, yellowWarnings: 0, blueWarnings: 0 })
 const classList = ref([])
 const recentWarnings = ref([])
-const counselorName = ref(localStorage.getItem('userName') || '辅导员')
+// 优先取登录时写入的 'name'（Login.vue 存的是真名）。
+// 不能只读 'userName'：它是 CounselorLayout 在 onMounted 里才写入的，
+// 而子组件的 setup 早于父组件的 onMounted 执行，首屏永远读不到，会退化成「辅导员」。
+const pickName = (v) => (v && !/^\d+$/.test(v) ? v : '')
+const counselorName = ref(
+  pickName(localStorage.getItem('name')) ||
+  pickName(localStorage.getItem('userName')) ||
+  '辅导员'
+)
 
 const today = new Date().toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'short' })
 const greeting = (() => { const h = new Date().getHours(); return h < 9 ? '早上好' : h < 12 ? '上午好' : h < 14 ? '中午好' : h < 18 ? '下午好' : '晚上好' })()
@@ -158,6 +166,9 @@ const loadDashboard = async () => {
     const res = await counselorAPI.getDashboard(uid)
     // 拦截器已解包，res 直接是 data Map
     const data = (res && !res.code) ? res : (res && res.data ? res.data : {})
+    // 接口已带回辅导员档案，直接用它兜正姓名，不依赖 localStorage 的写入时机
+    const apiName = data.counselor && data.counselor.name
+    if (apiName) counselorName.value = apiName
     stats.studentCount = data.studentCount || 0
     stats.warningCount = data.warningCount || 0
     stats.redWarnings = data.redWarnings || 0

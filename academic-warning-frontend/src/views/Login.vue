@@ -172,10 +172,22 @@ const handleLogin = async () => {
   if (!loginForm.value.username) { ElMessage.error('请输入学号或工号'); return }
   if (!loginForm.value.password) { ElMessage.error('请输入密码'); return }
   if (!loginForm.value.captcha) { ElMessage.error('请输入验证码'); return }
+  // 此前这里只判了非空、从不与 captchaCode 比对，填任何一个字符都能登录，验证码形同虚设。
+  // 注意分寸：这是**纯前端**校验，captchaCode 就在页面 DOM 里，挡不住有心人，
+  // 只能挡住脚本盲打。要当真正的安全边界，必须改成服务端出图 + 服务端校验。
+  if (loginForm.value.captcha.trim().toUpperCase() !== captchaCode.value) {
+    ElMessage.error('验证码错误')
+    refreshCaptcha()
+    loginForm.value.captcha = ''
+    return
+  }
   loading.value = true
   try {
     const res = await authAPI.login(loginForm.value.username, loginForm.value.password)
     const apiData = res.data
+    // 注意：/auth/login 的响应信封 code 恒为 200 —— 密码错误、用户不存在也都是 200
+    // （见 api/client.js 对该路径的特判），所以 code 判不出成败。
+    // 真正的结果只在 data 上：成功有 data.token，失败只有 data.message。
     if (apiData.code !== 200) { errorMessage.value = apiData.message || '登录失败'; loading.value = false; return }
     const d = apiData.data
     if (d && d.token) {
@@ -195,6 +207,10 @@ const handleLogin = async () => {
       else if (role === '3' || role === 'counselor') router.push('/counselor/dashboard')
       else if (role === '5' || role === 'college_admin') router.push('/college-admin/dashboard')
       else router.push('/student/dashboard')
+    } else {
+      // 失败分支：此前缺失，导致密码错误时既不报错也不跳转，点了登录毫无反应。
+      // data.message 是后端给出的原因（「密码错误」「用户不存在」「用户名和密码不能为空」）。
+      errorMessage.value = (d && d.message) || '登录失败，请稍后重试'
     }
     loading.value = false
   } catch (e) {

@@ -5,6 +5,10 @@
       <p>班级学分达标率追踪和不足学生警示</p>
     </div>
 
+    <!-- 接口失败时明确告知，避免页面上的 0 被当成真实统计结果 -->
+    <el-alert v-if="loadError" type="error" show-icon :closable="false"
+              title="统计数据加载失败" description="未能获取班级学分统计，当前显示的 0 并非真实数据，请稍后重试。" />
+
     <!-- 整体统计 -->
     <div class="stats-grid">
       <div class="stat-box">
@@ -131,6 +135,8 @@ import { getUserId } from '@/utils/userUtils'
 const monitor = ref({})
 const insufficientStudents = ref([])
 const loading = ref(false)
+/** 统计接口是否失败。失败时页面显示明确提示，而不是静默展示 0。 */
+const loadError = ref(false)
 const currentPage = ref(1)
 const pageSize = ref(20)
 const totalInsufficientStudents = ref(0)
@@ -152,16 +158,15 @@ const loadCreditMonitor = async () => {
       const response = await counselorAPI.getCreditMonitor(counselorId)
       if (response) {
         monitor.value = response
+        loadError.value = false
       }
     } catch (error) {
-      // 后端接口不可用，使用默认数据
-      console.warn('学分监控API不可用，使用默认数据')
-      monitor.value = {
-        totalStudents: 45,
-        creditSufficient: 40,
-        creditInsufficient: 5,
-        insufficientRate: 11.1
-      }
+      // 从前这里填入 {totalStudents:45, creditSufficient:40, ...} 作为"默认数据"。
+      // 那组数字没有任何来源，而且模板根本不读它们（模板读的是 classMonitors 等），
+      // 唯一的实际效果是让接口失败看起来像加载成功 —— 页面显示 0，但没有任何错误提示。
+      console.warn('学分监控API不可用', error)
+      loadError.value = true
+      monitor.value = {}
     }
   } catch (error) {
     console.error('加载学分监控数据失败:', error)
@@ -176,9 +181,17 @@ const loadInsufficientStudents = async () => {
     
     try {
       const response = await counselorAPI.getCreditInsufficientStudents(counselorId, currentPage.value, pageSize.value)
+      // 后端返回的是分页对象 {total, page, size, list}。
+      // 从前这里用 `Array.isArray(response)` 判断，永远为 false ——
+      // 表格恒为空，而 total 也永远是 0，翻页器形同虚设。
+      // 同时兼容旧的数组形态，避免接口版本不一致时整页空白。
       if (Array.isArray(response)) {
         insufficientStudents.value = response
         totalInsufficientStudents.value = response.length
+      } else if (response) {
+        const list = response.list ?? response.records ?? response.data ?? []
+        insufficientStudents.value = Array.isArray(list) ? list : []
+        totalInsufficientStudents.value = response.total ?? insufficientStudents.value.length
       }
     } catch (error) {
       // 后端接口不可用

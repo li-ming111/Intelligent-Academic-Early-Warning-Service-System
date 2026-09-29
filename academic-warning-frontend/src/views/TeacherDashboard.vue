@@ -173,7 +173,10 @@ const greeting = computed(() => {
 })
 
 onMounted(async () => {
-  const stored = localStorage.getItem('userName')
+  // 优先用登录时写入的 'name'（Login.vue 存的是真名）。
+  // 只读 'userName' 不行：它由各 Layout 挂载后才写入，首屏读不到，
+  // 会先闪一下兜底文案「教师」再被 loadData 纠正。
+  const stored = localStorage.getItem('name') || localStorage.getItem('userName')
   if (stored && !/^\d+$/.test(stored)) teacherName.value = stored
   const today = new Date()
   currentDate.value = today.toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' })

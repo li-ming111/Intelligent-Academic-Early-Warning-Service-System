@@ -79,7 +79,13 @@ import { adminAPI } from '@/api/index'
 
 const route = useRoute()
 const router = useRouter()
-const storedName = localStorage.getItem('userName')
+// 优先读登录时写入的 'name'（Login.vue 存的是真名）。
+// 不能只读 'userName'：全项目没有任何地方为管理员/学院管理员写它，
+// 而下面 loadAdminInfo 想拿 /admin/dashboard 兜正姓名 —— 该接口实测只返回
+// totalMajors/totalUsers/totalColleges/totalWarnings/totalStudents/totalCourses/recentWarnings，
+// 没有 adminName/name 字段，兜正分支是死的，只读 'userName' 会永久停在兜底文案
+//（学院管理员侧栏一直显示「学院管理员」而不是「张建国」）。
+const storedName = localStorage.getItem('name') || localStorage.getItem('userName')
   const storedRole = localStorage.getItem('role')
 const isCollegeAdmin = computed(() => storedRole === '5' || storedRole === 'college_admin')
 let defaultName = '管理员'

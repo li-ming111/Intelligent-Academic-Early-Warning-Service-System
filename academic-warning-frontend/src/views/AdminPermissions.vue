@@ -28,7 +28,10 @@
               <el-table-column prop="description" label="角色描述" min-width="200" show-overflow-tooltip></el-table-column>
               <el-table-column label="权限数" width="100">
                 <template #default="{ row }">
-                  <el-tag type="success">{{ row.permissions.length }}</el-tag>
+                  <!-- 必须兜底：/admin/permissions/roles 返回的角色对象是
+                       {id,name,code,description,status,createdAt,updatedAt}，**没有 permissions 字段**，
+                       直接 .length 会抛 TypeError 把整页渲染打断（下面用户表那处本来就有 v-if 守卫，这里漏了）。 -->
+                  <el-tag type="success">{{ (row.permissions || []).length }}</el-tag>
                 </template>
               </el-table-column>
               <el-table-column label="权限列表" min-width="300">

@@ -73,7 +73,8 @@
           <h4 style="margin:0 0 12px;color:#1e293b">预警记录 ({{ detail.warningCount }})</h4>
           <div v-if="detail.warnings && detail.warnings.length" style="max-height:160px;overflow-y:auto">
             <div v-for="(w,i) in detail.warnings" :key="i" style="padding:8px 0;border-bottom:1px solid #f1f5f9;font-size:13px">
-              <el-tag :type="w.warningLevel >= 3 ? 'danger' : w.warningLevel >= 2 ? 'warning' : 'info'" size="small" style="margin-right:6px">{{ w.warningLevel >= 3 ? '严重' : w.warningLevel >= 2 ? '中度' : '轻度' }}</el-tag>
+              <!-- 等级统一走 warningLevelText：字段名可能是 level，且缺失时不应默认成"轻度" -->
+              <el-tag :type="warningLevelTagType(w.warningLevel ?? w.level)" size="small" style="margin-right:6px">{{ warningLevelText(w.warningLevel ?? w.level) }}</el-tag>
               <span>{{ w.description || '学业预警' }}</span>
               <span style="color:#94a3b8;float:right">{{ fmtDate(w.createdAt) }}</span>
             </div>
@@ -86,10 +87,18 @@
         <el-table :data="detail.scores" stripe size="small" max-height="40vh" style="width:100%">
           <el-table-column prop="courseName" label="课程名称" min-width="140" show-overflow-tooltip />
           <el-table-column prop="regularScore" label="平时" width="55" align="center" />
-          <el-table-column prop="finalScore" label="期末" width="55" align="center" />
+          <!-- 期末未录入 → 总评是中间值，不能按分数渲染（`(null||0) >= 60` 为 false，
+               会被染成红色并读成"不及格"）。 -->
+          <el-table-column prop="finalScore" label="期末" width="55" align="center">
+            <template #default="{ row }">
+              <span v-if="!isPendingValue(row.finalScore)" style="color:#334155">{{ row.finalScore }}</span>
+              <span v-else style="color:#94a3b8">{{ PENDING_TEXT }}</span>
+            </template>
+          </el-table-column>
           <el-table-column prop="totalScore" label="总评" width="60" align="center" sortable>
             <template #default="{ row }">
-              <span :style="{ color: (row.totalScore||row.score) >= 60 ? '#16a34a' : '#ef4444', fontWeight: 600 }">{{ row.totalScore || row.score }}</span>
+              <span v-if="isPendingValue(row.finalScore)" style="color:#94a3b8">{{ PENDING_TEXT }}</span>
+              <span v-else :style="{ color: toNumber(row.totalScore ?? row.score) >= 60 ? '#16a34a' : '#ef4444', fontWeight: 600 }">{{ row.totalScore ?? row.score }}</span>
             </template>
           </el-table-column>
           <el-table-column prop="gradePoint" label="绩点" width="55" align="center" />
@@ -108,6 +117,7 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import { collegeAdminAPI } from '@/api/index'
 import { RefreshRight } from '@element-plus/icons-vue'
+import { PENDING_TEXT, isPendingValue, toNumber, warningLevelText, warningLevelTagType } from '@/utils/score'
 
 const collegeName = ref('本院')
 const students = ref([])

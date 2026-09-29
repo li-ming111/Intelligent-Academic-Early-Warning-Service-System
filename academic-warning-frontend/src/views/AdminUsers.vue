@@ -411,8 +411,10 @@ const submitAddUser = async () => {
     }
     await loadUsers()
   } catch (error) {
+    // 显示后端原因（重名时是"用户名已存在"）。写死"添加失败"会把
+    // "用户名重复"和"网络断了"显示成同一句话，用户不知道该改哪里。
     console.error('添加用户失败:', error)
-    ElMessage.error('添加失败')
+    ElMessage.error(error?.message || '添加失败')
   }
 }
 

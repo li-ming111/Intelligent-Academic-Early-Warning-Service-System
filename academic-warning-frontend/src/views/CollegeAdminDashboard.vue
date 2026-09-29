@@ -86,7 +86,11 @@
 import { ref, reactive, computed, onMounted } from 'vue'
 import { collegeAdminAPI } from '@/api/index'
 
-const profile = reactive({ name: '', collegeId: null })
+// 首屏先用登录时写入的 'name'（Login.vue 存的是真名）。
+// 只靠 getProfile 接口填不行：接口返回前 profile.name 是空的，
+// 标题会先闪一下兜底文案「学院管理员」再变真名。
+const pickName = (v) => (v && !/^\d+$/.test(v) ? v : '')
+const profile = reactive({ name: pickName(localStorage.getItem('name')), collegeId: null })
 const collegeName = ref('')
 const stats = reactive({ totalStudents:'--', totalTeachers:'--', totalClasses:'--', totalWarnings:'--', avgScore:'--', passRate:'--' })
 const recentWarnings = ref([])
@@ -119,7 +123,7 @@ function lvlLabel(l){ const v=Number(l)||0; return v>=3?'严重':v==2?'中度':'
 
 onMounted(async()=>{
   const uid=localStorage.getItem('userId');if(!uid)return
-  try{const p=await collegeAdminAPI.getProfile(uid);if(p){profile.name=p.name||'';profile.collegeId=p.college_id;collegeName.value=p.college_name||'本院'}}catch(e){}
+  try{const p=await collegeAdminAPI.getProfile(uid);if(p){profile.name=pickName(p.name)||profile.name;profile.collegeId=p.college_id;collegeName.value=p.college_name||'本院'}}catch(e){}
   try{
     const d=await collegeAdminAPI.getDashboard(uid)
     if(d){stats.totalStudents=d.studentCount||0;stats.totalTeachers=d.teacherCount||0;stats.totalClasses=d.classCount||0;stats.totalWarnings=d.warningCount||0}

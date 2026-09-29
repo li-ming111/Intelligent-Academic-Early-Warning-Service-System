@@ -132,6 +132,7 @@ import { ref, computed, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { studentAPI } from '@/api/index'
 import { getUserId } from '@/utils/userUtils'
+import { warningLevelText, warningLevelTagType } from '@/utils/score'
 
 const filterLevel = ref('')
 const allWarnings = ref([])
@@ -179,15 +180,22 @@ const filteredWarnings = computed(() => {
   return allWarnings.value.filter(w => w.warningLevel === map[filterLevel.value])
 })
 
+/**
+ * 等级归一化，统一交给 utils/score 的 warningLevel 处理。
+ *
+ * 原实现是一串手写比较，两个具体问题：
+ *   - 后端 `warningLevel` 是数字，而这里先跟数字比、再跟中文字符串比。
+ *     字符串形态（"1"）会因为 `'2' === 2` 为 false 而落进默认分支，
+ *     2 级预警被显示成"轻度"。
+ *   - 默认分支返回"轻度"，于是 `null` / 未知等级也被算成一条轻度预警，
+ *     三个统计数字里始终有一条是虚的。
+ * 现在等级无法识别时返回"未知"，不再冒充轻度。
+ */
 function translateLevel(level) {
-  if (level >= 3 || level === 'high' || level === 'red' || level === '严重') return '严重'
-  if (level === 2 || level === 'medium' || level === 'yellow' || level === '中度') return '中度'
-  return '轻度'
+  return warningLevelText(level)
 }
 function getLevelKey(level) {
-  if (level === '严重' || level === 'high' || level >= 3) return 'danger'
-  if (level === '中度' || level === 'medium' || level === 2) return 'warning'
-  return 'info'
+  return warningLevelTagType(level)
 }
 function formatDate(d) {
   if (!d) return '--'

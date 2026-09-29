@@ -104,8 +104,13 @@
 import { ref, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { teacherAPI } from '@/api/index'
+import { getUserId } from '@/utils/userUtils'
 
-const teacherId = localStorage.getItem('teacherId') || localStorage.getItem('userId')
+// 用 getUserId()（登录时写入的 localStorage.userId）。
+// 原写法先读 localStorage.teacherId，而那个键被 TeacherScores.vue:384
+// 硬编码写成了 '9'——只要访问过教师成绩页，设置页就会去"加载并修改 users.id=9"，
+// 也就是改错人的邮箱/电话/密码。这个键没有任何可信来源，不再读它。
+const teacherId = getUserId()
 
 const pwdForm = ref({ oldPassword: '', newPassword: '', confirmPassword: '' })
 const profileForm = ref({ name: '', email: '', phone: '' })
@@ -114,19 +119,41 @@ const notifyForm = ref({
   classNotification: true, studentFeedback: true, emailReminder: false
 })
 const workForm = ref({ college: '', office: '', officePhone: '', officeHours: '' })
+// 账户信息是否真的加载成功。没加载成功时表单是全空的，此时点"保存信息"
+// 会把 users 里真实的姓名/邮箱/电话**覆盖成空串**（空串不是 null，
+// MyBatis-Plus 的 NOT_NULL 策略不跳过），所以宁可不给保存。
+const profileLoaded = ref(false)
 
 onMounted(async () => {
+  // 姓名/邮箱/电话走 /users/info/{uid}。原来读的是 /teachers/dashboard，
+  // 那个接口只返回 {pendingFeedbacks,totalClasses,teacherName,pendingRequests,
+  // totalStudents,totalCourses}——**没有 email/phone**，所以邮箱和电话永远是空框，
+  // 页面却不报错（典型的"看着正常其实没数据"）。
   try {
-    const info = await teacherAPI.getDashboard(teacherId)
+    const info = await teacherAPI.getProfile(teacherId)
     if (info) {
-      profileForm.value.name = info.teacherName || info.name || ''
+      profileForm.value.name = info.name || ''
       profileForm.value.email = info.email || ''
       profileForm.value.phone = info.phone || ''
-      workForm.value.college = info.collegeName || info.college || ''
-      workForm.value.office = info.office || ''
-      workForm.value.officePhone = info.officePhone || ''
+      profileLoaded.value = true
     }
-  } catch (e) { console.error('加载教师信息失败', e) }
+  } catch (e) { console.error('加载账户信息失败', e) }
+
+  try {
+    const s = await teacherAPI.getSettings(teacherId)
+    if (s) {
+      notifyForm.value = {
+        warningNotification: s.warningNotification ?? true,
+        systemMessage: s.systemMessage ?? true,
+        classNotification: s.classNotification ?? true,
+        studentFeedback: s.studentFeedback ?? true,
+        emailReminder: s.emailReminder ?? false
+      }
+      workForm.value.office = s.officeLocation || ''
+      workForm.value.officePhone = s.officePhone || ''
+      workForm.value.officeHours = s.officeHours || ''
+    }
+  } catch (e) { console.error('加载偏好设置失败', e) }
 })
 
 const handleChangePwd = async () => {
@@ -135,35 +162,44 @@ const handleChangePwd = async () => {
   if (newPassword.length < 6) { ElMessage.error('新密码至少6位'); return }
   if (newPassword !== confirmPassword) { ElMessage.error('两次输入的密码不一致'); return }
   try {
-    const res = await teacherAPI.changePassword({ userId: Number(teacherId), oldPassword, newPassword })
-    if (res && (res.code === 200 || res.success)) {
-      ElMessage.success('密码修改成功')
-      pwdForm.value = { oldPassword: '', newPassword: '', confirmPassword: '' }
-    } else {
-      ElMessage.error(res?.message || '密码修改失败')
-    }
-  } catch (e) { ElMessage.error('密码修改失败') }
+    // 只 await + catch：client.js 的响应拦截器在 code!==200 时已经 reject，
+    // 成功时 res 是后端消息字符串而不是对象。原写法
+    // `res.code === 200 || res.success` 恒为假，改成功了反而弹"修改失败"。
+    await teacherAPI.changePassword({ userId: Number(teacherId), oldPassword, newPassword })
+    ElMessage.success('密码修改成功')
+    pwdForm.value = { oldPassword: '', newPassword: '', confirmPassword: '' }
+  } catch (e) { ElMessage.error(e?.message || '密码修改失败') }
 }
 
 const handleSaveProfile = async () => {
+  if (!profileLoaded.value) { ElMessage.error('账户信息未加载成功，请刷新页面后重试'); return }
   try {
-    await teacherAPI.updateProfile({ userId: Number(teacherId), name: profileForm.value.name, email: profileForm.value.email, phone: profileForm.value.phone })
+    await teacherAPI.updateProfile(Number(teacherId), {
+      name: profileForm.value.name, email: profileForm.value.email, phone: profileForm.value.phone
+    })
     ElMessage.success('个人信息已保存')
-  } catch (e) { ElMessage.error('保存失败') }
+  } catch (e) { ElMessage.error(e?.message || '保存失败') }
 }
 
 const handleSaveNotify = async () => {
   try {
     await teacherAPI.updateNotifyPrefs({ userId: Number(teacherId), ...notifyForm.value })
     ElMessage.success('通知偏好已保存')
-  } catch (e) { ElMessage.error('保存失败') }
+  } catch (e) { ElMessage.error(e?.message || '保存失败') }
 }
 
 const handleSaveWork = async () => {
   try {
-    await teacherAPI.updateWorkInfo({ userId: Number(teacherId), office: workForm.value.office, officePhone: workForm.value.officePhone, officeHours: workForm.value.officeHours })
+    // office→officeLocation：后端列名是 office_location，
+    // 原写法传的 office 不是列名，会被当未知字段忽略（弹"保存成功"但没落库）。
+    await teacherAPI.updateWorkInfo({
+      userId: Number(teacherId),
+      officeLocation: workForm.value.office,
+      officePhone: workForm.value.officePhone,
+      officeHours: workForm.value.officeHours
+    })
     ElMessage.success('工作设置已保存')
-  } catch (e) { ElMessage.error('保存失败') }
+  } catch (e) { ElMessage.error(e?.message || '保存失败') }
 }
 </script>
 

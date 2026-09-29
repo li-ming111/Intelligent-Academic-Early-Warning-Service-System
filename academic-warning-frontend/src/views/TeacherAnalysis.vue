@@ -52,6 +52,7 @@ import { ref, reactive, computed, onMounted, nextTick } from 'vue'
 import * as echarts from 'echarts'
 import { teacherAPI } from '@/api/index'
 import { getUserId } from '@/utils/userUtils'
+import { toNumber } from '@/utils/score'
 
 const selectedClass = ref('')
 const selectedCourse = ref('')
@@ -106,12 +107,17 @@ async function loadAnalysis() {
     list.forEach(s => {
       const sid = s.studentNo || s.studentId
       if (!byStudent[sid]) byStudent[sid] = { studentId: sid, studentName: s.studentName, scores: [] }
-      byStudent[sid].scores.push(s.totalScore || s.score || 0)
+      // 期末未录入的成绩不能折成 0 分参与平均：`s.totalScore || 0` 会把"待录入"
+      // 算成 0 分，既拉低全班平均分，又把该学生误标成"不及格/风险学生"。
+      const score = toNumber(s.totalScore ?? s.score)
+      if (score !== null) byStudent[sid].scores.push(score)
     })
-    studentList.value = Object.values(byStudent).map(s => {
-      const avg = +(s.scores.reduce((a,b)=>a+b,0) / s.scores.length).toFixed(1)
-      return { studentId: s.studentId, studentName: s.studentName, scoreTotal: avg }
-    }).sort((a,b) => b.scoreTotal - a.scoreTotal)
+    studentList.value = Object.values(byStudent)
+      .filter(s => s.scores.length > 0)
+      .map(s => {
+        const avg = +(s.scores.reduce((a,b)=>a+b,0) / s.scores.length).toFixed(1)
+        return { studentId: s.studentId, studentName: s.studentName, scoreTotal: avg }
+      }).sort((a,b) => b.scoreTotal - a.scoreTotal)
 
     const sc = studentList.value.map(s => s.scoreTotal)
     stats.total = sc.length

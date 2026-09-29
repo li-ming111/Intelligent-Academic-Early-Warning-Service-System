@@ -133,6 +133,10 @@ import { studentAPI } from '@/api/index'
 import { getUserId } from '@/utils/userUtils'
 
 const userInfo = reactive({ studentId:'', name:'', className:'', email:'', phone:'' })
+// 账户信息是否真的从 /users/info 取到了。取不到时 email/phone 是空串，
+// 直接保存会把 users 里的真实值**覆盖成空串**（空串不是 null，
+// MyBatis-Plus 的 NOT_NULL 策略不跳过），所以取不到就不给保存。
+const profileLoaded = ref(false)
 const entranceYear = computed(() => (userInfo.studentId || '').substring(0,4) || '--')
 const pw = reactive({ old:'', newPw:'', confirm:'' })
 const privacy = reactive({ scoreVis:'1', profileVis:'1', warnNotify:true, feedbackShare:true })
@@ -146,20 +150,41 @@ async function loadInfo() {
     const res = await studentAPI.getStudentInfo(uid)
     let d = res; if (res?.code === 200) d = res.data
     if (d) {
-      Object.assign(userInfo, { studentId: d.studentId||localStorage.getItem('username')||'', name: d.name||'', className: d.className||d.class_name||'', email: d.email||'', phone: d.phone||'' })
+      Object.assign(userInfo, { studentId: d.studentId||localStorage.getItem('username')||'', name: d.name||'', className: d.className||d.class_name||'' })
       privacy.scoreVis = String(d.privacyLevel ?? 1)
     }
   } catch(e) { console.error('加载账户失败',e) }
+  // 邮箱/电话只存在于 users 表：`Student` 实体里这两个字段标了 @TableField(exist=false)，
+  // 而 selectByUserId 是 `SELECT * FROM student_profile`，不 JOIN users，所以上面
+  // /students/{uid} 返回的 email/phone **恒为 null**。
+  // 必须单独取一次——否则表单显示空、一保存就把 users.email 覆盖成空串
+  // （MyBatis-Plus 的 NOT_NULL 策略只在 null 时跳过，空串照样写库）。
+  try {
+    const u = await studentAPI.getProfile(uid)
+    if (u) { userInfo.email = u.email || ''; userInfo.phone = u.phone || ''; profileLoaded.value = true }
+  } catch(e) { console.error('加载账号信息失败',e) }
 }
 
-async function saveAccount() { try { ElMessage.success('账户信息已保存') } catch(e) { ElMessage.error('保存失败') } }
+async function saveAccount() {
+  const uid = getUserId(); if (!uid) return
+  if (!profileLoaded.value) return ElMessage.error('账户信息未加载成功，请刷新页面后重试')
+  try {
+    // 只提交姓名/邮箱/电话三项。users 表里还有 username/role/status/password，
+    // 不提交它们（updateById 的 NOT_NULL 策略会跳过 null，不会误改）。
+    await studentAPI.updateProfile(uid, { name: userInfo.name, email: userInfo.email, phone: userInfo.phone })
+    ElMessage.success('账户信息已保存')
+  } catch(e) { ElMessage.error(e?.message || '保存失败') }
+}
 
 async function changePw() {
   if (!pw.old || !pw.newPw) return ElMessage.error('请填写完整')
   if (pw.newPw.length < 8) return ElMessage.error('新密码至少8位')
   if (pw.newPw !== pw.confirm) return ElMessage.error('两次密码不一致')
-  try { await studentAPI.changePassword(getUserId(), pw.old, pw.newPw); ElMessage.success('密码已修改'); pw.old=''; pw.newPw=''; pw.confirm='' }
-  catch(e) { ElMessage.error('修改失败，请检查原密码') }
+  try {
+    // 对象形式，与教师/辅导员两端统一。
+    await studentAPI.changePassword({ userId: Number(getUserId()), oldPassword: pw.old, newPassword: pw.newPw })
+    ElMessage.success('密码已修改'); pw.old=''; pw.newPw=''; pw.confirm=''
+  } catch(e) { ElMessage.error(e?.message || '修改失败，请检查原密码') }
 }
 
 async function savePrivacy() {

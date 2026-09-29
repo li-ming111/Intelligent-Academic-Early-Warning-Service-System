@@ -23,10 +23,18 @@
           <el-table-column prop="className" label="班级" min-width="120" />
           <el-table-column prop="courseName" label="课程" min-width="140" show-overflow-tooltip />
           <el-table-column prop="regularScore" label="平时" width="60" align="center" />
-          <el-table-column prop="finalScore" label="期末" width="60" align="center" />
+          <!-- 期末未录入时 totalScore 是"平时分折半"的中间值，不是真实成绩，
+               裸渲染会被当成不及格。这里统一显示待录入（灰）。 -->
+          <el-table-column prop="finalScore" label="期末" width="60" align="center">
+            <template #default="{ row }">
+              <span v-if="!isPendingValue(row.finalScore)" style="color:#334155">{{ row.finalScore }}</span>
+              <span v-else style="color:#94a3b8">{{ PENDING_TEXT }}</span>
+            </template>
+          </el-table-column>
           <el-table-column prop="totalScore" label="总评" width="65" align="center" sortable>
             <template #default="{ row }">
-              <span :style="{ color: (row.totalScore||0) >= 60 ? '#16a34a' : '#ef4444', fontWeight: 600 }">{{ row.totalScore }}</span>
+              <span v-if="isPendingValue(row.finalScore)" style="color:#94a3b8">{{ PENDING_TEXT }}</span>
+              <span v-else :style="{ color: toNumber(row.totalScore) >= 60 ? '#16a34a' : '#ef4444', fontWeight: 600 }">{{ row.totalScore }}</span>
             </template>
           </el-table-column>
           <el-table-column prop="gradePoint" label="绩点" width="55" align="center" />
@@ -45,6 +53,7 @@ import { ref, computed, onMounted } from 'vue'
 import { collegeAdminAPI } from '@/api/index'
 import { Download } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
+import { PENDING_TEXT, isPendingValue, toNumber } from '@/utils/score'
 
 const collegeName = ref('本院')
 const scores = ref([])
@@ -60,7 +69,14 @@ const totalCount = computed(() => scores.value.length)
 function exportScores() {
   if (!scores.value.length) { ElMessage.warning('无数据可导出'); return }
   const keys = ['学生姓名','学号','班级','课程名称','平时成绩','期末成绩','总评成绩','绩点','等级','学期']
-  const rows = scores.value.map(r => [r.studentName, r.studentId, r.className, r.courseName, r.regularScore, r.finalScore, r.totalScore, r.gradePoint, r.grade, r.semester])
+  // 期末未录入的行导出成"待录入"而不是空单元格 —— 空白会被当成"忘了填"，
+  // 也可能在 Excel 里被误读成 0 分。
+  const rows = scores.value.map(r => {
+    const pending = isPendingValue(r.finalScore)
+    return [r.studentName, r.studentId, r.className, r.courseName, r.regularScore,
+      pending ? PENDING_TEXT : r.finalScore, pending ? PENDING_TEXT : r.totalScore,
+      pending ? '' : r.gradePoint, pending ? '' : r.grade, r.semester]
+  })
   const csv = ['\uFEFF' + keys.join(','), ...rows.map(r => r.map(v => '"' + String(v ?? '').replace(/"/g,'""') + '"').join(','))].join('\n')
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' })
   const u = URL.createObjectURL(blob)

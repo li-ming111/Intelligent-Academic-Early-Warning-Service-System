@@ -234,7 +234,10 @@ import { studentAPI } from '@/api/index'
 import { getUserId } from '@/utils/userUtils'
 import { ElMessage } from 'element-plus'
 
-const username = ref(localStorage.getItem('userName') || localStorage.getItem('username') || '同学')
+// 优先显示真实姓名（登录时存于 'name'）；缺失或为纯数字（学号/userId）时回退，
+// 避免把学号当姓名显示——与 StudentLayout.vue 的防护保持一致
+const storedName = localStorage.getItem('name') || localStorage.getItem('userName')
+const username = ref(storedName && !/^\d+$/.test(storedName) ? storedName : '同学')
 const today = new Date().toLocaleDateString('zh-CN', { year:'numeric', month:'long', day:'numeric', weekday:'short' })
 const academicData = ref({ gpa:0, totalCourses:0, failedCourses:0, warningCount:0, warningLevel:'正常' })
 const classInfo = ref({})

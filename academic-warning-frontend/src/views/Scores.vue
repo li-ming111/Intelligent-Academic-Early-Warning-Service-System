@@ -74,7 +74,7 @@
         <el-table-column prop="credits" label="学分" width="65" align="center" />
         <el-table-column prop="scoreTotal" label="总分" width="75" align="center" sortable>
           <template #default="{ row }">
-            <span :class="scoreClass(row.scoreTotal)">{{ row.scoreTotal }}</span>
+            <span :class="scoreClass(row)">{{ scoreText(row) }}</span>
           </template>
         </el-table-column>
         <el-table-column prop="gradePoint" label="绩点" width="65" align="center" />
@@ -85,15 +85,19 @@
         </el-table-column>
         <el-table-column label="状态" width="75" align="center">
           <template #default="{ row }">
-            <span v-if="row.scoreTotal >= 60" class="pass-dot">✔ 通过</span>
-            <span v-else class="fail-dot">✘ 挂科</span>
+            <!-- 三态：待录入必须排在最前，否则会被下面的分支当成挂科 -->
+            <span v-if="isPending(row)" class="pending-dot">待录入</span>
+            <span v-else-if="scoreState(row) === 'fail'" class="fail-dot">✘ 挂科</span>
+            <span v-else class="pass-dot">✔ 通过</span>
           </template>
         </el-table-column>
         <el-table-column label="操作" width="100" align="center" fixed="right">
           <template #default="{ row }">
             <div class="action-btns">
               <el-button link type="primary" size="small" @click="openDetail(row)">详情</el-button>
-              <el-button link type="danger" size="small" @click="openAppeal(row)" v-if="row.scoreTotal < 60">申诉</el-button>
+              <!-- 只有"已录入且不及格"才能申诉；待录入没有成绩，申诉无从谈起 -->
+              <el-button link type="danger" size="small" @click="openAppeal(row)"
+                         v-if="!isPending(row) && scoreState(row) === 'fail'">申诉</el-button>
             </div>
           </template>
         </el-table-column>
@@ -110,7 +114,7 @@
         <div class="detail-grid">
           <div class="detail-item">
             <span class="detail-label">总分</span>
-            <span class="detail-val" :class="scoreClass(detailRow.scoreTotal)">{{ detailRow.scoreTotal }}</span>
+            <span class="detail-val" :class="scoreClass(detailRow)">{{ scoreText(detailRow) }}</span>
           </div>
           <div class="detail-item">
             <span class="detail-label">绩点</span>
@@ -166,11 +170,14 @@
 </template>
 
 <script setup>
-import { ref, onMounted, watch, nextTick } from 'vue'
+import { ref, computed, onMounted, watch, nextTick } from 'vue'
 import * as echarts from 'echarts'
 import { ElMessage } from 'element-plus'
 import { studentAPI } from '@/api/index'
 import { getUserId } from '@/utils/userUtils'
+// 成绩判定统一走这里。不要在页面里直接写 `scoreTotal < 60` ——
+// JS 中 `null < 60` 为 true，会把"期末未录入"渲染成挂科。
+import { isPending, scoreState, PENDING_TEXT, toNumber, warningLevel } from '@/utils/score'
 
 // ---- 学期编号 → "2023-2024-1" 格式 ----
 const entranceYear = computedEntranceYear()
@@ -190,10 +197,16 @@ function semesterLabel(n) {
   return `${y}-${y + 1}-${half}`
 }
 
-/** 将 "2025-2026-2" 转为后端需要的 semester 参数 "2025-2026-2" */
+/**
+ * 学期下拉的取值直接透传标签（如 "2025-2026-2"）。
+ *
+ * 后端 `StudentServiceImpl.parseSemesterIndex` 会按学生入学年份把它换算成
+ * `scores.semester` 的全局学期序号（2023 级 + "2025-2026-2" → 6），
+ * 与 `semesterLabel` 互为逆运算。这里不做任何转换，否则两边各算一遍容易分叉。
+ */
 function toSemesterParam(label) {
   if (!label) return null
-  return label  // 直接传完整标签，后端解析 year=2025, semester=2
+  return label
 }
 
 // ---- 响应式数据 ----
@@ -208,6 +221,16 @@ const failedCourses = ref(0)
 const gpaLevel = ref('--')
 const gpaTagClass = ref('')
 const warnLevel = ref('')
+// 后端权威口径（每门课取最新一次有效成绩，期末未录入不计入）
+const dashFailedCourses = ref(0)
+const dashWarnLevelText = computed(() => {
+  const level = warningLevel(dashWarningLevel.value)
+  if (level >= 3) return '严重预警'
+  if (level === 2) return '中度预警'
+  if (level === 1) return '轻度预警'
+  return ''
+})
+const dashWarningLevel = ref('')
 const detailVisible = ref(false)
 const detailRow = ref(null)
 const appealVisible = ref(false)
@@ -219,6 +242,8 @@ let distChart = null
 
 // ---- 生命周期 ----
 onMounted(async () => {
+  // dashboard 必须在最前：挂科数与预警等级由它提供，后面 calcStats 才有值可用
+  await loadDashboard()
   await loadScores()
   await loadHistoryBenchmark()
   nextTick(() => { renderCharts() })
@@ -227,26 +252,49 @@ onMounted(async () => {
 watch(selectedSemester, () => loadScores())
 
 // ---- 数据加载 ----
+/**
+ * 拉取仪表盘，取得后端权威的挂科数与预警等级。
+ * 单独失败不影响成绩单展示，因此独立 try 且只记录日志。
+ */
+async function loadDashboard() {
+  const uid = getUserId()
+  if (!uid) return
+  try {
+    const res = await studentAPI.getDashboard(uid)
+    const d = res?.data?.data || res?.data || res
+    if (d) {
+      dashFailedCourses.value = d.failedCoursesCount || 0
+      dashWarningLevel.value = d.warningLevel ?? ''
+    }
+  } catch (e) {
+    console.error('加载仪表盘失败', e)
+  }
+}
+
 async function loadScores() {
   const uid = getUserId()
   if (!uid) return
   scoresList.value = []
   try {
-    // 将 "2024-2025-1" 格式转为数字学期号传给后端
+    // 学期下拉的取值就是它显示的那个标签，后端按入学年份把它换算回全局学期序号
     const semParam = selectedSemester.value ? toSemesterParam(selectedSemester.value) : null
     const res = await studentAPI.getScores(uid, semParam)
     if (Array.isArray(res) && res.length) {
       scoresList.value = res.map(s => ({
         ...s,
-        grade: gradeLabel(s.scoreTotal),
-        status: s.scoreTotal >= 60 ? 'pass' : 'fail'
+        // 待录入不给等级、不给状态 —— 从前这里把 null 当成 0 分算出 'D' / 'fail'
+        grade: isPending(s) ? PENDING_TEXT : gradeLabel(s.scoreTotal),
+        status: isPending(s) ? 'pending' : (scoreState(s) === 'fail' ? 'fail' : 'pass')
       }))
       if (!selectedSemester.value) {
+        // 下拉项必须与表格里显示的学期标签**用同一个函数**生成。
+        // 从前这里拼的是 `${s.year}-${s.year+1}-${s.semester}` —— 拿 scores.year 列当学年、
+        // 拿全局学期序号当"学年内的第几学期"，两个都错位：序号 2 的那行 year 是 2025，
+        // 于是下拉里出现 "2025-2026-2"，而表格同一行显示的是 semesterLabel(2) = "2023-2024-2"。
+        // 选一次就是"标签对不上 → 过滤条件也对不上 → 查不到成绩"。
         const set = new Set()
         scoresList.value.forEach(s => {
-          if (s.year && s.semester) {
-            set.add(`${s.year}-${s.year + 1}-${s.semester}`)
-          }
+          if (s.semester) set.add(semesterLabel(s.semester))
         })
         availableSemesters.value = Array.from(set).sort((a, b) => b.localeCompare(a))
       }
@@ -273,10 +321,24 @@ async function loadHistoryBenchmark() {
 function calcStats() {
   const list = scoresList.value
   if (list.length) {
-    let gpaSum = 0, creditSum = 0
+    // 学分加权 GPA。两个关键点：
+    //   1. 只累加 gradePoint 非空的行 —— 从前用 `c.gradePoint || 0`，
+    //      未录入的行以 0 分进分子、学分照进分母，把 GPA 系统性拉低。
+    //   2. 同一门课出现多次（重修）时只取最新一次，否则重修记录会被重复计入。
+    const latest = new Map()
     list.forEach(c => {
-      const gp = c.gradePoint || 0
-      const cr = c.credits || 0
+      if (toNumber(c.gradePoint) === null) return
+      const key = c.courseId ?? c.courseName
+      const prev = latest.get(key)
+      if (!prev || (toNumber(c.semester) || 0) >= (toNumber(prev.semester) || 0)) {
+        latest.set(key, c)
+      }
+    })
+    let gpaSum = 0, creditSum = 0
+    latest.forEach(c => {
+      const gp = toNumber(c.gradePoint)
+      const cr = toNumber(c.credits)
+      if (gp === null || cr === null) return
       gpaSum += gp * cr
       creditSum += cr
     })
@@ -297,9 +359,11 @@ function calcStats() {
     maxGpa.value = currentGpa.value
     avgGpa.value = currentGpa.value
   }
-  const fc = list.filter(c => c.scoreTotal < 60).length
-  failedCourses.value = fc
-  warnLevel.value = fc >= 6 ? '严重预警' : fc >= 3 ? '中度预警' : fc > 0 ? '轻度预警' : ''
+  // 挂科数与预警等级一律读后端，前端不再自己数。
+  // 本页的 list 是"成绩单明细"：含各学期原始记录与重修记录，
+  // 数行会把重修和期末未录入的课一起算成挂科（这正是"9 门"的来源）。
+  failedCourses.value = dashFailedCourses.value
+  warnLevel.value = dashWarnLevelText.value
 }
 
 // ---- 图表渲染 ----
@@ -321,10 +385,14 @@ function renderGpaChart() {
       ? (() => {
           const map = {}
           scoresList.value.forEach(s => {
+            // 未录入的行没有绩点，不能按 0 分进分子、学分照进分母
+            const gp = toNumber(s.gradePoint)
+            const cr = toNumber(s.credits)
+            if (gp === null || cr === null) return
             const lb = semesterLabel(s.semester)
             if (!map[lb]) map[lb] = { sum: 0, cr: 0 }
-            map[lb].sum += (s.gradePoint || 0) * (s.credits || 0)
-            map[lb].cr += (s.credits || 0)
+            map[lb].sum += gp * cr
+            map[lb].cr += cr
           })
           return Object.entries(map).map(([lb, v]) => [lb, v.cr > 0 ? +(v.sum / v.cr).toFixed(2) : 0]).sort((a, b) => a[0].localeCompare(b[0]))
         })()
@@ -372,7 +440,10 @@ function renderDistChart() {
   if (!list.length) { distChart.setOption({ title: { text: '暂无数据', left: 'center', top: 'center', textStyle: { color: '#999', fontSize: 13 } } }); return }
   const buckets = { '优秀(≥90)': 0, '良好(80-89)': 0, '中等(70-79)': 0, '及格(60-69)': 0, '不及格(<60)': 0 }
   list.forEach(s => {
-    const sc = s.scoreTotal || 0
+    // 待录入不参与分布统计。`s.scoreTotal || 0` 会把未录入折成 0 分并计进"不及格"，
+    // 使这张图上的不及格比例远高于真实挂科率。
+    const sc = toNumber(s.scoreTotal)
+    if (sc === null) return
     if (sc >= 90) buckets['优秀(≥90)']++
     else if (sc >= 80) buckets['良好(80-89)']++
     else if (sc >= 70) buckets['中等(70-79)']++
@@ -394,17 +465,30 @@ function renderDistChart() {
 }
 
 // ---- 辅助函数 ----
+/** 分数 → 字母等级。仅在"已录入"时调用，待录入的等级由调用方给 PENDING_TEXT。 */
 function gradeLabel(score) {
-  const s = Number(score || 0)
+  const s = toNumber(score)
+  if (s === null) return PENDING_TEXT
   if (s >= 90) return 'A'
   if (s >= 80) return 'A-'
   if (s >= 70) return 'B'
   if (s >= 60) return 'C'
   return 'D'
 }
-function scoreClass(s) { return Number(s || 0) >= 60 ? 'score-ok' : 'score-ng' }
+/** 总分着色。入参是整行，因为待录入与否不能只看分数（null 会被当成 0 而显示为红色）。 */
+function scoreClass(row) {
+  const state = scoreState(row)
+  if (state === 'pending') return 'score-pending'
+  return state === 'fail' ? 'score-ng' : 'score-ok'
+}
+/** 分数文本：待录入显示占位文案，不显示 0 或空。 */
+function scoreText(row) {
+  if (isPending(row)) return PENDING_TEXT
+  const n = toNumber(row.scoreTotal ?? row.totalScore ?? row.score)
+  return n === null ? PENDING_TEXT : String(n)
+}
 function gradeTagType(g) {
-  switch (g) { case 'A': case 'A-': return 'success'; case 'B': return ''; case 'C': return 'warning'; default: return 'danger' }
+  switch (g) { case 'A': case 'A-': return 'success'; case 'B': return ''; case 'C': return 'warning'; case 'D': return 'danger'; default: return 'info' }
 }
 
 // ---- 申诉 ----
@@ -473,6 +557,9 @@ async function exportScores() {
 :deep(.el-table th .cell .el-table__sort-icon) { margin-left: 4px; flex-shrink: 0; }
 .score-ok { color: #16a34a; font-weight: 600; }
 .score-ng { color: #ef4444; font-weight: 600; }
+/* 待录入用灰色：它既不是通过也不是挂科，用红色会与真实挂科混淆 */
+.score-pending { color: #9ca3af; font-weight: 500; }
+.pending-dot { color: #9ca3af; font-size: 12px; }
 .pass-dot { color: #16a34a; font-size: 12px; }
 .fail-dot { color: #ef4444; font-size: 12px; }
 .action-btns { display: inline-flex; gap: 4px; align-items: center; white-space: nowrap; }

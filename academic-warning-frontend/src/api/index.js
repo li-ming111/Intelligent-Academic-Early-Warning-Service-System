@@ -42,6 +42,21 @@ export const studentAPI = {
       return apiClient.delete(url, { params })
     }
   },
+  // ---- 账号级自助设置 ----
+  // 密码是账号属性、唯一权威源是 users 表，所以走 /auth/change-password；
+  // 姓名/邮箱/电话同理走 /users/update，不走 student_profile（否则会出现两份真相）。
+  changePassword: ({ userId, oldPassword, newPassword }) => {
+    return apiClient.post('/auth/change-password', { userId, oldPassword, newPassword })
+  },
+  updateProfile: (userId, data) => {
+    return apiClient.put(`/users/update/${userId}`, data)
+  },
+  getProfile: (userId) => {
+    return apiClient.get(`/users/info/${userId}`)
+  },
+  getSettings: (userId) => {
+    return apiClient.get(`/users/${userId}/settings`)
+  },
   getStudentInfo: (studentId) => {
     return apiClient.get(`/students/${studentId}`)
   },
@@ -257,6 +272,27 @@ export const teacherAPI = {
   register: (data) => {
     return apiClient.post(`/teachers/register`, data)
   },
+  // ---- 账号级自助设置 ----
+  // 说明：邮箱/电话在 users 表（teacher_profile 只有 8 列，压根没有这两列），
+  // 密码走 /auth/change-password；通知偏好与办公信息统一存 user_settings（键 users.id）。
+  getProfile: (userId) => {
+    return apiClient.get(`/users/info/${userId}`)
+  },
+  changePassword: ({ userId, oldPassword, newPassword }) => {
+    return apiClient.post('/auth/change-password', { userId, oldPassword, newPassword })
+  },
+  updateProfile: (userId, data) => {
+    return apiClient.put(`/users/update/${userId}`, data)
+  },
+  getSettings: (userId) => {
+    return apiClient.get(`/users/${userId}/settings`)
+  },
+  updateNotifyPrefs: ({ userId, ...prefs }) => {
+    return apiClient.put(`/users/${userId}/settings`, prefs)
+  },
+  updateWorkInfo: ({ userId, ...work }) => {
+    return apiClient.put(`/users/${userId}/settings`, work)
+  },
   getDashboard: (userId) => {
     return apiClient.get(`/teachers/dashboard/${userId}`)
   },
@@ -427,6 +463,28 @@ export const teacherAPI = {
 export const counselorAPI = {
   register: (data) => {
     return apiClient.post(`/counselors/register`, data)
+  },
+  // ---- 账号级自助设置 ----
+  // 与 teacherAPI 同一套：姓名/邮箱/电话读 users 表（counselor_profiles 里的
+  // office_location/duty_phone 是历史遗留的空列，不再往里写），
+  // 通知偏好与办公信息存 user_settings（键 users.id）。
+  getProfile: (userId) => {
+    return apiClient.get(`/users/info/${userId}`)
+  },
+  changePassword: ({ userId, oldPassword, newPassword }) => {
+    return apiClient.post('/auth/change-password', { userId, oldPassword, newPassword })
+  },
+  updateProfile: (userId, data) => {
+    return apiClient.put(`/users/update/${userId}`, data)
+  },
+  getSettings: (userId) => {
+    return apiClient.get(`/users/${userId}/settings`)
+  },
+  updateNotifyPrefs: ({ userId, ...prefs }) => {
+    return apiClient.put(`/users/${userId}/settings`, prefs)
+  },
+  updateWorkInfo: ({ userId, ...work }) => {
+    return apiClient.put(`/users/${userId}/settings`, work)
   },
   getDashboard: (userId) => {
     return apiClient.get(`/counselors/dashboard/${userId}`)
@@ -648,6 +706,12 @@ export const aiAPI = {
 export const adminAPI = {
   register: (data) => {
     return apiClient.post(`/admin/register`, data)
+  },
+  // 新增用户走 /users/add，不用 /auth/register/*：register 在"用户名已存在"这类
+  // 业务失败时**返回错误字符串但仍包成 code:200 的成功响应**，前端会提示"添加成功"。
+  // /users/add 重名直接抛异常，前端能正确显示失败。
+  createUser: (data) => {
+    return apiClient.post('/users/add', data)
   },
   getDashboard: () => {
     return apiClient.get(`/admin/dashboard`)

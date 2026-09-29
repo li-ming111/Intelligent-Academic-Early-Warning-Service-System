@@ -213,6 +213,7 @@ import { ElMessage } from 'element-plus';
 import * as echarts from 'echarts';
 import { studentAPI } from '@/api';
 import { getUserId } from '@/utils/userUtils';
+import { toNumber, warningLevel } from '@/utils/score';
 
 const statistics = ref({
   currentGPA: 0,
@@ -234,15 +235,94 @@ const currentPage = ref(1);
 const pageSize = ref(10);
 
 // 获取统计数据
+/**
+ * 汇总页面所需统计。
+ *
+ * 原实现调用 `studentAPI.getStatistics(userId)` —— 这个方法在 studentAPI 里**不存在**
+ * （`getStatistics` 只定义在 adminAPI 中）。抛出的 TypeError 被 catch 吞掉，
+ * 页面永远显示全 0，还额外弹一句"无法加载统计数据"。
+ *
+ * 现在改为组合已有接口：仪表盘（权威挂科数/GPA）+ 成绩单 + 学期绩点 + 预警列表。
+ * 挂科数不再由前端数行得出 —— 成绩单含各学期原始记录与重修记录，
+ * 数行会把重修和期末未录入的课一起算进去。
+ */
 const fetchStatistics = async () => {
   const userId = getUserId()
   if (!userId) return
 
   try {
-    const response = await studentAPI.getStatistics(userId)
-    if (response && Object.keys(response).length > 0) {
-      statistics.value = response
+    const [dashRes, scoresRes, histRes, warnRes] = await Promise.all([
+      studentAPI.getDashboard(userId).catch(() => null),
+      studentAPI.getScores(userId).catch(() => null),
+      studentAPI.getHistoryBenchmark(userId).catch(() => null),
+      studentAPI.getWarnings(userId).catch(() => null),
+    ])
+    const dash = unwrap(dashRes) || {}
+    const scores = arrayOf(scoresRes)
+    const history = arrayOf(histRes)
+    const warnings = arrayOf(warnRes)
+
+    // 每门课只保留最新一次已录入的成绩：重修记录与期末未录入的行都不参与统计
+    const byCourse = new Map()
+    scores.forEach(s => {
+      const score = toNumber(s.scoreTotal)
+      if (score === null) return
+      const key = s.courseId ?? s.courseName
+      const prev = byCourse.get(key)
+      if (!prev || (toNumber(s.semester) || 0) >= (toNumber(prev.semester) || 0)) {
+        byCourse.set(key, s)
+      }
+    })
+    const courses = Array.from(byCourse.values()).map(s => ({
+      courseName: s.courseName,
+      scoreTotal: toNumber(s.scoreTotal),
+      semester: s.semester,
+    }))
+
+    const bucket = (lo, hi) => courses.filter(c => c.scoreTotal >= lo && c.scoreTotal < hi).length
+    const gpas = history.map(h => toNumber(h.studentGpa)).filter(v => v !== null)
+    const currentGpa = toNumber(dash.gpa)
+
+    // 学期趋势：GPA 来自历史绩点接口，均分由该学期已录入成绩求得
+    const scoreBySemester = new Map()
+    scores.forEach(s => {
+      const score = toNumber(s.scoreTotal)
+      if (score === null) return
+      const key = String(s.semester)
+      const acc = scoreBySemester.get(key) || { sum: 0, n: 0 }
+      acc.sum += score
+      acc.n += 1
+      scoreBySemester.set(key, acc)
+    })
+    const semesterTrend = history.map(h => {
+      const acc = scoreBySemester.get(String(h.semester))
+      return {
+        semester: h.semesterLabel || String(h.semester ?? ''),
+        averageGpa: toNumber(h.studentGpa) ?? 0,
+        averageScore: acc && acc.n > 0 ? +(acc.sum / acc.n).toFixed(1) : 0,
+      }
+    })
+
+    const warnCount = level =>
+      warnings.filter(w => warningLevel(w.warningLevel ?? w.level) === level).length
+
+    statistics.value = {
+      currentGPA: currentGpa ?? 0,
+      averageGPA: gpas.length ? +(gpas.reduce((a, b) => a + b, 0) / gpas.length).toFixed(2) : 0,
+      highestGPA: gpas.length ? Math.max(...gpas) : 0,
+      lowestGPA: gpas.length ? Math.min(...gpas) : 0,
+      excellentCount: bucket(90, Infinity),
+      goodCount: bucket(80, 90),
+      // "及格"与"不及格"互斥且合计等于总门数；不及格取后端权威值而非前端数行
+      failCount: dash.failedCoursesCount || 0,
+      passCount: Math.max(0, courses.length - (dash.failedCoursesCount || 0)),
+      highWarningCount: warnCount(3),
+      mediumWarningCount: warnCount(2),
+      lowWarningCount: warnCount(1),
+      semesterTrend,
+      courseScores: courses,
     }
+
     // 初始化图表
     setTimeout(() => {
       initSemesterChart()
@@ -253,6 +333,16 @@ const fetchStatistics = async () => {
     ElMessage.error('无法加载统计数据，请刷新重试')
   }
 };
+
+/** 兼容 axios 包装层可能返回 `{code,data}` 与直接返回数据两种形态。 */
+function unwrap(res) {
+  return res?.data?.data ?? res?.data ?? res
+}
+/** 从可能被包装的响应里取出数组。 */
+function arrayOf(res) {
+  const v = unwrap(res)
+  return Array.isArray(v) ? v : []
+}
 
 // 初始化学期趋势柱状图
 const initSemesterChart = () => {

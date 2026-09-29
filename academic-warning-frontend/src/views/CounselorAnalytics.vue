@@ -122,6 +122,32 @@ function renderWarn(data) {
   wc.setOption({ tooltip:{trigger:'item'}, series:[{ type:'pie', radius:['45%','68%'], center:['50%','52%'], data:cd, label:{show:true,fontSize:12}, emphasis:{label:{fontSize:15,fontWeight:'bold'} }}] })
 }
 
+// 补实现。此前模板里有 efficiencyChart 容器、有 ec 实例变量、onUnmounted 里也 dispose 了它，
+// 但**这个渲染函数从来没有被定义过**——调用点在 loadData 的 setTimeout 里，
+// 抛 ReferenceError 之后同一行的 renderTrend 也不会再执行，趋势图跟着一起消失。
+// 接口 /analytics/handling-efficiency 给的是 avg_handle_days 标量，用仪表盘呈现。
+function renderEfficiency(days) {
+  if (!efficiencyChart.value) return; ec?.dispose(); ec = echarts.init(efficiencyChart.value)
+  const d = Number(days) || 0
+  // 量程只影响观感、不影响结论：14 天打底，数值更大时按周向上取整，免得指针顶到刻度边。
+  // 这里**有意不做"绿/黄/红"分档**——全系统没有任何关于处置时限的规则
+  // (warning_rule 管的是成绩阈值)，凭空定一条"3 天良好、7 天超标"在答辩时会被追问依据。
+  const max = Math.max(14, Math.ceil(d / 7) * 7)
+  ec.setOption({
+    tooltip: { formatter: () => `平均 ${d} 天` },
+    series: [{
+      type: 'gauge', min: 0, max, startAngle: 200, endAngle: -20,
+      center: ['50%', '62%'], radius: '92%',
+      progress: { show: true, width: 14, itemStyle: { color: '#3b82f6' } },
+      axisLine: { lineStyle: { width: 14, color: [[1, '#e2e8f0']] } },
+      pointer: { width: 4, length: '58%', itemStyle: { color: '#1e3a5f' } },
+      axisTick: { show: false }, splitLine: { show: false }, axisLabel: { show: false },
+      detail: { offsetCenter: [0, '36%'], fontSize: 22, fontWeight: 'bold', color: '#1e3a5f', formatter: (v) => `${v} 天` },
+      data: [{ value: d }]
+    }]
+  })
+}
+
 function renderTrend(data) {
   if (!trendChart.value) return; tc?.dispose(); tc = echarts.init(trendChart.value)
   const dt = Array.isArray(data) ? data : (data?.list || data?.data || [])

@@ -109,6 +109,7 @@ import * as echarts from 'echarts'
 import { ElMessage } from 'element-plus'
 import { counselorAPI } from '@/api/index'
 import { getUserId } from '@/utils/userUtils'
+import { toNumber } from '@/utils/score'
 
 const loading = ref(false)
 const selectedCourse = ref('')
@@ -146,9 +147,11 @@ const loadData = async () => {
     // 加载低分学生预警
     const lowRes = await counselorAPI.getLowScoreStudents(counselorId)
     const lowScores = Array.isArray(lowRes) ? lowRes : (lowRes?.data || [])
+    // 关注线 70 与后端 ScoreCaliber.ATTENTION_LINE 一致（注意它不是 60 的挂科线）。
+    // 用 toNumber 而非 Number：Number(null) 为 0，会把空值当成"0 分低分生"列出来。
     lowScoreStudents.value = lowScores.filter(s => {
-      const score = Number(s.score_total)
-      return !isNaN(score) && score < 70
+      const score = toNumber(s.score_total)
+      return score !== null && score < 70
     })
 
     // 加载完整成绩数据用于统计
@@ -197,19 +200,24 @@ const updateStatsForScores = (scores) => {
     scoreStats.value = { average: 0, passRate: 0, lowScoreCount: 0, creditRate: 0 }
     return
   }
-  let total = 0, passCount = 0, failCount = 0
+  let total = 0, passCount = 0, failCount = 0, scored = 0
   scores.forEach(s => {
-    const score = Number(s.score_total)
-    if (!isNaN(score)) {
+    // 用 toNumber 而不是 Number：Number(null) 为 0、Number('') 为 0，
+    // 会把"没有成绩"折成 0 分并计入不及格。返回 null 时才真正跳过。
+    const score = toNumber(s.score_total)
+    if (score !== null) {
       total += score
+      scored++
       if (score >= 60) passCount++
       else failCount++
     }
   })
-  const avg = total / scores.length
-  const passRate = scores.length > 0 ? (passCount / scores.length) * 100 : 0
-  const passRate80 = scores.filter(s => Number(s.score_total) >= 80).length
-  const creditRate = scores.length > 0 ? (passRate80 / scores.length) * 100 : 0
+  // 分母用"实际有成绩的条数"而不是 scores.length：
+  // 后者会把无成绩的行算进分母，把均分和及格率一起拉低。
+  const avg = scored > 0 ? total / scored : 0
+  const passRate = scored > 0 ? (passCount / scored) * 100 : 0
+  const passRate80 = scores.filter(s => (toNumber(s.score_total) ?? -1) >= 80).length
+  const creditRate = scored > 0 ? (passRate80 / scored) * 100 : 0
   scoreStats.value = {
     average: Math.round(avg * 10) / 10,
     passRate: Math.round(passRate),
@@ -230,7 +238,8 @@ const updateChartsForScores = (scores) => {
   const dist = { '90-100': 0, '80-89': 0, '70-79': 0, '60-69': 0, '0-59': 0 }
   const data = scores || allScores.value
   data.forEach(s => {
-    const score = Number(s.score_total)
+    const score = toNumber(s.score_total)
+    if (score === null) return
     if (score >= 90) dist['90-100']++
     else if (score >= 80) dist['80-89']++
     else if (score >= 70) dist['70-79']++
@@ -327,7 +336,8 @@ const viewTrend = async (row) => {
         },
         yAxis: { type: 'value', min: 0, max: 100 },
         series: [{
-          data: trendData.map(s => Number(s.score_total)) || [],
+          // 缺成绩的学期在折线上断开（null）而不是掉到 0 分
+          data: trendData.map(s => toNumber(s.score_total)),
           type: 'line',
           smooth: true,
           lineStyle: { width: 3, color: '#67c23a' },
