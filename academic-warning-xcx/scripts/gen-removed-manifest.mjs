@@ -14,9 +14,14 @@
 import { readFileSync, writeFileSync, statSync, existsSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { execSync } from 'node:child_process'
+import { pathToFileURL } from 'node:url'
 
-/** 48 个未声明页面 + 4 个只被这些页面引用的旧 tab-bar。 */
-const FILES = [
+/**
+ * 48 个未声明页面 + 4 个只被这些页面引用的旧 tab-bar。
+ * 导出给 `delete-removed-pages.mjs` 用 —— 删除脚本必须读同一份清单，
+ * 否则「备份的」和「删掉的」有可能不是同一批文件。
+ */
+export const FILES = [
   // ---- pages/admin (15) ----
   'src/pages/admin/class-management/index.vue',
   'src/pages/admin/colleges/index.vue',
@@ -80,6 +85,13 @@ const FILES = [
 
 const sha = buf => createHash('sha256').update(buf).digest('hex')
 
+// 被 delete-removed-pages.mjs import 时只取 FILES，不要把清单重写一遍
+// （重写会把清单的 mtime 改掉，也会让"删除脚本读的是已提交的那份"变得不可信）。
+const isMain = import.meta.url === pathToFileURL(process.argv[1]).href
+if (!isMain) {
+  // 被 import：到此为止
+} else {
+
 let head = ''
 try { head = execSync('git rev-parse --short HEAD', { encoding: 'utf8' }).trim() } catch {}
 
@@ -92,16 +104,62 @@ for (const f of FILES) {
   rows.push({ f, bytes: statSync(f).size, lines, hash: sha(buf) })
 }
 
+// —— 逐个核对"到底能不能从 git 取回" ——
+//
+// 这里踩过一个坑值得写下来：本脚本**第一版**直接写了句
+//   `git show <head>:academic-warning-xcx/src/pages/admin/logs.vue`
+// 当作取回办法，但当时 `src/` 这次迁移根本**还没提交**，那些文件是未跟踪的
+// 工作区文件 —— 删除未跟踪文件等于 git 里没有副本，那条命令必然报
+// `path does not exist in HEAD`。清单是"删除前生成并提交"的，
+// 而提交清单 ≠ 提交被清单描述的那些文件。所以取回性必须**实测**，不能靠推断。
+//
+// 做法：拿 HEAD 里迁移前的同名旧路径（去掉开头 `src/`）比一比。
+const recoverable = []
+const lossy = []
+for (const r of rows) {
+  const oldPath = 'academic-warning-xcx/' + r.f.slice(4)
+  let buf
+  try { buf = execSync('git show ' + head + ':' + oldPath, { maxBuffer: 1 << 24 }) } catch {
+    lossy.push({ ...r, oldPath, kind: 'git 里没有同名旧文件' }); continue
+  }
+  const s = buf.toString('utf8')
+  const identical = sha(buf) === r.hash || sha(Buffer.from(s.replace(/\r\n/g, '\n'), 'utf8')) === r.hash
+  if (identical) recoverable.push({ ...r, oldPath })
+  else {
+    const brokenOld = /export default\s*\{\{/.test(s) || /\\text class=/.test(s)
+    lossy.push({ ...r, oldPath, kind: brokenOld ? '旧副本也是坏文件' : '旧副本是干净完整 SFC' })
+  }
+}
+
 const md = `# 已删除的 48 个未声明页面 + 4 个旧 tab-bar
 
-> 本文件在**删除之前**生成并提交。生成时的 HEAD = \`${head}\`。
-> 删除动作本身是另一个 commit，所以这些文件在 git 历史里仍然可取回：
->
-> \`\`\`
-> git show ${head}:academic-warning-xcx/src/pages/admin/logs.vue
-> \`\`\`
->
-> 取回后核对 sha256（下表第三列）可确认拿到的是原件而非同名文件。
+> 本文件在**删除之前**生成并提交，生成时的 HEAD = \`${head}\`。
+
+## ⚠️ 关于"能不能取回"—— 先说结论
+
+**下表的 sha256 只记录了"删掉的是什么"，它不等于备份：这 52 个文件的内容取不回来。**
+
+原因是重设计把源码从根目录搬进 \`src/\` 的这次迁移**一直没有提交**，
+所以 \`src/\` 下的文件全部是未跟踪的工作区文件。删除未跟踪文件 = git 里没有任何副本。
+本文件第一版里写的 \`git show ${head}:.../src/pages/admin/logs.vue\` 是**错的**，
+那条命令必然报 \`path does not exist in HEAD\` —— 写的时候没核实，事后才验出来。
+
+逐个核对后（对照 HEAD 中迁移前的同名旧路径）：
+
+| 情况 | 数量 |
+|---|---:|
+| 与旧路径副本**逐字节相同** | ${recoverable.length} |
+| 旧路径有同名文件但内容不同，那份**也是**坏文件 | ${lossy.filter(l => l.kind === '旧副本也是坏文件').length} |
+| 旧路径有同名文件但内容不同，那份是**干净完整 SFC** | ${lossy.filter(l => l.kind === '旧副本是干净完整 SFC').length} |
+| 旧路径也不存在 | ${lossy.filter(l => l.kind === 'git 里没有同名旧文件').length} |
+
+### 确实还能取回的（${recoverable.length} 个）
+
+路径是迁移**前**的 \`academic-warning-xcx/pages/...\`，**不是** \`src/pages/...\`：
+
+\`\`\`
+${recoverable.map(r => `git show ${head}:${r.oldPath}`).join('\n')}
+\`\`\`
 
 ## 为什么删
 
@@ -135,4 +193,6 @@ if (missing.length) {
   console.log(`⚠️ 清单里有 ${missing.length} 个路径实际不存在（清单写错了或已被删）:`)
   for (const m of missing) console.log(`   ${m}`)
   process.exit(1)
+}
+
 }

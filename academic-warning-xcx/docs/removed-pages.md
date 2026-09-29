@@ -1,13 +1,48 @@
 # 已删除的 48 个未声明页面 + 4 个旧 tab-bar
 
-> 本文件在**删除之前**生成并提交。生成时的 HEAD = `53c7f26`。
-> 删除动作本身是另一个 commit，所以这些文件在 git 历史里仍然可取回：
->
-> ```
-> git show 53c7f26:academic-warning-xcx/src/pages/admin/logs.vue
-> ```
->
-> 取回后核对 sha256（下表第三列）可确认拿到的是原件而非同名文件。
+> 本文件在**删除之前**生成并提交，生成时的 HEAD = `53c7f26`。
+
+## ⚠️ 关于"能不能取回"—— 先说结论
+
+**下表的 sha256 只记录了"删掉的是什么"，它不等于备份：这 52 个文件的内容取不回来。**
+
+原因是重设计把源码从根目录搬进 `src/` 的这次迁移**一直没有提交**，
+所以 `src/` 下的文件全部是未跟踪的工作区文件。删除未跟踪文件 = git 里没有任何副本。
+我最初在本文件里写的 `git show 53c7f26:.../src/pages/admin/logs.vue` 是**错的**，
+那条命令必然报 `path does not exist in HEAD` —— 写的时候没核实，事后才验出来。
+
+逐个核对后的实际情况（对照 HEAD 中迁移前的同名旧路径）：
+
+| 情况 | 数量 | 说明 |
+|---|---:|---|
+| 与旧路径副本**逐字节相同** | 8 | 这 8 个确实还能从 git 取回原件（见下） |
+| 旧路径有同名文件，但**内容不同**，且那份**也是**被 `{{` 打穿的坏文件 | 34 | 原件已丢；git 里留着的是一份同样坏的近亲 |
+| 旧路径有同名文件，但**内容不同**，那份是**干净可读**的完整 SFC | 10 | 原件已丢；但 git 里那份比被删的更好 |
+
+另外确认过：会话转写（`.jsonl`）里也没有这 52 个文件的正文 —— 它们从未被 Read 过，
+按 sha256 比对 373 段疑似 SFC 正文，0 命中。
+
+**实际影响评估**：被删的都是重设计第一版的遗留物 —— 要么是同一个生成脚本产出的坏页
+（34 个 `export default {{`），要么已被重写取代、`pages.json` 里没有任何入口能到达。
+计划书本身就写着这批 `pages/*/index.vue` "修 `{{ }}` 的成本 > 重写"，全部删除。
+所以这里丢的不是资产，是垃圾 —— 但"丢的是垃圾"是我事后判断，不该拿它去掩盖
+"本来该留备份却没留成"这件事，故原样记在这里。
+
+### 确实还能取回的 8 个
+
+```
+git show 53c7f26:academic-warning-xcx/pages/admin/departments.vue
+git show 53c7f26:academic-warning-xcx/pages/admin/logs.vue
+git show 53c7f26:academic-warning-xcx/pages/admin/reports.vue
+git show 53c7f26:academic-warning-xcx/pages/admin/roles.vue
+git show 53c7f26:academic-warning-xcx/pages/admin/settings.vue
+git show 53c7f26:academic-warning-xcx/pages/counselor/analytics/index.vue
+git show 53c7f26:academic-warning-xcx/pages/counselor/notifications/index.vue
+git show 53c7f26:academic-warning-xcx/pages/teacher/messages/index.vue
+```
+
+（注意路径是迁移**前**的 `academic-warning-xcx/pages/...`，不是 `src/pages/...`。）
+取回后可用下表的 sha256 核对。
 
 ## 为什么删
 
