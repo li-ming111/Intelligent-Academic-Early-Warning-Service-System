@@ -15,3 +15,10 @@ INSERT INTO counselor_class_management
        (id, counselor_id, class_id, class_name, status, created_at, updated_at)
 VALUES (7, 53, 34, '人工智能2101班', 1, '2026-09-16 11:23:16', '2026-09-16 11:23:16'),
        (8, 53, 35, '人工智能2102班', 1, '2026-09-16 11:23:16', '2026-09-16 11:23:16');
+
+-- 冗余计数列回到修复前的 8（当时确实是 8 个班；原值取自
+-- full_20260930_before_counselor_fix.sql 快照里的 counselor_profiles 行）
+UPDATE counselor_profiles
+   SET class_count = 8
+ WHERE id = 1
+   AND user_id = 53;

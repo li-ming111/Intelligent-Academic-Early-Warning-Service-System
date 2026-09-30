@@ -28,3 +28,15 @@ UPDATE classes
 DELETE FROM counselor_class_management
  WHERE class_id IN (34, 35)
    AND counselor_id = 53;
+
+-- 3) 【2026-09-30 补】冗余计数列漏同步了。
+--    上一步摘掉 2 个班之后，counselor_profiles.class_count 仍写着 8。
+--    该列没有代码读取（学院管理员端的 classCount 是现算 classes.size()，
+--    CollegeAdminController:80/391），但它正是 fix10(A13/A14)/fix11 一路维护的
+--    "账实相符"那一类列：库里写 8、按 classes.counselor_id 数出来是 6，
+--    与 fix11 在 A18 里批评的"带班表 1 个班 vs 主表 8 个班"是同一种自相矛盾。
+--    同步到 6；student_count 仍为 24，无需改（24 名学生都在这 6 个班里）。
+UPDATE counselor_profiles
+   SET class_count = 6
+ WHERE id = 1
+   AND user_id = 53;
