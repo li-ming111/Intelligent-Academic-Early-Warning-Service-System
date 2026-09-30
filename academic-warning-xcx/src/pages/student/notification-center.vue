@@ -223,10 +223,17 @@ async function load() {
   try {
     if (!userId) return
     /**
-     * ⚠️ 分页返回体里的 `total` **恒为 0**，而 `list` 是有数据的
-     * （实测 total=0 / list.length=2）。所以这里读 `list`，**不读 `total`**，
-     * 也不做无限滚动 —— 用 total 驱动会立刻显示"没有更多了"。
-     * pageSize 给足 50，本角色的通知量级（每学期几条）一次就能取完。
+     * 返回体是 `{total, page, pageSize, list}`。这里读 `list`、**不读 `total`**，
+     * 也不做无限滚动。
+     *
+     * 原因（2026-09-30 更新）：以前 `total` **恒为 0**（实测 total=0 / list.length=2），
+     * 因为全仓没注册 MyBatis-Plus 的分页拦截器，`selectPage` 退化成 `selectList`。
+     * 该拦截器已在 academic-common 的 `MybatisPlusConfig` 里补上，`total` 现在是真值；
+     * 但**读 `list` 这个选择仍然保留** —— 本页不需要总数，且少一个依赖。
+     *
+     * ⚠️ 拦截器补上后多了一个新行为：**LIMIT 真的下发了**，`pageSize=50` 之外的
+     * 通知不会再返回（以前没有 LIMIT，等于全量）。当前每个学生的通知量级是几条，
+     * 50 足够；真涨上去时这里就得改成真正的翻页，别指望"反正没 LIMIT"。
      */
     const [pageData, countData] = await Promise.all([
       studentAPI.getNotifications(userId, 1, 50).catch(e => { console.error('[notify] 列表加载失败:', e); return null }),
