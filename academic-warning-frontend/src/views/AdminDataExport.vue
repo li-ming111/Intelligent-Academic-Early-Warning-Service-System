@@ -676,18 +676,38 @@ const handleScoreFileChange = (file) => {
 }
 
 // 导入学生数据
+// 后端 /admin/import/students 收的是 multipart（`file` 字段），Excel 由服务端用 POI 解析。
+// 原来这里把 el-upload 的 UploadFile 对象整个当 body 发出去（那不是文件内容，
+// 是 {name,url,status,raw}），后端要的是 List<Map>，Jackson 绑不上 —— 这个按钮
+// 从来没有成功过一次。改成 FormData 就对了，跟教师端那处（TeacherClassManagement.vue）一致。
 const importStudents = async () => {
-  if (!studentFile.value) {
+  const raw = studentFile.value?.raw
+  if (!raw) {
     ElMessage.error('请选择文件')
     return
   }
 
   try {
-    await adminAPI.importStudents(studentFile.value)
-    ElMessage.success('学生数据导入成功')
+    const formData = new FormData()
+    formData.append('file', raw)
+    const res = await adminAPI.importStudents(formData)
+
+    // 导入是**逐行尽力而为**：成功的行已经落库，失败的行在 errors 里。
+    // 所以只要跳过了哪怕一行，就不能只报"导入成功" —— 那正是这个仓库一贯要避免的
+    // "报告与事实不符"。把前几处原因一并说出来。
+    const success = res?.success ?? 0
+    const skipped = res?.skipped ?? 0
+    const errorList = res?.errors || []
+    if (skipped === 0) {
+      ElMessage.success(`导入完成：成功 ${success} 条`)
+    } else {
+      const detail = errorList.slice(0, 5).map(e => `第${e.row}行：${e.reason}`).join('；')
+      const more = errorList.length > 5 ? ` 等共 ${errorList.length} 处` : ''
+      ElMessage.warning(`导入完成：成功 ${success} 条，跳过 ${skipped} 条。${detail}${more}`)
+    }
     studentFile.value = null
   } catch (error) {
-    ElMessage.error('导入失败')
+    ElMessage.error('导入失败：' + (error.response?.data?.message || error.message || '未知错误'))
   }
 }
 

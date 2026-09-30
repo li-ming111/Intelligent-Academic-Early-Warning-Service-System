@@ -23,6 +23,7 @@ import com.academic.service.WarningRuleService;
 import com.academic.service.StudentProfileService;
 import com.academic.service.ScoreRecordService;
 import com.academic.service.ReportTemplateService;
+import com.academic.service.StudentImportService;
 import com.academic.mapper.ClassesMapper;
 import com.academic.mapper.TeacherProfileMapper;
 import com.academic.mapper.ExportHistoryMapper;
@@ -128,6 +129,9 @@ public class AdminController {
     
     @Autowired
     private StudentProfileService studentProfileService;
+
+    @Autowired
+    private StudentImportService studentImportService;
     
     @Autowired
     private CounselorProfileMapper counselorProfileMapper;
@@ -1921,61 +1925,213 @@ public class AdminController {
         }
     }
 
+    /**
+     * 批量导入学生（上传 Excel，服务端解析）。
+     *
+     * <p>⚠️ 契约在 2026-09-30 改过一次：原来是 {@code @RequestBody List<Map>}（JSON 数组），
+     * 指望前端解析 Excel 后发 JSON 过来。但前端全仓**没有任何 xlsx 解析能力**
+     * （{@code AdminDataExport.vue} 里的 {@code window.XLSX} 只在"客户端导出兜底"那一段
+     * 从 CDN 懒加载，导入路径根本不用它），所以那个契约从来没能跑通一次。
+     * 而模板端点 {@code /admin/import/template/{type}} 和 5 个导出端点都在本服务里、
+     * 用的就是 POI —— **上传文件、服务端解析**才是本工程本来的口径。
+     * 也没有别的调用方需要兼容（前端从来发不出合法 JSON），所以直接换契约。
+     *
+     * <p>报告口径与 {@code importScores} 对齐：逐行尽力而为，返回
+     * {@code total/success/skipped/errors}。每行的 {@code users}+{@code student_profile}
+     * 由 {@link StudentImportService} 放在**同一事务**里，所以失败的行不会留下
+     * "账号建好了、学生档案没有"；一行的失败也不连坐其余行。
+     */
     @PostMapping("/import/students")
-    public ApiResponse<String> importStudents(@RequestBody List<Map<String, Object>> data) {
+    public ApiResponse<Map<String, Object>> importStudents(@RequestParam("file") MultipartFile file) {
+        Map<String, Object> result = new HashMap<>();
+        List<Map<String, Object>> errors = new ArrayList<>();
+        int successCount = 0, skipCount = 0;
+        result.put("fileName", file == null ? null : file.getOriginalFilename());
+
         try {
-            log.info("Import students request, count: {}", data.size());
-            
-            List<User> usersToSave = new ArrayList<>();
-            List<StudentProfile> profilesToSave = new ArrayList<>();
-            
-            for (Map<String, Object> item : data) {
-                String username = (String) item.get("username");
-                if (username == null || username.isEmpty()) {
-                    continue;
-                }
-                
-                User existingUser = userService.getOne(new QueryWrapper<User>().eq("username", username));
-                if (existingUser != null) {
-                    continue;
-                }
-                
-                User user = new User();
-                user.setUsername(username);
-                user.setPassword((String) item.getOrDefault("password", "123456"));
-                user.setName((String) item.getOrDefault("name", username));
-                user.setRole(1);
-                user.setStatus(1);
-                user.setCreatedAt(LocalDateTime.now());
-                user.setUpdatedAt(LocalDateTime.now());
-                usersToSave.add(user);
+            if (file == null || file.isEmpty()) {
+                return ApiResponse.error("文件为空");
             }
-            
-            if (!usersToSave.isEmpty()) {
-                userService.saveBatch(usersToSave);
-                
-                for (int i = 0; i < usersToSave.size(); i++) {
-                    Map<String, Object> item = data.get(i);
-                    User user = usersToSave.get(i);
-                    
-                    StudentProfile studentProfile = new StudentProfile();
-                    studentProfile.setUserId(user.getId());
-                    studentProfile.setStudentId((String) item.getOrDefault("studentId", user.getUsername()));
-                    studentProfile.setCollegeId(item.get("collegeId") != null ? ((Number) item.get("collegeId")).longValue() : null);
-                    studentProfile.setMajorId(item.get("majorId") != null ? ((Number) item.get("majorId")).longValue() : null);
-                    studentProfile.setClassName((String) item.get("className"));
-                    profilesToSave.add(studentProfile);
-                }
-                
-                studentProfileService.saveBatch(profilesToSave);
+            String fileName = file.getOriginalFilename();
+            if (fileName == null || !fileName.matches("(?i).*\\.(xlsx|xls)$")) {
+                return ApiResponse.error("仅支持 .xlsx 或 .xls 格式的 Excel 文件");
             }
-            
-            log.info("Import students finished: {} success", usersToSave.size());
-            return ApiResponse.success("导入完成：成功 " + usersToSave.size() + " 条");
+            // 上限必须与 application.yml 的 spring.servlet.multipart 一致 ——
+            // 容器在进这个方法之前就会拦，拦下来的报错是 MaxUploadSizeExceededException，
+            // 这里再写一句"不能超过 10MB"就成了谎话。
+            if (file.getSize() > MAX_IMPORT_BYTES) {
+                return ApiResponse.error("文件大小不能超过 10MB");
+            }
+
+            try (Workbook workbook = new XSSFWorkbook(file.getInputStream())) {
+                Sheet sheet = workbook.getSheetAt(0);
+                if (sheet == null || sheet.getLastRowNum() < 1) {
+                    return ApiResponse.error("表里没有数据行（第 1 行应当是表头，数据从第 2 行开始）");
+                }
+
+                Map<String, Integer> col = mapColumns(sheet.getRow(0));
+                if (!col.containsKey("studentId")) {
+                    return ApiResponse.error("表头里找不到「学号」列，请先下载模板：/admin/import/template/students");
+                }
+
+                for (int r = 1; r <= sheet.getLastRowNum(); r++) {
+                    Row row = sheet.getRow(r);
+                    if (row == null) continue;
+                    int rowNum = r + 1;   // 报给管理员的行号 = 他在 Excel 里看到的行号
+                    try {
+                        String studentId = cellText(cellAt(row, col, "studentId"));
+                        String name = cellText(cellAt(row, col, "name"));
+                        String className = cellText(cellAt(row, col, "className"));
+                        if (studentId == null && name == null && className == null) {
+                            continue;   // 整行空 —— 不算错，跳过
+                        }
+                        if (studentId == null) {
+                            errors.add(rowError(rowNum, "学号为空")); skipCount++; continue;
+                        }
+                        if (studentId.length() > 20) {
+                            errors.add(rowError(rowNum, "学号超过 20 位（student_profile.student_id 是 varchar(20)）"));
+                            skipCount++; continue;
+                        }
+                        if (name == null) {
+                            errors.add(rowError(rowNum, "姓名为空 —— 学生档案的姓名列不允许为空"));
+                            skipCount++; continue;
+                        }
+
+                        String password = cellText(cellAt(row, col, "password"));
+                        String problem = studentImportService.importOne(
+                                studentId,
+                                name,
+                                (password == null || password.isEmpty()) ? DEFAULT_IMPORT_PASSWORD : password,
+                                cellLong(cellAt(row, col, "collegeId"), "学院ID"),
+                                cellLong(cellAt(row, col, "majorId"), "专业ID"),
+                                className,
+                                cellLong(cellAt(row, col, "classId"), "班级ID"));
+
+                        if (problem != null) {
+                            errors.add(rowError(rowNum, problem)); skipCount++;
+                        } else {
+                            successCount++;
+                        }
+                    } catch (Exception e) {
+                        // 这一行的两笔写入已经被事务回滚，不会留下半截；下一行继续。
+                        log.warn("导入学生第 {} 行失败", rowNum, e);
+                        errors.add(rowError(rowNum, briefError(e)));
+                        skipCount++;
+                    }
+                }
+            }
+
+            result.put("total", successCount + skipCount);
+            result.put("success", successCount);
+            result.put("skipped", skipCount);
+            result.put("errors", errors);
+            log.info("Import students finished: total={}, success={}, skip={}",
+                    successCount + skipCount, successCount, skipCount);
+            return ApiResponse.success(result);
         } catch (Exception e) {
-            log.error("Import students failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            log.error("Import students failed", e);
+            return ApiResponse.error("导入失败: " + e.getMessage());
         }
+    }
+
+    /** 与 application.yml 的 spring.servlet.multipart.max-file-size 保持一致。 */
+    private static final long MAX_IMPORT_BYTES = 10L * 1024 * 1024;
+
+    /** 模板里写的"密码(默认123456)"，也是活库 35 个账号统一用的口令。 */
+    private static final String DEFAULT_IMPORT_PASSWORD = "123456";
+
+    /**
+     * 按**表头文字**建列映射，而不是按列序。
+     *
+     * <p>模板的表头是 {@code 学号(必填)/姓名/密码(默认123456)/学院ID/专业ID/班级}，
+     * 导出的表头是 {@code ID/学号/姓名/学院ID/班级ID/创建时间} —— 两个来源
+     * 列名与列序都不同（模板给"班级"文字，导出给"班级ID"数字）。按序解析会在
+     * 这两个来源之间整体错位一格，且是静默的；按"包含"匹配则括号后缀自然被忽略，
+     * 导出的文件也能直接导回来。
+     */
+    private static Map<String, Integer> mapColumns(Row header) {
+        Map<String, Integer> map = new HashMap<>();
+        if (header == null || header.getLastCellNum() < 0) return map;
+        for (int c = header.getFirstCellNum(); c < header.getLastCellNum(); c++) {
+            String h = cellText(header.getCell(c));
+            if (h == null) continue;
+            String flat = h.replace(" ", "");
+            if (flat.contains("学号")) map.putIfAbsent("studentId", c);
+            else if (flat.contains("姓名")) map.putIfAbsent("name", c);
+            else if (flat.contains("密码")) map.putIfAbsent("password", c);
+            else if (flat.contains("学院")) map.putIfAbsent("collegeId", c);
+            else if (flat.contains("专业")) map.putIfAbsent("majorId", c);
+            // 「班级ID」必须先判：它同时包含「班级」
+            else if (flat.toLowerCase().contains("班级id")) map.putIfAbsent("classId", c);
+            else if (flat.contains("班级")) map.putIfAbsent("className", c);
+        }
+        return map;
+    }
+
+    private static Cell cellAt(Row row, Map<String, Integer> col, String field) {
+        Integer c = col.get(field);
+        return c == null ? null : row.getCell(c);
+    }
+
+    /**
+     * 单元格取文本。Excel 里的学号常常是"数字格式"，POI 读出来是 double，
+     * 直接 toString 会得到 {@code 2023020616.0} 甚至科学计数法 —— 所以整数一律按 long 输出。
+     */
+    private static String cellText(Cell cell) {
+        if (cell == null) return null;
+        try {
+            CellType type = cell.getCellType();
+            if (type == CellType.FORMULA) type = cell.getCachedFormulaResultType();
+            if (type == CellType.NUMERIC) {
+                double d = cell.getNumericCellValue();
+                if (d == Math.rint(d) && Math.abs(d) < 1e15) return String.valueOf((long) d);
+                return BigDecimal.valueOf(d).stripTrailingZeros().toPlainString();
+            }
+            if (type == CellType.BOOLEAN) return String.valueOf(cell.getBooleanCellValue());
+            if (type == CellType.BLANK) return null;
+            String s = cell.getStringCellValue();
+            return s == null || s.trim().isEmpty() ? null : s.trim();
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /** 学院/专业/班级 ID 列填了非数字时，如实报错，而不是当成"没填"悄悄放过。 */
+    private static Long cellLong(Cell cell, String label) {
+        String s = cellText(cell);
+        if (s == null || s.isEmpty()) return null;
+        try {
+            return (long) Double.parseDouble(s);
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException(label + " 不是数字：" + s);
+        }
+    }
+
+    /** 用 HashMap 而不是 {@code Map.of} —— 后者的值不允许为 null，异常 message 恰好为 null 时会再抛一个 NPE。 */
+    private static Map<String, Object> rowError(int row, String reason) {
+        Map<String, Object> m = new HashMap<>();
+        m.put("row", row);
+        m.put("reason", reason);
+        return m;
+    }
+
+    /**
+     * 把异常压成一句给管理员看的话。
+     *
+     * <p>直接把 {@code e.getMessage()} 放出去的话，一行错误会是 MyBatis 包装的
+     * {@code "### Error updating database. Cause: ... ### SQL: INSERT INTO student_profile ..."}
+     * —— 完整 SQL 与"###"这种内部格式发给前端，既没有解释力（管理员看不懂）、
+     * 又把实现细节漏了出去。往里找最内层的 cause，只取它那句话
+     * （如 {@code "Data truncation: Data too long for column 'name' at row 1"}）；
+     * 完整堆栈仍然进服务端日志（上面那条 log.warn 带上了 e）。
+     */
+    private static String briefError(Throwable e) {
+        Throwable root = e;
+        while (root.getCause() != null && root.getCause() != root) {
+            root = root.getCause();
+        }
+        String msg = root.getMessage();
+        return (msg == null || msg.trim().isEmpty()) ? root.getClass().getSimpleName() : msg.trim();
     }
 
     @PostMapping("/import/scores")
