@@ -193,11 +193,17 @@ async function sendMessage() {
     const userId = getUserId()
     if (!userId) throw new Error('请先登录')
     const res = await aiAPI.getResponse(userId, text)
-    const reply = res?.reply || res?.content || '抱歉，我暂时无法回答，请稍后重试。'
-    messages.value.push({ type: 'ai', content: reply, time: fmtTime() })
+    // 后端没给 reply 就是没答，不再自己编一句兜底话顶上去
+    const reply = res?.reply || res?.content
+    messages.value.push({
+      type: 'ai',
+      content: reply || 'AI 没有返回内容。',
+      time: fmtTime()
+    })
   } catch (e) {
     console.error('AI 回复失败:', e)
-    messages.value.push({ type: 'ai', content: '抱歉，服务暂时不可用，请稍后重试。', time: fmtTime() })
+    // 把后端的原话带出来（例如"未配置 DASHSCOPE_KEY"），而不是一律"服务暂时不可用"
+    messages.value.push({ type: 'ai', content: 'AI 不可用：' + (e?.message || '网络错误'), time: fmtTime() })
   } finally {
     loading.value = false
     scrollToBottom()

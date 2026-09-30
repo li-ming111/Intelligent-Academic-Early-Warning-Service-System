@@ -188,11 +188,14 @@ const generateOpinion = async () => {
       handleForm.value.opinion = reply
       ElMessage.success('处理意见生成成功')
     } else {
-      ElMessage.error('生成处理意见失败')
+      // 后端回了 200 但没有 reply —— 不填、也不说"成功"。
+      ElMessage.error('AI 没有返回内容，处理意见框保持为空')
     }
   } catch (error) {
     console.error('生成处理意见失败:', error)
-    ElMessage.error('生成处理意见失败，请稍后重试')
+    // ⚠️ 别抹平成"请稍后重试"：后端现在会明说「没配 DASHSCOPE_KEY」。
+    // 抹平之后，答辩现场点一次只会看到"稍后重试"，而重试一辈子也没用。
+    ElMessage.error('生成处理意见失败：' + (error?.message || '网络错误'))
   } finally {
     loading.close()
   }

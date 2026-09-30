@@ -40,9 +40,29 @@ public class TongYiService {
             .build();
 
     /**
+     * key 是否真的配过。
+     *
+     * ⚠️ `application.yml` 里写的是 `${DASHSCOPE_KEY:your-api-key-here}` —— 没设环境变量时
+     * apiKey 就是字符串 "your-api-key-here"，而这个占位串**会被照常发出去**，服务端回 401、
+     * chat() 返回 null。于是"有没有 key"这件事在调用方看起来和"网络不通"完全一样，
+     * 调用方（AIController）只能靠猜。这里把它变成一个可以问的问题。
+     */
+    public boolean isConfigured() {
+        if (apiKey == null) return false;
+        String k = apiKey.trim();
+        return !k.isEmpty()
+                && !k.startsWith("${")
+                && !"your-api-key-here".equalsIgnoreCase(k);
+    }
+
+    /**
      * 发送对话请求到通义千问
      */
     public String chat(String systemPrompt, String userMessage) {
+        if (!isConfigured()) {
+            log.warn("通义千问 API Key 未配置（DASHSCOPE_KEY），本次不发起调用");
+            return null;
+        }
         try {
             List<Map<String, String>> messages = new ArrayList<>();
 

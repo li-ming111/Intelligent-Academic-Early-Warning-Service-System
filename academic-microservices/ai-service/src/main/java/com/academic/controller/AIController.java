@@ -26,6 +26,16 @@ public class AIController {
     private final TongYiService tongYiService;
     private final StudentServiceFeignClient studentServiceClient;
 
+    // ⚠️ 2026-09-30：`/ai/chat` 与 `/ai/qa` 原来是**假装**答过的 ——
+    //   `tongYiService.generalChat()` 在没配 key / 调不通时返回 null，
+    //   而这两个接口把 null 换成了**写死的一句话**（"已收到您的问题，请提供具体成绩数据以便精确分析" /
+    //   "学业预警系统可以帮助分析成绩趋势…"）并回 `success:true`。
+    //   后果：`application.yml` 的默认 key 是占位串 `your-api-key-here`，也就是**开箱即骗** ——
+    //   一次真实模型调用都没发生，前端却弹「处理意见生成成功」，还把这句话填进辅导员的处理意见框。
+    //   现在：模型没答就如实说没答，不再拿一句话顶替。
+    private static final String AI_UNAVAILABLE =
+        "没有可用的 AI 回答：通义千问未配置有效的 API Key（环境变量 DASHSCOPE_KEY），或本次调用失败。请配置后再使用该功能。";
+
     public AIController(AIService aiService, TongYiService tongYiService,
                         StudentServiceFeignClient studentServiceClient) {
         this.aiService = aiService;
@@ -123,11 +133,12 @@ public class AIController {
 
             // 调用通义千问获取智能回复
             String aiReply = tongYiService.generalChat(message);
-            if (aiReply != null && !aiReply.isEmpty()) {
-                result.put("reply", aiReply);
-            } else {
-                result.put("reply", "已收到您的问题，请提供具体成绩数据以便精确分析");
+            if (aiReply == null || aiReply.isEmpty()) {
+                // 模型真的没答 —— 那就别答。原来这里塞的是一句写死的话，见 AI_UNAVAILABLE 上面那段。
+                log.warn("chat 调用通义千问没有得到回答（key 已配置={}），如实回失败", tongYiService.isConfigured());
+                return ApiResponse.error(AI_UNAVAILABLE);
             }
+            result.put("reply", aiReply);
 
             // 如果有成绩数据，进行规则分析作为补充
             if (data.containsKey("scores")) {
@@ -151,7 +162,12 @@ public class AIController {
             result.put("question", question);
             // 调用通义千问智能问答
             String aiAnswer = tongYiService.generalChat(question);
-            result.put("answer", aiAnswer != null ? aiAnswer : "学业预警系统可以帮助分析成绩趋势、预测风险等级、生成学习建议");
+            if (aiAnswer == null || aiAnswer.isEmpty()) {
+                // 同 /ai/chat：没答就说没答，不拿写死的句子冒充模型输出。
+                log.warn("qa 调用通义千问没有得到回答（key 已配置={}），如实回失败", tongYiService.isConfigured());
+                return ApiResponse.error(AI_UNAVAILABLE);
+            }
+            result.put("answer", aiAnswer);
 
             // 如果传入了学生数据，进行实际分析
             if (data.containsKey("scores")) {

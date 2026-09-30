@@ -351,10 +351,13 @@
               <div class="card-header">备份操作</div>
             </template>
 
+            <!-- ⚠️ 这里原来写死「**系统自动每日备份**，备份时间为凌晨02:00」——
+                 而后端 `/admin/backup` 与 `/admin/backups/list` 明说 `implemented:false`，
+                 同一页的下方空态里就印着"本系统未实现运行时自动备份"。一句话把同一页否掉，
+                 答辩时被问"备份在哪个目录"就答不上来。现在改成**由后端 implemented 决定**：
+                 后端说没实现就如实说没实现，不再替它许诺。 -->
             <div style="margin-bottom: 15px; padding: 15px; background: #f0f9ff; border-radius: 4px; border-left: 4px solid #409eff;">
-              <p style="margin: 0; color: #333;">
-                <strong>系统自动每日备份</strong>，备份时间为凌晨02:00。您也可手动备份所有数据。
-              </p>
+              <p style="margin: 0; color: #333;">{{ backupNotice }}</p>
             </div>
 
             <el-button type="success" size="large" @click="backupNow" style="margin-bottom: 20px;">
@@ -419,7 +422,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { adminAPI } from '@/api/index'
 import apiClient from '@/api/client'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -432,6 +435,17 @@ const reportTemplates = ref([])
 const customTemplates = ref([])
 const backupList = ref([])
 const backupNote = ref('')
+// null = 还没问到后端，说实话就是"还不知道"；由 /admin/backups/list 的 implemented 决定横幅写什么
+const backupImplemented = ref(null)
+const backupNotice = computed(() => {
+  if (backupImplemented.value === false) {
+    return '「立即备份数据」不会生成备份文件 —— 本系统未实现运行时自动备份。'
+  }
+  if (backupImplemented.value === true) {
+    return '系统自动每日备份，备份时间为凌晨02:00。您也可手动备份所有数据。'
+  }
+  return '正在读取后端备份能力…'
+})
 const backupLoading = ref(false)
 const selectedHistory = ref([])
 const selectedBackups = ref([])
@@ -916,7 +930,12 @@ const backupNow = async () => {
     ElMessage.success('备份已完成')
     await loadBackupList()
   } catch (error) {
-    ElMessage.error('备份失败')
+    // ⚠️ 别把后端原话抹平成"备份失败"：/admin/backup 现在会回
+    // "本系统未实现运行时自动备份…"。抹平之后管理员只会以为"网络抖了一下，再点一次"。
+    // 成功路径不变 —— 后端真做成备份的那天，这里照旧弹"备份已完成"。
+    // 只如实转述后端给的失败原因；**不在这里改 backupImplemented** ——
+    // 断网也会走到这个 catch，那时横幅若改成"未实现"就是在编另一个谎。
+    ElMessage.error('备份未完成：' + (error?.message || '请求失败'))
   }
 }
 
@@ -937,6 +956,10 @@ const loadBackupList = async () => {
     backupNote.value = response?.note || ''
     if (response && response.implemented === false && !backupNote.value) {
       backupNote.value = '本系统未实现运行时自动备份'
+    }
+    // 横幅跟着后端走（认布尔、也认 "false" 字符串）
+    if (response && response.implemented !== undefined) {
+      backupImplemented.value = !(response.implemented === false || response.implemented === 'false')
     }
   } catch (error) {
     console.error('加载备份列表失败:', error)

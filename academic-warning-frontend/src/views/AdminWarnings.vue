@@ -34,6 +34,14 @@
             <span>{{ w.className || '--' }}</span>
             <span>{{ fmtTime(w.createdAt) }}</span>
           </div>
+          <!-- 回读：这三样是**库里真存了什么**（/admin/warnings 直接回 AcademicWarning 实体）。
+               原来页面上一个字都不显示 —— 处理完到底记没记下、记的是谁，全靠猜，
+               于是"处理成功"这句话没有任何东西能佐证。 -->
+          <div class="awcb-meta awcb-handled" v-if="w.status === 1">
+            <span>处理人：{{ w.handledBy || '未记录' }}</span>
+            <span>{{ fmtTime(w.handledAt) || '--' }}</span>
+            <span v-if="w.handleResult">结果：{{ w.handleResult }}</span>
+          </div>
         </div>
         <button v-if="w.status === 0" class="awc-btn" @click="quickProcess(w)">处理</button>
         <span v-else class="awc-done">已处理</span>
@@ -90,14 +98,26 @@ function fmtTime(t) { if (!t) return ''; const d = new Date(t); return d.toLocal
 
 function quickProcess(w) { processTarget.value = w; processNote.value = ''; dialogVisible.value = true }
 async function confirmProcess() {
+  if (!processTarget.value) return
+  const targetId = processTarget.value.id
+  // 处理人：登录时 Login.vue 写进 localStorage 的真名。取不到就不传，
+  // 后端如实记 NULL（不编一个名字，也不拿备注去顶替处理人 —— 那是这接口原来的错法）。
+  const operator = localStorage.getItem('name') || localStorage.getItem('username') || ''
   try {
-    await adminAPI.processWarning(processTarget.value.id, {
-      handleResult: '已处理',
-      remark: processNote.value || '管理员处理'
-    })
-    processTarget.value.status = 1
+    const payload = { handleResult: '已处理', remark: processNote.value || '管理员处理' }
+    if (operator) payload.handledBy = operator
+    await adminAPI.processWarning(targetId, payload)
     dialogVisible.value = false
-    ElMessage.success('预警已处理')
+    // ⚠️ 原来这里是 `processTarget.value.status = 1` —— 本地改一下就当成功了。
+    // 请求失败时它也在 await 后面，走 catch，倒还好；但**响应里的 code 从没被看过**。
+    // 现在重新向后端要一遍，页面上显示的必须是库里的那一行。
+    await loadData()
+    const row = (warnings.value || []).find(w => w.id === targetId)
+    if (row && row.status === 1) {
+      ElMessage.success(`预警已处理（处理人：${row.handledBy || '未记录'}）`)
+    } else {
+      ElMessage.warning('后端回了成功，但重新拉取后这条仍是待处理 —— 没写进库')
+    }
   } catch (e) {
     ElMessage.error('处理失败：' + (e.message || '网络错误'))
   }
