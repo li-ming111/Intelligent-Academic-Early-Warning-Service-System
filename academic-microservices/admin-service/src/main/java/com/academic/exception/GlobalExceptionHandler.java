@@ -13,7 +13,6 @@ import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
-import org.springframework.web.servlet.NoHandlerFoundException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 import org.springframework.web.context.request.async.AsyncRequestNotUsableException;
 
@@ -98,25 +97,20 @@ public class GlobalExceptionHandler {
                 .body(ApiResponse.error(415, "不支持的媒体类型"));
     }
 
-    @ExceptionHandler(NoHandlerFoundException.class)
-    public ResponseEntity<ApiResponse<Void>> handleNoHandlerFoundException(NoHandlerFoundException e) {
-        log.warn("No handler found: {} {}", e.getHttpMethod(), e.getRequestURL());
-        return ResponseEntity
-                .status(HttpStatus.NOT_FOUND)
-                .body(ApiResponse.error(404, "请求路径不存在"));
-    }
-
     /**
      * 路径不存在。
      *
-     * ⚠️ 上面那个 NoHandlerFoundException 在 Spring Boot 3.2 下**不会触发**：
-     * 它只在 spring.mvc.throw-exception-if-no-handler-found=true 时才抛，
-     * 而 6.1 起"找不到 handler"改成由静态资源兜底处理，抛的是
-     * NoResourceFoundException（ServletException 的子类，跟上面那个没有继承关系），
-     * 于是落到了最下面的 catch-all Exception 分支 —— 表现就是
+     * ⚠️ 别改回 NoHandlerFoundException：那个异常只在
+     * spring.mvc.throw-exception-if-no-handler-found=true 时才抛，本工程没有配；
+     * 且 Spring 6.1 起"找不到 handler"改成由静态资源兜底处理，抛的是
+     * NoResourceFoundException（ServletException 的子类，与 NoHandlerFoundException
+     * 没有继承关系），于是会落到最下面的 catch-all Exception 分支 —— 表现就是
      * **请求一个不存在的路径会得到 HTTP 200 + code:500「系统内部错误」**，
      * 看起来像后端崩了，实际只是路径拼错了（实测 /admin/users/1/password）。
      * 补上这个分支，路径错误才是 404。
+     *
+     * （原先这里还挂着一个 NoHandlerFoundException 的处理函数，永不触发，
+     *   2026-09-30 已删。）
      */
     @ExceptionHandler(NoResourceFoundException.class)
     public ResponseEntity<ApiResponse<Void>> handleNoResourceFoundException(NoResourceFoundException e) {

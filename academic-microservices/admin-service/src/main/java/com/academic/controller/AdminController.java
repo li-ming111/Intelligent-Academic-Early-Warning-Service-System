@@ -35,7 +35,6 @@ import com.academic.mapper.AcademicWarningMapper;
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import com.academic.feign.MessageServiceClient;
-import com.academic.feign.WarningServiceClient;
 import com.academic.feign.StudentServiceClient;
 import com.academic.feign.CounselorServiceClient;
 import com.academic.feign.CourseServiceClient;
@@ -89,9 +88,6 @@ public class AdminController {
 
     @Autowired
     private AcademicWarningMapper academicWarningMapper;
-
-    @Autowired
-    private WarningServiceClient warningServiceClient;
 
     @Autowired
     private StudentServiceClient studentServiceClient;
