@@ -50,3 +50,7 @@ academic-microservices/_*.txt
 testsprite/local-check/*.txt
 testsprite/local-check/*.png
 testsprite/local-check/*.prev
+
+# Claude Code：project skill / 命令 / 项目配置入库（.claude/skills/** 是这台机器上
+# 跑通的流程，值得跟着仓库走）；只有 settings.local.json 是个人本地覆盖，不入库。
+.claude/settings.local.json
