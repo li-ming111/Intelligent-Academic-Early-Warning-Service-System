@@ -819,9 +819,9 @@ export const adminAPI = {
   resetPassword: (userId) => {
     return apiClient.post(`/admin/users/${userId}/reset-password`)
   },
-  viewPassword: (userId) => {
-    return apiClient.get(`/admin/users/${userId}/password`)
-  },
+  // viewPassword 已删（2026-09-30）：`GET /admin/users/{id}/password` 后端**没有这个端点**，
+  // 实测 404（admin-service 只有 POST /users/{id}/reset-password）。密码存的是 BCrypt 哈希，
+  // "查看"本身也没有意义，管理员的正当操作是重置。
   // ============= 权限管理API =============
   getRoles: () => {
     return apiClient.get(`/admin/permissions/roles`)

@@ -219,10 +219,17 @@ onMounted(async () => {
 const loadTeachers = async () => {
   try {
     const res = await adminAPI.getUsers(1, 999, null, 2)
+    // ⚠️ `/admin/users/page` 回的是 `{total, items:[...]}`（实测），既不是 MyBatis-Plus 的
+    // `records`，也不是裸数组。原来只认 `.records`/数组，三个分支全落空 → teachers 恒为 []
+    // → 「授课教师」下拉永远是空的，而接口 200、控制台干净、没有任何提示。
     let teachers = []
-    if (res?.code === 200 && res.data?.records) teachers = res.data.records
-    else if (Array.isArray(res)) teachers = res
-    else if (res?.data && Array.isArray(res.data)) teachers = res.data
+    if (Array.isArray(res)) teachers = res
+    else if (Array.isArray(res?.items)) teachers = res.items
+    else if (Array.isArray(res?.list)) teachers = res.list
+    else if (Array.isArray(res?.records)) teachers = res.records
+    else if (Array.isArray(res?.data)) teachers = res.data
+    // 一个教师都没解析出来时不装作"没有教师"：这条路径要么接口挂了、要么形状又变了
+    else console.warn('教师列表形状不认识，授课教师下拉会是空的：', res && Object.keys(res))
     teacherOptions.value = teachers.map(t => ({ id: t.id, name: t.name || t.username }))
     teacherMap.value = {}
     teachers.forEach(t => { teacherMap.value[t.id] = t.name || t.username })

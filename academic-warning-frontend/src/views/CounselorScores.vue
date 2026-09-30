@@ -98,7 +98,9 @@
     </el-card>
 
     <el-dialog v-model="trendDialogVisible" title="学生成绩变化趋势" width="700px">
-      <div ref="trendChartContainer" style="height: 350px;"></div>
+      <!-- 有成绩才画图；一条都没有时说"暂无"，而不是画一张空坐标系让人以为成绩是 0 -->
+      <div v-if="trendEmpty" class="trend-empty">该学生暂无成绩记录</div>
+      <div v-else ref="trendChartContainer" style="height: 350px;"></div>
     </el-dialog>
   </div>
 </template>
@@ -122,6 +124,7 @@ const allScores = ref([])
 const chartContainer = ref(null)
 const trendChartContainer = ref(null)
 const trendDialogVisible = ref(false)
+const trendEmpty = ref(false)
 let chartInstance = null
 
 const getCounselorId = () => localStorage.getItem('counselorId') || getUserId()
@@ -323,8 +326,14 @@ const viewTrend = async (row) => {
   try {
     const studentId = row.student_id
     const res = await counselorAPI.getStudentScoreTrend(studentId)
-    const trendData = res.data?.data || []
+    // ⚠️ 拦截器已经解包：`res` 就是接口里的 `data`，而这个端点的 data 是
+    // **List<Map>**（实测返回 25 行）。原写法 `res.data?.data || []` 在数组上取
+    // `.data` 恒为 undefined → trendData 永远是 []，弹窗里那张图**永远是空的**，
+    // 而接口明明有数据、这里也不报错（只有 console 干净地什么也不说）。
+    const trendData = Array.isArray(res) ? res : (res?.data ?? res?.list ?? [])
+    trendEmpty.value = trendData.length === 0
 
+    if (trendEmpty.value) return
     setTimeout(() => {
       if (!trendChartContainer.value) return
       const chart = echarts.init(trendChartContainer.value)
@@ -358,6 +367,15 @@ const viewTrend = async (row) => {
 </script>
 
 <style scoped>
+.trend-empty {
+  height: 350px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--el-text-color-secondary);
+  font-size: 14px;
+}
+
 .counselor-scores {
   padding: 20px;
 }

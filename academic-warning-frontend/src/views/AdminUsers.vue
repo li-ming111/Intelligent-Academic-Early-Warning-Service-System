@@ -489,22 +489,14 @@ const confirmDelete = async () => {
   }
 }
 
-const viewPassword = async (row) => {
-  try {
-    const userId = row.id
-    if (!userId) {
-      ElMessage.error('用户ID不存在')
-      return
-    }
-    const response = await adminAPI.viewPassword(userId)
-    const data = response.data?.data || response.data
-    const pwd = data?.password || data
-    ElMessage.success(`用户密码: ${pwd}`)
-  } catch (error) {
-    console.error('查看密码失败:', error)
-    ElMessage.error('查看密码失败')
-  }
-}
+// 「查看密码」已删除（2026-09-30）。原来这里有个 viewPassword：
+//   · 它调 `GET /admin/users/{id}/password` —— 该端点**根本不存在**，实测 HTTP 404
+//     （admin-service 里只有 POST /users/{id}/reset-password）；
+//   · 解包写法也是错的（`response.data?.data || response.data`，拦截器已解包 → 恒 undefined），
+//     真要是通了，管理员看到的会是「用户密码: undefined」还配一个绿色成功提示；
+//   · 且**没有任何按钮调用它**（行内只有 审批/编辑/禁用/删除，重置在编辑弹窗里），是死代码。
+// 没有改成"真去读密码"：库里存的是 BCrypt 哈希，读出来也没有意义；而管理员的正当需求是
+// **重置**（`POST /users/{id}/reset-password`，接口是好的，入口在编辑弹窗的「重置为默认密码」）。
 
 const searchUsers = async () => {
   currentPage.value = 1
