@@ -113,6 +113,19 @@
             <artifactId>spring-boot-starter-amqp</artifactId>
         </dependency>
 
+        <!-- Apache POI：解析教师端"导入学生"上传的 Excel（/students/import）。
+             版本由父 pom 的 dependencyManagement 统一给（5.2.5，与 admin-service 一致）。
+             原来老师点"导入学生"是走不通的：本服务既没有 POI、也没配 multipart，
+             那个端点只校验后缀就返回"已接收"，一行库都不写。 -->
+        <dependency>
+            <groupId>org.apache.poi</groupId>
+            <artifactId>poi</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.poi</groupId>
+            <artifactId>poi-ooxml</artifactId>
+        </dependency>
+
         <!-- Lombok -->
         <dependency>
             <groupId>org.projectlombok</groupId>

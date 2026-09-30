@@ -22,6 +22,12 @@ import com.academic.entity.Feedback;
 import com.academic.entity.TeacherClassApplication;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.poi.ss.usermodel.Cell;
+import org.apache.poi.ss.usermodel.CellType;
+import org.apache.poi.ss.usermodel.Row;
+import org.apache.poi.ss.usermodel.Sheet;
+import org.apache.poi.ss.usermodel.Workbook;
+import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
@@ -72,6 +78,11 @@ public class TeacherController {
 
     @Autowired
     private com.academic.mapper.ScoreRecordMapper scoreRecordMapper;
+
+    // 导入学生用**mapper 直连**，不走 ClassInfoService：那个 service 的方法清一色
+    // `catch (Exception e) { return new ArrayList<>(); }`，写操作经它会被吞成"成功"。
+    @Autowired
+    private com.academic.mapper.ClassInfoMapper classInfoMapper;
 
     /**
      * 教师注册
@@ -650,29 +661,181 @@ public class TeacherController {
     }
 
     /**
-     * 导入学生
+     * 导入学生到本班。
+     *
+     * <p>⚠️ 原实现是个**桩**：只校验后缀和 10MB，然后返回
+     * {@code {imported: 0, message: "文件已接收，请稍后查看导入结果"}} —— 一行库都不写。
+     * 而教师端 {@code TeacherClassManagement.vue} 拿到成功响应就
+     * {@code ElMessage.success('学生导入成功')}，所以这个按钮是当着老师的面报告了一件
+     * 没发生的事。2026-09-30 改成真做。
+     *
+     * <p>它**只做一件事**：把已经存在于系统里的学生归入本班。班级成员的权威口径是
+     * {@code student_profile.class_id}（本服务所有班级人数/名单/按班统计的预警都读这一列），
+     * 所以这里改的就是它，并同步 {@code class_name} 与既有数据保持一致。
+     * **不新建账号、不新建学生档案** —— 建账号是管理员那边的活
+     * （{@code /admin/import/students}，要 BCrypt 口令、写 users + student_profile 两张表）；
+     * 一个"往我的班里加人"的动作不该顺手在别处造出登录凭据。
+     *
+     * <p>逐行尽力而为：一行 = 一个单表 UPDATE，本身即原子，不需要跨表事务；
+     * 失败的行走 {@code errors}，不连坐其余行。返回体与 {@code /admin/import/students}
+     * 同口径（{@code total/success/skipped/errors}），多一个 {@code moved}
+     * 表示"原本在别的班级、这次改过来了"—— 移出原班是学生的实际影响，得说出来。
      */
     @PostMapping("/students/import")
-    public ApiResponse<Object> importStudents(@RequestParam("file") MultipartFile formData) {
+    public ApiResponse<Map<String, Object>> importStudents(@RequestParam("file") MultipartFile file,
+                                                          @RequestParam("classId") Long classId,
+                                                          @RequestParam("teacherId") Long teacherId) {
+        Map<String, Object> result = new HashMap<>();
+        List<Map<String, Object>> errors = new ArrayList<>();
+        int successCount = 0, skipCount = 0, movedCount = 0;
+        result.put("fileName", file == null ? null : file.getOriginalFilename());
+
         try {
-            String fileName = formData.getOriginalFilename();
-            long fileSize = formData.getSize();
-            // 文件大小限制 10MB，仅允许 Excel 文件
-            if (fileSize > 10 * 1024 * 1024) {
-                return ApiResponse.error("文件大小不能超过10MB");
+            if (file == null || file.isEmpty()) {
+                return ApiResponse.error("文件为空");
             }
-            if (fileName == null || !fileName.matches(".*\\.(xlsx|xls)$")) {
-                return ApiResponse.error("仅支持 .xlsx 或 .xls 格式的Excel文件");
+            String fileName = file.getOriginalFilename();
+            if (fileName == null || !fileName.matches("(?i).*\\.(xlsx|xls)$")) {
+                return ApiResponse.error("仅支持 .xlsx 或 .xls 格式的 Excel 文件");
             }
-            Map<String, Object> result = new HashMap<>();
-            result.put("fileName", fileName);
-            result.put("fileSize", fileSize);
-            result.put("imported", 0);
-            result.put("message", "文件已接收，请稍后查看导入结果");
+            // 上限与 application.yml 的 spring.servlet.multipart 一致；容器先拦的话
+            // 抛的是 MaxUploadSizeExceededException，这句"不能超过 10MB"就成了谎话。
+            if (file.getSize() > MAX_IMPORT_BYTES) {
+                return ApiResponse.error("文件大小不能超过 10MB");
+            }
+
+            ClassInfo clazz = classInfoMapper.selectById(classId);
+            if (clazz == null) {
+                return ApiResponse.error("班级不存在：" + classId);
+            }
+            // 只有本班的任课教师能往里导人。按 teacherId 查而不是往前端要一个"我是不是"的
+            // 布尔值 —— 后者谁都能传 true。
+            if (clazz.getTeacherId() == null || !clazz.getTeacherId().equals(teacherId)) {
+                return ApiResponse.error("您不是该班级的教师，不能往这个班导学生");
+            }
+            result.put("className", clazz.getName());
+
+            try (Workbook workbook = new XSSFWorkbook(file.getInputStream())) {
+                Sheet sheet = workbook.getSheetAt(0);
+                if (sheet == null || sheet.getLastRowNum() < 1) {
+                    return ApiResponse.error("表里没有数据行（第 1 行应当是表头，数据从第 2 行开始）");
+                }
+                Integer sidCol = findColumn(sheet.getRow(0), "学号");
+                if (sidCol == null) {
+                    return ApiResponse.error("表头里找不到「学号」列");
+                }
+
+                for (int r = 1; r <= sheet.getLastRowNum(); r++) {
+                    Row row = sheet.getRow(r);
+                    if (row == null) continue;
+                    int rowNum = r + 1;   // 报给老师看的行号 = 他在 Excel 里看到的行号
+                    try {
+                        String studentId = cellText(row.getCell(sidCol));
+                        if (studentId == null) continue;   // 整行空
+                        if (studentId.length() > 20) {
+                            errors.add(rowError(rowNum, "学号超过 20 位"));
+                            skipCount++; continue;
+                        }
+
+                        Long profileId = classInfoMapper.findProfileIdByStudentId(studentId);
+                        if (profileId == null) {
+                            errors.add(rowError(rowNum, "学号不存在：" + studentId
+                                    + "（这里只把已有学生归入本班，不新建账号）"));
+                            skipCount++; continue;
+                        }
+
+                        Long currentClassId = classInfoMapper.findClassIdOfProfile(profileId);
+                        if (classId.equals(currentClassId)) {
+                            errors.add(rowError(rowNum, studentId + " 已在本班"));
+                            skipCount++; continue;
+                        }
+
+                        classInfoMapper.assignProfileToClass(profileId, classId, clazz.getName());
+                        if (currentClassId != null) movedCount++;   // 从别的班挪过来的
+                        successCount++;
+                    } catch (Exception e) {
+                        log.warn("导入学生第 {} 行失败", rowNum, e);
+                        errors.add(rowError(rowNum, briefMessage(e)));
+                        skipCount++;
+                    }
+                }
+            }
+
+            result.put("total", successCount + skipCount);
+            result.put("success", successCount);
+            result.put("skipped", skipCount);
+            result.put("moved", movedCount);
+            result.put("errors", errors);
+            log.info("Import students to class {} finished: total={}, success={}, skip={}, moved={}",
+                    classId, successCount + skipCount, successCount, skipCount, movedCount);
             return ApiResponse.success(result);
         } catch (Exception e) {
-            return ApiResponse.error(e.getMessage());
+            log.error("Import students failed", e);
+            return ApiResponse.error("导入失败: " + e.getMessage());
         }
+    }
+
+    /** 与 application.yml 的 spring.servlet.multipart.max-file-size 保持一致。 */
+    private static final long MAX_IMPORT_BYTES = 10L * 1024 * 1024;
+
+    /**
+     * 读单元格为文本。Excel 里的学号常常是"数字格式"，POI 读出来是 double，
+     * 直接 toString 会得到 {@code 2023020616.0} —— 整数值一律按 long 输出。
+     * （管理员端那份 {@code AdminController.cellText} 同一套规则；两个端点做的事不同，
+     * 共同部分只有这十几行读单元格，就没为一个工具方法去动 academic-common。）
+     */
+    private static String cellText(Cell cell) {
+        if (cell == null) return null;
+        try {
+            CellType type = cell.getCellType();
+            if (type == CellType.FORMULA) type = cell.getCachedFormulaResultType();
+            if (type == CellType.NUMERIC) {
+                double d = cell.getNumericCellValue();
+                if (d == Math.rint(d) && Math.abs(d) < 1e15) return String.valueOf((long) d);
+                return String.valueOf(d);
+            }
+            if (type == CellType.BOOLEAN) return String.valueOf(cell.getBooleanCellValue());
+            if (type == CellType.BLANK) return null;
+            String s = cell.getStringCellValue();
+            return s == null || s.trim().isEmpty() ? null : s.trim();
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /**
+     * 按**表头文字**找列。管理员模板里是「学号(必填)」、导出的文件里是「学号」，
+     * 按"包含"匹配两边都能认，不必按列序（那会在两个来源之间整体错位）。
+     */
+    private static Integer findColumn(Row header, String keyword) {
+        if (header == null || header.getLastCellNum() < 0) return null;
+        for (int c = header.getFirstCellNum(); c < header.getLastCellNum(); c++) {
+            String h = cellText(header.getCell(c));
+            if (h != null && h.replace(" ", "").contains(keyword)) return c;
+        }
+        return null;
+    }
+
+    /** 用 HashMap 而不是 Map.of —— 后者的值不允许为 null。 */
+    private static Map<String, Object> rowError(int row, String reason) {
+        Map<String, Object> m = new HashMap<>();
+        m.put("row", row);
+        m.put("reason", reason);
+        return m;
+    }
+
+    /**
+     * 只取最内层 cause。直接把 e.getMessage() 放出去会是一整段 MyBatis 包装的
+     * {@code "### Error updating database. Cause: ... ### SQL: UPDATE ..."}，
+     * 既没有解释力又把实现细节漏给前端；完整堆栈仍在服务端日志里。
+     */
+    private static String briefMessage(Throwable e) {
+        Throwable root = e;
+        while (root.getCause() != null && root.getCause() != root) {
+            root = root.getCause();
+        }
+        String msg = root.getMessage();
+        return (msg == null || msg.trim().isEmpty()) ? root.getClass().getSimpleName() : msg.trim();
     }
 
     /**

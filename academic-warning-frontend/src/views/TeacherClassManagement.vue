@@ -198,7 +198,8 @@
               <el-button type="primary">选择文件</el-button>
               <template #tip>
                 <div class="el-upload__tip">
-                  请上传包含学生信息的Excel文件，格式要求：学号、姓名、性别、手机号、邮箱
+                  需要一列「学号」（模板见管理员端「数据导入导出」页）。
+                  导入是把已经在系统里的学生归入本班，不会新建账号。
                 </div>
               </template>
             </el-upload>
@@ -723,6 +724,9 @@ const handleStudentFileSelect = (uploadFile) => {
 }
 
 // 导入学生
+// 后端做的是"把已存在的学生归入本班"（改 student_profile.class_id），所以必须带上
+// teacherId —— 服务端据此校验这个班确实是他的，而不是信前端传一个布尔值。
+// 原来这里对任何成功响应都报"学生导入成功"，而后端那时是个桩、一行库都不写。
 const importStudents = async () => {
   if (!importForm.value.file) {
     ElMessage.error('请选择Excel文件')
@@ -734,18 +738,29 @@ const importStudents = async () => {
     const formData = new FormData()
     formData.append('file', importForm.value.file)
     formData.append('classId', importForm.value.classId)
-    
-    const response = await teacherAPI.importStudents(formData)
-    
-    if (response) {
-      ElMessage.success('学生导入成功')
-      studentImportDialogVisible.value = false
-      loadMyClasses()
-      uploadStudentRef.value.clearFiles()
+    formData.append('teacherId', getTeacherId())
+
+    const res = await teacherAPI.importStudents(formData)
+
+    // 逐行尽力而为：成功的行已经落库，失败的行在 errors 里。跳过大于 0 就不能只报"成功"。
+    const success = res?.success ?? 0
+    const skipped = res?.skipped ?? 0
+    const moved = res?.moved ?? 0
+    const errorList = res?.errors || []
+    const movedNote = moved ? `（其中 ${moved} 名原本在别的班级）` : ''
+    if (skipped === 0) {
+      ElMessage.success(`导入完成：${success} 名学生已归入本班${movedNote}`)
+    } else {
+      const detail = errorList.slice(0, 5).map(e => `第${e.row}行：${e.reason}`).join('；')
+      const more = errorList.length > 5 ? ` 等共 ${errorList.length} 处` : ''
+      ElMessage.warning(`导入完成：成功 ${success} 条${movedNote}，跳过 ${skipped} 条。${detail}${more}`)
     }
+    studentImportDialogVisible.value = false
+    loadMyClasses()
+    uploadStudentRef.value.clearFiles()
   } catch (error) {
     console.error('导入学生失败:', error)
-    ElMessage.error(error.message || '导入学生失败')
+    ElMessage.error(error.response?.data?.message || error.message || '导入学生失败')
   } finally {
     importLoading.value = false
   }
