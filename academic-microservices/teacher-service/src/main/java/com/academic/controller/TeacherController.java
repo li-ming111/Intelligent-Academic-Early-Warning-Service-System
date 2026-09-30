@@ -1,6 +1,8 @@
 package com.academic.controller;
 
+import com.academic.common.constant.ScoreCaliber;
 import com.academic.common.dto.ApiResponse;
+import com.academic.common.util.ScoreSyncSupport;
 import com.academic.common.entity.TeacherProfile;
 import com.academic.common.entity.Course;
 import com.academic.common.entity.TeacherCourse;
@@ -16,6 +18,8 @@ import com.academic.service.FeedbackService;
 import com.academic.service.CommunicationRecordService;
 import com.academic.service.ScoreAuditLogService;
 import com.academic.common.entity.ScoreAuditLog;
+import com.academic.entity.Feedback;
+import com.academic.entity.TeacherClassApplication;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -26,6 +30,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 /**
  * 教师控制器
@@ -64,6 +69,9 @@ public class TeacherController {
 
     @Autowired
     private com.academic.mapper.AcademicWarningMapper academicWarningMapper;
+
+    @Autowired
+    private com.academic.mapper.ScoreRecordMapper scoreRecordMapper;
 
     /**
      * 教师注册
@@ -453,15 +461,23 @@ public class TeacherController {
         try {
             List<Map<String, Object>> enrollments = new ArrayList<>();
             if (courseId != null) {
-                // 根据课程获取报名学生
-                List<Object> scores = (List<Object>) (List<?>) scoreRecordService.getScoresByCourseId(courseId);
-                for (Object obj : scores) {
-                    Map<String, Object> score = (Map<String, Object>) obj;
+                // 根据课程获取报名学生。
+                // 两条分支刻意输出**同一组键**（courseId/courseName/credits/type/className/
+                // score/scoreLevel），这样调用方拿到哪一支都能按 courseId 分组 ——
+                // 早先这一支只给 4 个键、另一支给 9 个，前端得写两套逻辑。
+                // courseName/credits/type 课程表里才有，这里查一次补齐（不是编造）。
+                Course course = courseService.getById(courseId);
+                for (ScoreRecord score : scoreRecordService.getScoresByCourseId(courseId)) {
                     Map<String, Object> enrollment = new HashMap<>();
                     enrollment.put("courseId", courseId);
-                    enrollment.put("studentId", score.get("studentId"));
-                    enrollment.put("studentName", score.get("studentName"));
-                    enrollment.put("score", score.get("score"));
+                    enrollment.put("courseName", course == null ? null : course.getName());
+                    enrollment.put("credits", course == null ? null : course.getCredits());
+                    enrollment.put("type", course == null ? null : course.getType());
+                    enrollment.put("className", score.getClassName());
+                    enrollment.put("studentId", score.getStudentId());
+                    enrollment.put("studentName", score.getStudentName());
+                    enrollment.put("score", score.getScore());
+                    enrollment.put("scoreLevel", score.getScoreLevel());
                     enrollment.put("status", "已选课");
                     enrollments.add(enrollment);
                 }
@@ -471,10 +487,12 @@ public class TeacherController {
                 for (Map<String, Object> c : classes) {
                     Long classId = (Long) c.get("id");
                     String className = (String) c.get("name");
-                    List<Object> scores = (List<Object>) (List<?>) scoreRecordService.getScoresByClassId(classId);
-                    if (scores != null) {
-                        for (Object obj : scores) {
-                            Map<String, Object> score = (Map<String, Object>) obj;
+                    // 这一支的数据源是 mapper 里手写的 JOIN，返回的**就是**
+                    // Map（列名是下划线，因为 SQL 没起别名）。全场唯一一处
+                    // 真·Map 结果集，与上面那些"实体被当 Map 用"的坑无关。
+                    List<Map<String, Object>> rows = scoreRecordService.getScoresByClassId(classId);
+                    if (rows != null) {
+                        for (Map<String, Object> score : rows) {
                             Map<String, Object> enrollment = new HashMap<>();
                             enrollment.put("studentId", score.get("student_id"));
                             enrollment.put("studentName", score.get("student_name"));
@@ -537,36 +555,7 @@ public class TeacherController {
     @GetMapping("/analysis")
     public ApiResponse<Object> getAnalysis(@RequestParam Long course_id) {
         try {
-            List<Object> scores = (List<Object>) (List<?>) scoreRecordService.getScoresByCourseId(course_id);
-            
-            double avgScore = 0;
-            int highCount = 0;
-            int mediumCount = 0;
-            int lowCount = 0;
-            
-            if (!scores.isEmpty()) {
-                double total = 0;
-                for (Object obj : scores) {
-                    Map<String, Object> score = (Map<String, Object>) obj;
-                    Double s = (Double) score.get("score");
-                    total += s;
-                    if (s >= 80) highCount++;
-                    else if (s >= 60) mediumCount++;
-                    else lowCount++;
-                }
-                avgScore = total / scores.size();
-            }
-            
-            Map<String, Object> analysis = Map.of(
-                "courseId", course_id,
-                "totalStudents", scores.size(),
-                "averageScore", Math.round(avgScore * 100.0) / 100.0,
-                "highScoreCount", highCount,
-                "mediumScoreCount", mediumCount,
-                "lowScoreCount", lowCount
-            );
-            
-            return ApiResponse.success(analysis);
+            return ApiResponse.success(buildCourseAnalysis(course_id));
         } catch (Exception e) {
             return ApiResponse.error(e.getMessage());
         }
@@ -692,13 +681,11 @@ public class TeacherController {
     @PostMapping("/scores/warnings")
     public ApiResponse<Object> triggerWarnings(@RequestParam Long course_id) {
         try {
-            List<Object> scores = (List<Object>) (List<?>) scoreRecordService.getScoresByCourseId(course_id);
+            List<ScoreRecord> scores = latestPerStudent(scoreRecordService.getScoresByCourseId(course_id));
             long warningCount = scores.stream()
-                .filter(s -> {
-                    Map<String, Object> m = (Map<String, Object>) s;
-                    Double score = m.get("score") instanceof Double ? (Double) m.get("score") : 0;
-                    return score < 60;
-                })
+                .map(ScoreRecord::getScore)
+                .filter(Objects::nonNull)              // 未录入的不算 0 分
+                .filter(score -> score < ScoreCaliber.PASS_LINE)
                 .count();
             Map<String, Object> result = new HashMap<>();
             result.put("courseId", course_id);
@@ -717,49 +704,135 @@ public class TeacherController {
     @GetMapping("/students/{studentId}/credit-prediction")
     public ApiResponse<Object> getCreditPrediction(@PathVariable String studentId) {
         try {
+            // 路径参数是 student_profile.id（与 scores.student_id 同一套），不是 users.id、也不是学号。
             Long sid = Long.parseLong(studentId);
-            // 查询学生现有成绩计算学分
-            List<Object> scores = (List<Object>) (List<?>) scoreRecordService.getScoresByStudentId(sid);
-            double currentCredit = scores.size() * 3.0; // 每门课约3学分
-            Map<String, Object> prediction = new HashMap<>();
-            prediction.put("studentId", sid);
-            prediction.put("predictedCredit", currentCredit + 3.5);
-            prediction.put("currentCredit", currentCredit);
-            prediction.put("trend", currentCredit > 60 ? "良好" : "需关注");
-            return ApiResponse.success(prediction);
+
+            // 学分口径唯一来源：ScoreCaliber.ONE_STUDENT_STATS。
+            // 学生端的"已修学分"用的是同一段 SQL，所以教师这里看到的数字
+            // 和学生自己首页上的必然一致 —— 早先这里是 `成绩条数 × 3.0`，
+            // 假设"每门课 3 学分"，算出的 48 学分与学生端是两回事，
+            // 一被追问"你怎么知道每门课 3 学分"就塌了。
+            Map<String, Object> stats = scoreRecordMapper.selectStudentStats(sid);
+            int completedCredits = intValue(stats == null ? null : stats.get("completedCredits"));
+            int totalCourses = intValue(stats == null ? null : stats.get("totalCourses"));
+            int failedCourses = intValue(stats == null ? null : stats.get("failedCourses"));
+            int required = ScoreCaliber.GRADUATION_CREDITS;
+
+            Map<String, Object> result = new HashMap<>();
+            result.put("studentId", sid);
+            result.put("studentName", scoreRecordMapper.selectStudentName(sid));
+            result.put("completedCredits", completedCredits);
+            result.put("requiredCredits", required);
+            // 剩余学分是"毕业要求 − 已修"，纯减法，不是预测；
+            // 也不再给 predictedCredit —— 那需要修读计划/培养方案数据，库里没有，
+            // 编一个数字出来只会让答辩时多一个回答不了的问题。
+            result.put("remainingCredits", Math.max(required - completedCredits, 0));
+            result.put("totalCourses", totalCourses);
+            result.put("failedCourses", failedCourses);
+            result.put("progressRate", required == 0 ? 0
+                    : round2((double) completedCredits / required));
+            // trend 只由**已落库的事实**推出：有挂科就"需关注"，没有就"良好"。
+            // 不掺入任何外推。
+            result.put("trend", failedCourses > 0 ? "需关注" : "良好");
+            return ApiResponse.success(result);
         } catch (Exception e) {
             return ApiResponse.error(e.getMessage());
         }
     }
 
     /**
-     * 分析学生成绩
+     * 分析学生成绩（单门课视角）。
+     *
+     * <p>返回的每一项都必须是**库里查得到、或由查到的数直接算出来的**：
+     * 名次是这门课里按分数排出来的真实名次，`averageScore` 是这门课的真实平均分，
+     * `failedCount` 是该生自己的挂科门数（走 ScoreCaliber 口径）。
+     *
+     * <p>刻意<b>不返回</b> `predictedScore`（预测成绩）：没有修读计划或历史趋势模型，
+     * 预测只能是编的。前端原来那一格改成了"该生在本课程的名次"。
      */
     @GetMapping("/scores/student/analyze")
     public ApiResponse<Object> analyzeStudentScore(@RequestParam Long student_id, @RequestParam Long course_id) {
         try {
-            List<Object> scores = (List<Object>) (List<?>) scoreRecordService.getScoresByCourseId(course_id);
+            // 一人一行：司明在高等数学下有 3 个批次，取最新的那次（第 5 学期 56.5），
+            // 否则"当前成绩"会随行序随机命中第 3 学期的 87 分 —— 同一个接口两次调用
+            // 给出两个分数，且与预警里的 56.5 对不上。
+            List<ScoreRecord> rows = latestPerStudent(scoreRecordService.getScoresByCourseId(course_id));
+
             Double studentScore = null;
-            for (Object obj : scores) {
-                Map<String, Object> s = (Map<String, Object>) obj;
-                if (student_id.equals(s.get("studentId"))) {
-                    studentScore = (Double) s.get("score");
+            String studentName = null;
+            for (ScoreRecord row : rows) {
+                if (student_id.equals(row.getStudentId())) {
+                    studentScore = row.getScore();
+                    studentName = row.getStudentName();
                     break;
                 }
             }
-            if (studentScore == null) studentScore = 0.0;
-            String rank = studentScore >= 90 ? "优秀" : studentScore >= 75 ? "良好" : studentScore >= 60 ? "及格" : "不及格";
-            String suggestion = studentScore >= 90 ? "继续保持" : studentScore >= 75 ? "保持良好状态" : studentScore >= 60 ? "加强薄弱环节" : "需要重点关注";
+            if (studentScore == null) {
+                // 该生在这门课没有成绩（或期末未录入），不当作 0 分 —— 0 分会让
+                // "预警状态"直接跳到"严重"，而事实是"还没录"。
+                return ApiResponse.error(404, "该生在此课程暂无成绩记录");
+            }
+
+            // 名次：同课程内按分数降序，并列同分同名次（标准竞赛排名法）。
+            int better = 0;
+            int total = 0;
+            double sum = 0;
+            for (ScoreRecord row : rows) {
+                Double s = row.getScore();
+                if (s == null) continue;
+                total++;
+                sum += s;
+                if (s > studentScore) better++;
+            }
+            double courseAvg = total == 0 ? 0 : sum / total;
+
+            Course course = courseService.getById(course_id);
+            int failedCount = intValue(scoreRecordMapper.selectFailedCourseCount(student_id));
+
             Map<String, Object> analysis = new HashMap<>();
             analysis.put("studentId", student_id);
+            analysis.put("studentName", studentName);
             analysis.put("courseId", course_id);
-            analysis.put("score", studentScore);
-            analysis.put("rank", rank);
-            analysis.put("suggestion", suggestion);
+            analysis.put("courseName", course == null ? null : course.getName());
+            analysis.put("currentScore", studentScore);
+            analysis.put("averageScore", round2(courseAvg));     // 本课程平均分
+            analysis.put("difference", round2(studentScore - courseAvg));
+            analysis.put("rank", better + 1);
+            analysis.put("totalStudents", total);
+            analysis.put("failedCount", failedCount);
+            analysis.put("level", ScoreSyncSupport.scoreToLevel(studentScore));
+            analysis.put("warningLevel", warningLevelText(studentScore));
+            analysis.put("comment", buildStudentComment(studentScore, courseAvg, better + 1, total));
             return ApiResponse.success(analysis);
         } catch (Exception e) {
             return ApiResponse.error(e.getMessage());
         }
+    }
+
+    /** 分数 → 预警等级文案，与 `/warnings/{teacherId}` 的"轻度/中度/严重"同一套词汇。 */
+    private static String warningLevelText(double score) {
+        if (score >= 70) return "正常";
+        if (score >= ScoreCaliber.PASS_LINE) return "轻度";
+        if (score >= 50) return "中度";
+        return "严重";
+    }
+
+    /** 评语只复述上面几个真实数字，不引入任何新判断。 */
+    private static String buildStudentComment(double score, double courseAvg, int rank, int total) {
+        String position = "本课程排名 " + rank + "/" + total;
+        if (score >= 90) {
+            return "成绩为 " + round2(score) + " 分，课程平均 " + round2(courseAvg)
+                    + " 分，" + position + "。处于优秀区间，建议保持并参与课堂展示。";
+        }
+        if (score >= ScoreCaliber.PASS_LINE) {
+            String vs = score >= courseAvg ? "高于" : "低于";
+            return "成绩为 " + round2(score) + " 分，课程平均 " + round2(courseAvg)
+                    + " 分，" + position + "，" + vs + "课程平均 "
+                    + round2(Math.abs(score - courseAvg)) + " 分。已及格，建议巩固易错知识点。";
+        }
+        return "成绩为 " + round2(score) + " 分，未达 " + ScoreCaliber.PASS_LINE
+                + " 分及格线，课程平均 " + round2(courseAvg) + " 分，" + position
+                + "。建议安排单独辅导并纳入下一次预警跟踪。";
     }
 
     /**
@@ -783,10 +856,13 @@ public class TeacherController {
         try {
             Long tid = Long.parseLong(teacherId);
             List<Map<String, Object>> todos = new ArrayList<>();
-            // 1. 检查待处理反馈
-            List<Object> feedbacks = (List<Object>) (List<?>) feedbackService.getFeedbacks(tid, null);
+            // 1. 检查待回复反馈。
+            //    原来这里是 `f instanceof Map` —— getFeedbacks 返回的是 Feedback 实体，
+            //    这个条件恒为假，待办数恒 0；后面两条也同样恒假，
+            //    于是 /todos 无论谁来问都只吐下面那条写死的预警项。
+            List<Feedback> feedbacks = feedbackService.getFeedbacks(tid, null);
             long pendingFeedbacks = feedbacks.stream()
-                .filter(f -> f instanceof Map && "0".equals(String.valueOf(((Map<?, ?>) f).get("status"))))
+                .filter(f -> f.getStatus() != null && f.getStatus() == 0)
                 .count();
             if (pendingFeedbacks > 0) {
                 Map<String, Object> todo = new HashMap<>();
@@ -796,10 +872,10 @@ public class TeacherController {
                 todo.put("type", "feedback");
                 todos.add(todo);
             }
-            // 2. 检查待处理的班级管理申请
-            List<Object> requests = (List<Object>) (List<?>) applicationService.getApplicationsByTeacherId(tid);
+            // 2. 检查待审核的班级管理申请（status = 0 为待审核）
+            List<TeacherClassApplication> requests = applicationService.getApplicationsByTeacherId(tid);
             long pendingRequests = requests.stream()
-                .filter(r -> r instanceof Map && "0".equals(String.valueOf(((Map<?, ?>) r).get("status"))))
+                .filter(r -> r.getStatus() != null && r.getStatus() == 0)
                 .count();
             if (pendingRequests > 0) {
                 Map<String, Object> todo = new HashMap<>();
@@ -809,13 +885,26 @@ public class TeacherController {
                 todo.put("type", "class_request");
                 todos.add(todo);
             }
-            // 3. 即将到期的预警
-            Map<String, Object> todo3 = new HashMap<>();
-            todo3.put("id", 3L);
-            todo3.put("title", "需关注的学生预警");
-            todo3.put("count", 0);
-            todo3.put("type", "warning");
-            todos.add(todo3);
+            // 3. 该教师名下班级里"待处理"的预警（academic_warning.status = 0）。
+            //    改掉原来写死的 count=0：数字必须是查出来的，否则待办卡片
+            //    永远显示 0，而预警页上明明挂着 4 条待处理。
+            long pendingWarnings = 0;
+            for (Map<String, Object> clazz : classInfoService.getClassesByTeacherId(tid)) {
+                Object classId = clazz.get("id");
+                if (!(classId instanceof Number)) continue;
+                for (com.academic.common.entity.AcademicWarning w
+                        : academicWarningMapper.findByClassId(((Number) classId).longValue())) {
+                    if (w.getStatus() == null || w.getStatus() == 0) pendingWarnings++;
+                }
+            }
+            if (pendingWarnings > 0) {
+                Map<String, Object> todo3 = new HashMap<>();
+                todo3.put("id", 3L);
+                todo3.put("title", "待处理的学生预警");
+                todo3.put("count", pendingWarnings);
+                todo3.put("type", "warning");
+                todos.add(todo3);
+            }
             return ApiResponse.success(todos);
         } catch (Exception e) {
             return ApiResponse.error(e.getMessage());
@@ -828,25 +917,32 @@ public class TeacherController {
     @GetMapping("/courses/{courseId}/distribution")
     public ApiResponse<Object> getCourseScoreDistribution(@PathVariable Long courseId) {
         try {
-            List<Object> scores = (List<Object>) (List<?>) scoreRecordService.getScoresByCourseId(courseId);
-            
             int[] distribution = new int[5]; // 90+, 80-89, 70-79, 60-69, <60
-            for (Object obj : scores) {
-                Map<String, Object> score = (Map<String, Object>) obj;
-                Double s = (Double) score.get("score");
+            for (ScoreRecord row : latestPerStudent(scoreRecordService.getScoresByCourseId(courseId))) {
+                Double s = row.getScore();
+                if (s == null) continue;       // 未录入不属于任何一档
                 if (s >= 90) distribution[0]++;
                 else if (s >= 80) distribution[1]++;
                 else if (s >= 70) distribution[2]++;
                 else if (s >= 60) distribution[3]++;
                 else distribution[4]++;
             }
-            
+
+            // 顺手补一个按标签索引的 Map：前端柱状图普遍要 {label: count} 的形态，
+            // 让每个页面各自把 int[] 配 labels 数组拼一遍是把同一个易错点复制 N 份。
+            Map<String, Object> byLabel = new java.util.LinkedHashMap<>();
+            String[] labels = {"90+", "80-89", "70-79", "60-69", "<60"};
+            for (int i = 0; i < labels.length; i++) {
+                byLabel.put(labels[i], distribution[i]);
+            }
+
             Map<String, Object> result = Map.of(
                 "courseId", courseId,
                 "distribution", distribution,
-                "labels", new String[]{"90+", "80-89", "70-79", "60-69", "<60"}
+                "byLabel", byLabel,
+                "labels", labels
             );
-            
+
             return ApiResponse.success(result);
         } catch (Exception e) {
             return ApiResponse.error(e.getMessage());
@@ -859,17 +955,13 @@ public class TeacherController {
     @GetMapping("/courses/{courseId}/anomaly")
     public ApiResponse<Object> getCourseAnomalies(@PathVariable Long courseId, @RequestParam(required = false, defaultValue = "60") Integer threshold) {
         try {
-            List<Object> scores = (List<Object>) (List<?>) scoreRecordService.getScoresByCourseId(courseId);
-            List<Object> anomalies = new ArrayList<>();
-            
-            for (Object obj : scores) {
-                Map<String, Object> score = (Map<String, Object>) obj;
-                Double s = (Double) score.get("score");
-                if (s < threshold) {
-                    anomalies.add(score);
+            List<ScoreRecord> anomalies = new ArrayList<>();
+            for (ScoreRecord row : latestPerStudent(scoreRecordService.getScoresByCourseId(courseId))) {
+                Double s = row.getScore();
+                if (s != null && s < threshold) {
+                    anomalies.add(row);
                 }
             }
-            
             return ApiResponse.success(anomalies);
         } catch (Exception e) {
             return ApiResponse.error(e.getMessage());
@@ -877,13 +969,29 @@ public class TeacherController {
     }
 
     /**
-     * 获取课程学生列表
+     * 获取课程学生列表（一人一行，取该生在这门课最新一次录入）。
+     *
+     * <p>返回 {@code {total, page, size, list}} 而不是裸数组：方法签名上一直
+     * 声明着 {@code page}/{@code size}，但早先两个参数被忽略、整表一次性返回 ——
+     * 前端按"有分页"来写，翻页却永远看到同一批数据。这里把分页真正实现掉。
      */
     @GetMapping("/courses/{courseId}/students")
-    public ApiResponse<Object> getCourseStudents(@PathVariable Long courseId, @RequestParam(required = false, defaultValue = "1") Integer page, @RequestParam(required = false, defaultValue = "20") Integer size) {
+    public ApiResponse<Object> getCourseStudents(@PathVariable Long courseId,
+                                                 @RequestParam(required = false, defaultValue = "1") Integer page,
+                                                 @RequestParam(required = false, defaultValue = "20") Integer size) {
         try {
-            List<Object> students = (List<Object>) (List<?>) scoreRecordService.getScoresByCourseId(courseId);
-            return ApiResponse.success(students);
+            List<ScoreRecord> all = latestPerStudent(scoreRecordService.getScoresByCourseId(courseId));
+            int p = page == null || page < 1 ? 1 : page;
+            int s = size == null || size < 1 ? 20 : size;
+            int from = Math.min((p - 1) * s, all.size());
+            int to = Math.min(from + s, all.size());
+
+            Map<String, Object> result = new java.util.LinkedHashMap<>();
+            result.put("total", all.size());
+            result.put("page", p);
+            result.put("size", s);
+            result.put("list", new ArrayList<>(all.subList(from, to)));
+            return ApiResponse.success(result);
         } catch (Exception e) {
             return ApiResponse.error(e.getMessage());
         }
@@ -896,17 +1004,16 @@ public class TeacherController {
     public ApiResponse<Object> getCourseRecommendations(@PathVariable Long courseId, @RequestParam(required = false, defaultValue = "5") Integer limit) {
         try {
             List<Map<String, Object>> recommendations = new ArrayList<>();
-            // 根据课程成绩分布推荐学习建议
-            List<Object> scores = (List<Object>) (List<?>) scoreRecordService.getScoresByCourseId(courseId);
+            // 根据课程成绩分布推荐学习建议（一人一行，避免同一名学生被数多次）
+            List<ScoreRecord> scores = latestPerStudent(scoreRecordService.getScoresByCourseId(courseId));
             if (scores.isEmpty()) {
                 return ApiResponse.success(recommendations);
             }
             // 统计低分学生，给出推荐
             int lowScoreCount = 0;
-            for (Object obj : scores) {
-                Map<String, Object> s = (Map<String, Object>) obj;
-                Double score = s.get("score") instanceof Double ? (Double) s.get("score") : 0;
-                if (score < 60) lowScoreCount++;
+            for (ScoreRecord s : scores) {
+                // 未录入不等于不及格：跳过，不当作 0 分
+                if (s.getScore() != null && s.getScore() < ScoreCaliber.PASS_LINE) lowScoreCount++;
             }
             if (lowScoreCount > 0) {
                 Map<String, Object> rec = new HashMap<>();
@@ -990,36 +1097,163 @@ public class TeacherController {
     @GetMapping("/scores/analyze")
     public ApiResponse<Object> analyzeScores(@RequestParam Long course_id) {
         try {
-            List<Object> scores = (List<Object>) (List<?>) scoreRecordService.getScoresByCourseId(course_id);
-            
-            double avgScore = 0;
-            double maxScore = Double.MIN_VALUE;
-            double minScore = Double.MAX_VALUE;
-            int count = scores.size();
-            
-            for (Object obj : scores) {
-                Map<String, Object> score = (Map<String, Object>) obj;
-                Double s = (Double) score.get("score");
-                avgScore += s;
-                maxScore = Math.max(maxScore, s);
-                minScore = Math.min(minScore, s);
-            }
-            
-            if (count > 0) {
-                avgScore /= count;
-            }
-            
-            Map<String, Object> analysis = Map.of(
-                "courseId", course_id,
-                "totalStudents", count,
-                "averageScore", Math.round(avgScore * 100.0) / 100.0,
-                "maxScore", maxScore == Double.MIN_VALUE ? 0 : maxScore,
-                "minScore", minScore == Double.MAX_VALUE ? 0 : minScore
-            );
-            
-            return ApiResponse.success(analysis);
+            return ApiResponse.success(buildCourseAnalysis(course_id));
         } catch (Exception e) {
             return ApiResponse.error(e.getMessage());
+        }
+    }
+
+    /**
+     * 单门课程的成绩聚合（`/analysis` 与 `/scores/analyze` 共用的唯一实现）。
+     *
+     * <p>这两个接口问的是同一件事，历史上各写了一份：一份只产 6 个字段、另一份产 5 个，
+     * 而且两份都把 {@code ScoreRecord} 当成 {@code Map} 强转，一调就
+     * {@code ClassCastException}。留一份实现，两个入口共用 —— 否则同一位老师
+     * 从两个按钮点进去会看到两个不同的平均分。
+     *
+     * <p>口径：数据源是 {@code score_record}（教师自己的录入暂存表），
+     * 并先用 {@link #latestPerStudent} 收敛成"一人一行／取学期最大的那次录入"——
+     * 与学生端和预警引擎"每门课取期末已录入的最新一次"是同一套收敛方式，
+     * 所以这里的班额、及格人数与预警里的人数不会各说各话。
+     * 唯一不复用 {@link ScoreCaliber} 的地方是它要求 {@code scores} 表的
+     * {@code final_score IS NOT NULL}（"期末未录入"整行排除），而教师看的是
+     * 自己录进来的分数本身，期末/平时还没填也要能统计。
+     *
+     * <p>{@code score} 为 NULL 的行（未录入）不计入任何一档，也**不当作 0 分**：
+     * 当成 0 分会凭空多出一批"不及格"，与前端"待录入"的展示口径冲突。
+     *
+     * <p>{@code passRate} / {@code excellentRate} 是 <b>0~1 的小数</b>（与
+     * {@code /classes/{classId}/analysis} 一致），不是百分数；标准差是总体标准差
+     * （分母为 n，与 {@code /scores/anomalies} 的 2σ 判定同一套）。
+     */
+    private Map<String, Object> buildCourseAnalysis(Long courseId) {
+        // 先去重再统计：一人一行，班额/平均分/标准差才与预警口径一致
+        List<ScoreRecord> rows = latestPerStudent(scoreRecordService.getScoresByCourseId(courseId));
+        Course course = courseService.getById(courseId);
+
+        List<Double> scores = new ArrayList<>();
+        int[] dist = new int[5]; // 90+ / 80-89 / 70-79 / 60-69 / <60
+        int highCount = 0;       // >= 80
+        int mediumCount = 0;     // 60 ~ 79
+        int lowCount = 0;        // < 60
+        for (ScoreRecord row : rows) {
+            Double s = row.getScore();
+            if (s == null) {
+                continue;
+            }
+            scores.add(s);
+            if (s >= 90) dist[0]++;
+            else if (s >= 80) dist[1]++;
+            else if (s >= 70) dist[2]++;
+            else if (s >= 60) dist[3]++;
+            else dist[4]++;
+            if (s >= 80) highCount++;
+            else if (s >= 60) mediumCount++;
+            else lowCount++;
+        }
+
+        int graded = scores.size();
+        double sum = 0;
+        double max = 0;
+        double min = 0;
+        for (int i = 0; i < graded; i++) {
+            double s = scores.get(i);
+            sum += s;
+            if (i == 0 || s > max) max = s;
+            if (i == 0 || s < min) min = s;
+        }
+        double avg = graded == 0 ? 0 : sum / graded;
+        double variance = 0;
+        for (double s : scores) {
+            variance += (s - avg) * (s - avg);
+        }
+        double stdDev = graded == 0 ? 0 : Math.sqrt(variance / graded);
+
+        int passCount = 0;
+        int excellentCount = 0;
+        for (double s : scores) {
+            if (s >= ScoreCaliber.PASS_LINE) passCount++;
+            if (s >= 90) excellentCount++;
+        }
+
+        Map<String, Object> distribution = new java.util.LinkedHashMap<>();
+        distribution.put("90+", dist[0]);
+        distribution.put("80-89", dist[1]);
+        distribution.put("70-79", dist[2]);
+        distribution.put("60-69", dist[3]);
+        distribution.put("<60", dist[4]);
+
+        Map<String, Object> analysis = new java.util.LinkedHashMap<>();
+        analysis.put("courseId", courseId);
+        analysis.put("courseName", course == null ? null : course.getName());
+        // totalStudents 是**去重后的学生人数**（一人一行），未录入的行也占一个名额；
+        // gradedCount 才是真正有分数、参与统计的人数。柱状图的分母用前者。
+        analysis.put("totalStudents", rows.size());
+        analysis.put("gradedCount", graded);
+        analysis.put("averageScore", round2(avg));
+        analysis.put("maxScore", round2(max));
+        analysis.put("minScore", round2(min));
+        analysis.put("standardDeviation", round2(stdDev));
+        analysis.put("passRate", graded == 0 ? 0 : round2((double) passCount / graded));
+        analysis.put("excellentRate", graded == 0 ? 0 : round2((double) excellentCount / graded));
+        analysis.put("failedCount", graded - passCount);
+        analysis.put("highScoreCount", highCount);
+        analysis.put("mediumScoreCount", mediumCount);
+        analysis.put("lowScoreCount", lowCount);
+        analysis.put("scoreDistribution", distribution);
+        return analysis;
+    }
+
+    /** 保留两位小数。给前端直接 {@code toFixed(2)} 之外留一份服务端口径，两边不会漂。 */
+    private static double round2(double value) {
+        return Math.round(value * 100.0) / 100.0;
+    }
+
+    /**
+     * 同一名学生的一门课只保留**最新一次**录入（学期号最大；学期为空视为最早，
+     * 并列时取 id 大的那个）。
+     *
+     * <p>统计类接口必须先去重，否则同一个人的多个批次会被重复计入：
+     * 司明在高等数学下有三行（第 3/4/5 学期，87 → 71.5 → 56.5），
+     * 不去重的话——课程平均分把他算三遍、标准差被这三行撑大、
+     * "低于 60 分的名单"里他出现三次、班额显示 26 人（实际 24 人）。
+     * 同样的数字在预警引擎那边（{@link ScoreCaliber}：每门课取期末已录入的
+     * 最新一次）只算一次，两处必然对不上。
+     *
+     * <p>列表明细接口（{@code /scores}、{@code /scores/by-class}、{@code /enrollments}）
+     * 刻意**不**去重：那是"录入了哪些批次"的台账，每一行都要能单独改分/删分。
+     * 只有统计才收敛到一人一行。
+     *
+     * <p>键带上 courseId 是防御性的：万一将来有人把多门课的行一起传进来，
+     * 不会把"同一学生在另一门课的最新成绩"当成这门课的。
+     */
+    private static List<ScoreRecord> latestPerStudent(List<ScoreRecord> rows) {
+        Map<String, ScoreRecord> best = new java.util.LinkedHashMap<>();
+        for (ScoreRecord row : rows) {
+            if (row.getStudentId() == null) continue;
+            String key = row.getCourseId() + "#" + row.getStudentId();
+            ScoreRecord kept = best.get(key);
+            if (kept == null || isLater(row, kept)) {
+                best.put(key, row);
+            }
+        }
+        return new ArrayList<>(best.values());
+    }
+
+    private static boolean isLater(ScoreRecord a, ScoreRecord b) {
+        int sa = semesterNo(a.getSemester());
+        int sb = semesterNo(b.getSemester());
+        if (sa != sb) return sa > sb;
+        return a.getId() != null && b.getId() != null && a.getId() > b.getId();
+    }
+
+    /** 学期列是 varchar，必须按数值比，否则 "10" &lt; "2"。空/非数字按 0（最早）。 */
+    private static int semesterNo(String semester) {
+        if (semester == null) return 0;
+        try {
+            return Integer.parseInt(semester.trim());
+        } catch (NumberFormatException e) {
+            return 0;
         }
     }
 
@@ -1029,35 +1263,35 @@ public class TeacherController {
     @GetMapping("/scores/anomalies")
     public ApiResponse<Object> detectAnomalies(@RequestParam Long course_id) {
         try {
-            List<Object> scores = (List<Object>) (List<?>) scoreRecordService.getScoresByCourseId(course_id);
-            List<Object> anomalies = new ArrayList<>();
-            
-            if (!scores.isEmpty()) {
+            // 先把"未录入"的行剔出去再算平均分与标准差：把它们当 0 分会把均值
+            // 整体拉低、标准差抬高，判定阈值随之虚高 —— 结果是"正常偏低的学生"
+            // 反而被判成异常，真正异常的却因为阈值太宽被漏掉。
+            List<ScoreRecord> rows = latestPerStudent(scoreRecordService.getScoresByCourseId(course_id));
+            List<Double> values = new ArrayList<>();
+            for (ScoreRecord row : rows) {
+                if (row.getScore() != null) values.add(row.getScore());
+            }
+
+            List<ScoreRecord> anomalies = new ArrayList<>();
+            if (values.size() >= 2) {                 // 只有 1 个样本时标准差恒为 0，判定无意义
                 double avgScore = 0;
-                for (Object obj : scores) {
-                    Map<String, Object> score = (Map<String, Object>) obj;
-                    avgScore += (Double) score.get("score");
-                }
-                avgScore /= scores.size();
-                
-                double stdDev = 0;
-                for (Object obj : scores) {
-                    Map<String, Object> score = (Map<String, Object>) obj;
-                    double diff = (Double) score.get("score") - avgScore;
-                    stdDev += diff * diff;
-                }
-                stdDev = Math.sqrt(stdDev / scores.size());
-                
+                for (double v : values) avgScore += v;
+                avgScore /= values.size();
+
+                double variance = 0;
+                for (double v : values) variance += (v - avgScore) * (v - avgScore);
+                double stdDev = Math.sqrt(variance / values.size());
                 double threshold = stdDev * 2;
-                for (Object obj : scores) {
-                    Map<String, Object> score = (Map<String, Object>) obj;
-                    double s = (Double) score.get("score");
-                    if (Math.abs(s - avgScore) > threshold) {
-                        anomalies.add(score);
+
+                if (threshold > 0) {
+                    for (ScoreRecord row : rows) {
+                        Double s = row.getScore();
+                        if (s != null && Math.abs(s - avgScore) > threshold) {
+                            anomalies.add(row);
+                        }
                     }
                 }
             }
-            
             return ApiResponse.success(anomalies);
         } catch (Exception e) {
             return ApiResponse.error(e.getMessage());
@@ -1285,22 +1519,34 @@ public class TeacherController {
     /**
      * 获取教师消息
      */
+    /**
+     * 获取教师消息。
+     *
+     * <p>数据源是 {@code feedback} 表：教师这里的"消息"就是学生提交的反馈。
+     * 每条消息是一个 {@code status} 为 0（未回复）/ 1（已回复）的行，
+     * <b>不</b>再额外给一个 {@code isRead} —— 同一条记录上挂两个含义相同的布尔，
+     * 前端总会有一个读到错的那个（PC 端读 {@code status}，早先接口只给
+     * {@code isRead}，于是"未读"恒为 0）。
+     *
+     * <p>早先这段把 {@code Feedback} 实体当 {@code Map} 强转，一调即
+     * {@code ClassCastException}。
+     */
     @GetMapping("/messages/{userId}")
     public ApiResponse<Object> getMessages(@PathVariable String userId) {
         try {
             Long uid = Long.parseLong(userId);
             List<Map<String, Object>> messages = new ArrayList<>();
-            // 返回教师相关通知
-            List<Object> feedbacks = (List<Object>) (List<?>) feedbackService.getFeedbacks(uid, null);
-            for (Object obj : feedbacks) {
-                Map<String, Object> fb = (Map<String, Object>) obj;
+            for (Feedback fb : feedbackService.getFeedbacks(uid, null)) {
                 Map<String, Object> msg = new HashMap<>();
-                msg.put("id", fb.get("id"));
+                msg.put("id", fb.getId());
                 msg.put("title", "学生反馈");
-                msg.put("content", fb.get("content"));
+                msg.put("content", fb.getContent());
+                msg.put("category", fb.getCategory());
                 msg.put("type", "feedback");
-                msg.put("isRead", fb.containsKey("status") ? !"0".equals(String.valueOf(fb.get("status"))) : false);
-                msg.put("createdAt", fb.get("createTime"));
+                msg.put("status", fb.getStatus() == null ? 0 : fb.getStatus());
+                msg.put("reply", fb.getReply());
+                msg.put("createdAt", fb.getCreateTime());
+                msg.put("repliedAt", fb.getUpdateTime());
                 messages.add(msg);
             }
             return ApiResponse.success(messages);
@@ -1310,21 +1556,23 @@ public class TeacherController {
     }
 
     /**
-     * 获取未读消息数量
+     * 获取未读消息数量。
+     *
+     * <p>返回的是**一个数字**，不是 {@code {userId, unreadCount}} 对象 ——
+     * 与 {@code /teachers/count-by-college} 一样，统计类接口直接给标量。
+     * PC 端 {@code TeacherMessages.vue} 收到响应后判的是
+     * {@code typeof r === 'number'}，早先接口返回对象，于是角标恒为 0。
      */
     @GetMapping("/messages/{userId}/unread-count")
-    public ApiResponse<Object> getUnreadCount(@PathVariable String userId) {
+    public ApiResponse<Long> getUnreadCount(@PathVariable String userId) {
         try {
             Long uid = Long.parseLong(userId);
-            // 统计未处理反馈数
-            List<Object> feedbacks = (List<Object>) (List<?>) feedbackService.getFeedbacks(uid, null);
+            // 未读 = 未回复（feedback.status = 0）。
+            List<Feedback> feedbacks = feedbackService.getFeedbacks(uid, null);
             long unread = feedbacks.stream()
-                .filter(f -> f instanceof Map && "0".equals(String.valueOf(((Map<?, ?>) f).get("status"))))
-                .count();
-            Map<String, Object> result = new HashMap<>();
-            result.put("userId", uid);
-            result.put("unreadCount", unread);
-            return ApiResponse.success(result);
+                    .filter(f -> f.getStatus() != null && f.getStatus() == 0)
+                    .count();
+            return ApiResponse.success(unread);
         } catch (Exception e) {
             return ApiResponse.error(e.getMessage());
         }
@@ -1356,6 +1604,25 @@ public class TeacherController {
     }
 
     // ========== Gateway 头解析工具方法 ==========
+
+    /**
+     * 把聚合查询里可能是 Integer / Long / BigDecimal / String 的计数转成 int。
+     * 取不到时返回 0 —— 这里全是"门数/学分"这类计数，缺失即 0 是安全的；
+     * 若换成分数则不能这么处理（{@code null} 是"未录入"，不是 0 分）。
+     */
+    private static int intValue(Object value) {
+        if (value instanceof Number) {
+            return ((Number) value).intValue();
+        }
+        if (value == null) {
+            return 0;
+        }
+        try {
+            return (int) Double.parseDouble(value.toString().trim());
+        } catch (NumberFormatException e) {
+            return 0;
+        }
+    }
 
     private Long getUserIdFromGateway(HttpServletRequest request) {
         String header = request.getHeader("X-User-Id");

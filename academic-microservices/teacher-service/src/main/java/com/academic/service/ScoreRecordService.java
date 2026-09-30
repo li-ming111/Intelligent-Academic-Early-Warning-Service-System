@@ -237,7 +237,12 @@ public class ScoreRecordService {
     public void updateScore(Long scoreId, Double score, String remark, String modifiedBy) {
         // 读取旧记录
         ScoreRecord oldRecord = scoreRecordMapper.selectById(scoreId);
-        
+
+        if (oldRecord == null) {
+            // 不改任何东西，也不留半条审计：目标行不存在时"改分成功"是假象。
+            throw new IllegalArgumentException("成绩记录不存在: id=" + scoreId);
+        }
+
         // 更新成绩。
         // 这里是个只含分数和评语的裸对象，mapper 的 <if> 守空会放行
         // regular_score/final_score 不动（这正是要的），但 grade/grade_point/
@@ -249,12 +254,23 @@ public class ScoreRecordService {
         scoreRecord.setRemark(remark);
         applyDerived(scoreRecord, score);
         scoreRecordMapper.updateScore(scoreRecord);
-        
-        // 写入审计日志
-        if (oldRecord != null) {
-            auditLogService.record(oldRecord, scoreRecord, remark, modifiedBy);
+
+        // 写入审计日志。
+        // 必须另起一个**带归属信息**的对象喂给 record()：上面那个裸对象只有
+        // 分数和评语，而 score_audit_log 的 student_id / teacher_id 都是 NOT NULL。
+        // 早先把裸对象直接传进去，插入违反非空约束 → 整个 @Transactional 回滚，
+        // 于是"改分"接口表面上 500、实际上一分都没改（连 UPDATE 都白做）。
+        // 归属信息从旧行复制即可，既准确又不必回查。
+        if (oldRecord.getScore() != null) {
+            ScoreRecord auditNew = new ScoreRecord();
+            auditNew.setStudentId(oldRecord.getStudentId());
+            auditNew.setStudentName(oldRecord.getStudentName());
+            auditNew.setCourseId(oldRecord.getCourseId());
+            auditNew.setTeacherId(oldRecord.getTeacherId());
+            auditNew.setScore(score);
+            auditLogService.record(oldRecord, auditNew, remark, modifiedBy);
         }
-        
+
         // 同步到 scores 表。
         // 必须带上 oldRecord 的 studentId/courseId/semester：只传分数会让 syncToScores
         // 定位不到那一行，退化成按"最大学期"猜测；而学期一旦猜错，

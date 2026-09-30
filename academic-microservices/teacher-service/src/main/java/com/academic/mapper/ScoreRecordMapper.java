@@ -1,5 +1,6 @@
 package com.academic.mapper;
 
+import com.academic.common.constant.ScoreCaliber;
 import com.academic.common.entity.ScoreRecord;
 import org.apache.ibatis.annotations.*;
 
@@ -108,4 +109,28 @@ public interface ScoreRecordMapper {
      */
     @Select("SELECT student_id FROM student_profile WHERE id = #{studentProfileId}")
     String selectStudentNo(@Param("studentProfileId") Long studentProfileId);
+
+    /** 取姓名（按 student_profile.id）。查不到返回 null，不编造。 */
+    @Select("SELECT name FROM student_profile WHERE id = #{studentProfileId}")
+    String selectStudentName(@Param("studentProfileId") Long studentProfileId);
+
+    /**
+     * 单名学生的学分/挂科汇总。
+     *
+     * <p>直接复用 {@link com.academic.common.constant.ScoreCaliber#ONE_STUDENT_STATS} ——
+     * 学生端的"已修学分"也用这一段，两边共用一份口径，不可能各算各的。
+     * 列（camelCase）：totalCourses / failedCourses / completedCredits / gpa / gradedCredits。
+     *
+     * <p>参数是 {@code student_profile.id}（= {@code scores.student_id}），
+     * <b>不是</b> {@code users.id}：传 users.id 会静默返回一行全 0，不报错。
+     */
+    @Select(ScoreCaliber.ONE_STUDENT_STATS)
+    Map<String, Object> selectStudentStats(@Param("studentId") Long studentId);
+
+    /**
+     * 单名学生的挂科门数（每门课取期末已录入的最新一次、按课程去重，
+     * 与预警引擎同一口径）。参数是 {@code student_profile.id}。
+     */
+    @Select(ScoreCaliber.FAIL_COUNT_BY_ONE_STUDENT)
+    Integer selectFailedCourseCount(@Param("studentId") Long studentId);
 }

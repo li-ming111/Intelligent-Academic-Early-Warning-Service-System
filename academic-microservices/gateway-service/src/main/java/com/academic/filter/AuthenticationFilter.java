@@ -23,6 +23,8 @@ import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.Date;
 import java.util.List;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * JWT 认证全局过滤器
@@ -68,6 +70,28 @@ public class AuthenticationFilter implements GlobalFilter, Ordered {
     private static final String PREFIX_COUNSELOR = "/api/counselors";
     private static final String PREFIX_COLLEGE_ADMIN = "/api/college-admin";
 
+    // ==================== 学院管理员的自助账号路径 ====================
+    //
+    // 背景：学院管理员（role=5）原先被一律挡在 `/api/college-admin` + `/api/admin`
+    // 之内，连自己的账号资料、通知设置、改密码都拿不到（三支全是 403 权限不足），
+    // 结果是**学院管理员在本系统里改不了自己的密码**。
+    //
+    // 这里只放开"自助"那一小撮，**不是**把 `/api/users/**` 整个前缀放开 ——
+    // 那个前缀下面还挂着管理员专用接口：
+    //   /api/users/list、/api/users/add、/api/users/update/{id}、/api/users/delete/{id}
+    //   /api/users/by-username/{name}  ← 直接返回含密码哈希的原始 User 实体
+    // 同理 `/api/auth/**` 也不能整段放开：`/api/auth/register/admin` 能让学院管理员
+    // 自己造一个系统管理员账号，`/api/auth/info/{id}` 也会绕过下面的归属校验。
+
+    /** 改自己的密码。 */
+    private static final String AUTH_CHANGE_PASSWORD = "/api/auth/change-password";
+    /** 登出 / 刷新 token —— 都属于自助，与角色无关。 */
+    private static final Pattern SELF_AUTH_PATTERN =
+            Pattern.compile("^/api/auth/(logout|refresh-token)$");
+    /** 账号资料与自助设置，**且 id 必须是自己**（见 hasPermission 里的 userId 比对）。 */
+    private static final Pattern OWN_ACCOUNT_PATTERN =
+            Pattern.compile("^/api/users/(?:info/)?(\\d+)(?:/settings)?$");
+
     @Value("${spring.cloud.gateway.jwt.secret:academic-jwt-secret-key-for-academic-warning-system-2026}")
     private String jwtSecret;
 
@@ -109,7 +133,7 @@ public class AuthenticationFilter implements GlobalFilter, Ordered {
             }
 
             // 角色权限校验（路径前缀 + RBAC）
-            if (!hasPermission(request, role)) {
+            if (!hasPermission(request, role, userId)) {
                 log.warn("权限不足: userId={}, role={}, path={}", userId, role, path);
                 return forbidden(exchange, "权限不足");
             }
@@ -159,7 +183,7 @@ public class AuthenticationFilter implements GlobalFilter, Ordered {
      * - 学院管理员(5)：可访问 college-admin 和 admin 前缀路径
      * - 其他角色：先路径前缀检查，再 RBAC 细粒度检查
      */
-    private boolean hasPermission(ServerHttpRequest request, Integer role) {
+    private boolean hasPermission(ServerHttpRequest request, Integer role, Long userId) {
         String path = request.getPath().value();
         String method = request.getMethod() != null ? request.getMethod().name() : "GET";
 
@@ -168,9 +192,26 @@ public class AuthenticationFilter implements GlobalFilter, Ordered {
             return true;
         }
 
-        // 学院管理员：可访问 college-admin 和 admin 前缀
+        // 学院管理员：college-admin 与 admin 前缀，外加**仅限本人**的自助账号路径
         if (role == ROLE_COLLEGE_ADMIN) {
-            return path.startsWith(PREFIX_COLLEGE_ADMIN) || path.startsWith(PREFIX_ADMIN);
+            if (path.startsWith(PREFIX_COLLEGE_ADMIN) || path.startsWith(PREFIX_ADMIN)) {
+                return true;
+            }
+            if (AUTH_CHANGE_PASSWORD.equals(path) || SELF_AUTH_PATTERN.matcher(path).matches()) {
+                return true;
+            }
+            // 归属校验：路径里的 id 必须等于 token 里的 userId。
+            // 缺了这一步，学院管理员就能读**任意**用户的资料与设置
+            // （下游 UserController 的 getSettings/updateSettings 不做归属判断）。
+            Matcher m = OWN_ACCOUNT_PATTERN.matcher(path);
+            if (m.matches() && userId != null) {
+                try {
+                    return Long.parseLong(m.group(1)) == userId.longValue();
+                } catch (NumberFormatException ignored) {
+                    return false;
+                }
+            }
+            return false;
         }
 
         // 路径前缀快速检查

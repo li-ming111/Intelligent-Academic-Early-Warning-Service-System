@@ -185,7 +185,12 @@ public class MessageServiceImpl implements MessageService {
     public List<Message> getAllMessages() {
         QueryWrapper<Message> queryWrapper = new QueryWrapper<>();
         queryWrapper.orderByDesc("created_at");
-        return messageMapper.selectList(queryWrapper);
+        List<Message> messages = messageMapper.selectList(queryWrapper);
+        // 与 getMessagesByUserId 一样补上发送人姓名 —— 管理员看的是"谁发的广播"，
+        // 只有 senderId（1）在页面上没法用。原来这条路径不补，所以即便查到了
+        // 消息，发送人一列也是空的。
+        fillSenderNames(messages);
+        return messages;
     }
 
     @Override

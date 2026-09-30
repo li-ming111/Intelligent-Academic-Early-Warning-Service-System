@@ -50,12 +50,35 @@ public class MessageController {
         if (userId != null && !userId.equals(reqUserId) && !isAdmin(request)) {
             return ApiResponse.error(403, "无权查看其他用户的消息");
         }
-        Long effectiveUserId = isAdmin(request) && userId != null ? userId : reqUserId;
+        // 看谁的消息，三种情况：
+        //   · 明确传了 userId（只有管理员能传别人）→ 看那个人的收件箱
+        //   · 没传 userId 且是管理员                → 看**全部**（admin-service 的「消息管理」
+        //     页要的是广播历史，不是管理员自己的收件箱）
+        //   · 其它                                  → 看自己的
+        // ⚠️ 原来最后一种把管理员也并进去了：effectiveUserId = reqUserId = 管理员自己，
+        //    于是走 getMessagesByUserId(1)。后果是**广播写明写进去了，管理页面还是 0 条**：
+        //    2026-09-29 实测：/admin/messages/broadcast targetRole=5 确实往 messages
+        //    写入了 2 行（sender_id=1, receiver_id=56/57），而 /admin/messages/list
+        //    返回 total=0 —— 因为管理员查的是"发给自己的消息"，广播是发给别人的。
+        //    下面那个 `else`（getAllMessages）本来就是为"不指定用户"准备的，
+        //    只是在这之前 reqUserId 永远不是 null，这个分支对管理员根本走不到。
+        Long effectiveUserId;
+        if (userId != null) {
+            effectiveUserId = isAdmin(request) ? userId : reqUserId;
+        } else {
+            effectiveUserId = isAdmin(request) ? null : reqUserId;
+        }
         List<Message> messages;
         if (unreadOnly && effectiveUserId != null) {
             messages = messageService.getUnreadMessages(effectiveUserId);
         } else if (effectiveUserId != null) {
             messages = messageService.getMessagesByUserId(effectiveUserId);
+        } else if (unreadOnly) {
+            // 管理员 + 只看未读 + 不限用户：getAllMessages 没有 unreadOnly 版本，
+            // 自己按 status=0 筛（与 getUnreadMessages 同一口径：0 就是未读）
+            messages = messageService.getAllMessages().stream()
+                    .filter(m -> m.getStatus() == null || m.getStatus() == 0)
+                    .collect(java.util.stream.Collectors.toList());
         } else {
             messages = messageService.getAllMessages();
         }
@@ -187,28 +210,49 @@ public class MessageController {
 
     // 广播消息端点 - 供 admin-service 调用
     @PostMapping("/broadcast")
-    public ApiResponse<Map<String, Object>> sendBroadcast(@RequestBody Map<String, Object> payload) {
+    public ApiResponse<Map<String, Object>> sendBroadcast(@RequestBody Map<String, Object> payload,
+                                                          HttpServletRequest request) {
         String title = (String) payload.get("title");
         String content = (String) payload.get("content");
         Integer targetRole = payload.get("targetRole") != null ? ((Number) payload.get("targetRole")).intValue() : null;
 
-        int count = 0;
-        try {
-            // 查询目标用户列表
-            List<com.academic.common.entity.User> users;
-            if (targetRole != null) {
-                users = userMapper.selectList(
-                        new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<com.academic.common.entity.User>()
-                                .eq("role", targetRole).eq("status", 1));
-            } else {
-                users = userMapper.selectList(
-                        new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<com.academic.common.entity.User>()
-                                .eq("status", 1));
-            }
+        // ⚠️ sender_id 是 NOT NULL 且没有默认值的列。原实现没有给它赋值，
+        //    后果不是"少写一个字段"，而是**每次插入都抛
+        //    Field 'sender_id' doesn't have a default value**；
+        //    而异常被下面那个 catch 吞掉，count 照旧是 0 ——
+        //    接口照样回 success:true，只是数目不对。
+        //    （2026-09-29 实测：targetRole=5 时 messages 表 0 行，
+        //     message-service 日志里就是这条 SQLException。）
+        //    广播的发送人就是发起的那个管理员：取网关注入的 X-User-Id。
+        Long senderId = getRequestUserId(request);
+        if (senderId == null) {
+            // 没有该头说明不是经网关进来的调用。广播必须落到一个真实存在的账号上，
+            // 不能静默写 0（0 不是合法用户，外键会挡），也不能假装成功。
+            log.warn("Broadcast without X-User-Id header, fallback to system admin id=1");
+            senderId = 1L;
+        }
 
-            // 为每个用户创建消息并写入数据库
-            for (com.academic.common.entity.User user : users) {
+        // 目标用户查询失败是真的失败，这一层不吞
+        List<com.academic.common.entity.User> users;
+        if (targetRole != null) {
+            users = userMapper.selectList(
+                    new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<com.academic.common.entity.User>()
+                            .eq("role", targetRole).eq("status", 1));
+        } else {
+            users = userMapper.selectList(
+                    new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<com.academic.common.entity.User>()
+                            .eq("status", 1));
+        }
+
+        // 逐个用户单独 try：一个人写失败不该让后面所有人都收不到。
+        // 同时把成功/失败分开数 —— 原来的 `count++` 数的是"尝试过的人数"，
+        // 不管插没插进去，所以"发送成功 35 条"这种话在那个版本里是假的。
+        int sent = 0;
+        int failed = 0;
+        for (com.academic.common.entity.User user : users) {
+            try {
                 Message msg = new Message();
+                msg.setSenderId(senderId);
                 msg.setReceiverId(user.getId());
                 msg.setTitle(title);
                 msg.setContent(content);
@@ -216,17 +260,28 @@ public class MessageController {
                 msg.setStatus(0); // 0=未读
                 msg.setCreatedAt(LocalDateTime.now());
                 messageService.createMessage(msg);
-                count++;
+                sent++;
+            } catch (Exception e) {
+                failed++;
+                log.error("Broadcast to user {} failed: {}", user.getId(), e.getMessage());
             }
-            log.info("Broadcast sent to {} users: title={}, targetRole={}", count, title, targetRole);
-        } catch (Exception e) {
-            log.error("Broadcast failed: {}", e.getMessage(), e);
         }
 
         Map<String, Object> result = new HashMap<>();
-        result.put("success", true);
-        result.put("sentCount", count);
-        result.put("message", "Broadcast sent to " + count + " users");
+        result.put("success", failed == 0);
+        result.put("sentCount", sent);
+        result.put("failedCount", failed);
+        result.put("targetCount", users.size());
+        result.put("message", failed == 0
+                ? ("已发送给 " + sent + " 个用户")
+                : ("发送完成：成功 " + sent + " 条，失败 " + failed + " 条"));
+        log.info("Broadcast done: title={}, targetRole={}, sent={}, failed={}, senderId={}",
+                title, targetRole, sent, failed, senderId);
+
+        // 有目标用户却一条都没写进去 = 整体失败，不能报 200 让人以为发出去了
+        if (sent == 0 && !users.isEmpty()) {
+            return ApiResponse.error(500, "广播发送失败：0/" + users.size() + " 条写入成功");
+        }
         return ApiResponse.success(result);
     }
 }

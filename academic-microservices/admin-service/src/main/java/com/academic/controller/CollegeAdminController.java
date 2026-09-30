@@ -88,6 +88,9 @@ public class CollegeAdminController {
             new QueryWrapper<TeacherProfile>().eq("college_id", collegeId));
         d.put("teacherCount", (int) teacherCount);
 
+        // 本院「有辅导员的班级数」：院里每个班的 counselor_id 若能对上一位真辅导员就计入。
+        // 辅导员名单取全库（辅导员可能跨院任职的数据确实存在，见下方说明），
+        // 但结果只对本院班级计数 —— 学院的数不会被别院的班撑大。
         List<CounselorProfile> allCounselors = counselorProfileMapper.selectList(new QueryWrapper<>());
         Set<Long> counselorClassIds = new HashSet<>();
         allCounselors.forEach(c -> {
@@ -95,7 +98,12 @@ public class CollegeAdminController {
             cc.forEach(m -> counselorClassIds.add((Long) m.get("id")));
         });
         long counselorCount = classes.stream().filter(c -> counselorClassIds.contains(c.get("id"))).count();
-        d.put("counselorCount", (int) Math.min(counselorCount, allCounselors.size()));
+        // 这里原先是 Math.min(counselorCount, allCounselors.size())，把本院的班级数
+        // 拿"全库辅导员人数"去截断。软件学院 6 个班的 counselor_id 全指向司明，
+        // 本该是 6，却因为全库只有 1 位辅导员而被压成 1 —— 前端标签写的是
+        // 「有辅导员的班级」，量的是班级，拿人数当上界本身就不是一回事。
+        // 全库辅导员数与本院班级数之间没有任何大小关系，这个 min 没有成立的理由。
+        d.put("counselorCount", (int) counselorCount);
 
         // 原实现把整张预警表查回来，再逐条 selectById 查学生以判断班级 ——
         // 预警数 × 学生表查询。改为一次聚合；academic_warning.student_id 存的是

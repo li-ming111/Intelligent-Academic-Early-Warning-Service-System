@@ -8,6 +8,7 @@ import com.academic.common.entity.Major;
 import com.academic.common.entity.Student;
 import com.academic.common.entity.TeacherProfile;
 import com.academic.common.entity.CounselorProfile;
+import com.academic.common.entity.CollegeAdminProfile;
 import com.academic.common.entity.AcademicWarning;
 import com.academic.common.entity.Score;
 import com.academic.common.entity.ScoreRecord;
@@ -27,6 +28,7 @@ import com.academic.mapper.TeacherProfileMapper;
 import com.academic.mapper.ExportHistoryMapper;
 import com.academic.mapper.StudentProfileMapper;
 import com.academic.mapper.CounselorProfileMapper;
+import com.academic.mapper.CollegeAdminProfileMapper;
 import com.academic.mapper.ScoreRecordMapper;
 import com.academic.mapper.AcademicWarningMapper;
 
@@ -129,7 +131,11 @@ public class AdminController {
     
     @Autowired
     private CounselorProfileMapper counselorProfileMapper;
-    
+
+    @Autowired
+    private CollegeAdminProfileMapper collegeAdminProfileMapper;
+
+
     @Autowired
     private ScoreRecordMapper scoreRecordMapper;
 
@@ -380,6 +386,7 @@ public class AdminController {
         }
         int start = (page - 1) * size;
         List<User> users = userService.list(wrapper.last("LIMIT " + start + ", " + size));
+        stripPasswords(users);
         return ApiResponse.success(users);
     }
 
@@ -387,7 +394,20 @@ public class AdminController {
     @SentinelResource(value = "adminApi:getUsersAll", fallback = "getAllUsersFallback")
     public ApiResponse<List<User>> getAllUsersList() {
         List<User> users = userService.list();
+        stripPasswords(users);
         return ApiResponse.success(users);
+    }
+
+    /** 列表类读接口一律去掉口令哈希，理由见 getUserById 的注释。 */
+    private void stripPasswords(List<User> users) {
+        if (users == null) {
+            return;
+        }
+        for (User u : users) {
+            if (u != null) {
+                u.setPassword(null);
+            }
+        }
     }
 
     public ApiResponse<List<User>> getAllUsersFallback(Throwable t) {
@@ -399,21 +419,98 @@ public class AdminController {
     public ApiResponse<User> getUserById(@PathVariable Long id) {
         User user = userService.getById(id);
         if (user != null) {
+            // 不回传口令哈希。这里返回的是整个 User 实体，password 字段就是库里那串
+            // BCrypt 哈希 —— 一个读接口把凭据材料发给前端，不管前端用不用都是不对的
+            // （这与"不要调 /users/by-username/{name}，它会返回含口令哈希的原始实体"
+            //  是同一条规矩）。PC 的 AdminSettings.vue 只读 createdAt，去掉无影响；
+            // 校验口令请走登录接口，不需要读哈希。
+            user.setPassword(null);
             return ApiResponse.success(user);
         }
         return ApiResponse.notFound("User not found");
     }
 
     @PostMapping("/users")
+    @Transactional
     @SentinelResource(value = "adminApi:createUser", fallback = "createUserFallback")
     public ApiResponse<String> createUser(@RequestBody User user) {
         try {
-            userService.save(user);
+            // ⚠️ 原来是 userService.save(user) —— MyBatis-Plus 的裸插入，绕过了
+            //    UserServiceImpl.createUser()，于是三件事都没做：
+            //      1) 口令不加密，库里落下明文。**但账号是能登的**：登录
+            //         （user-service 的 UserServiceImpl.login）对不以 $2a$ 开头的口令
+            //         有一条"明文兼容"分支，比中后顺手升级成 BCrypt —— 所以问题不是
+            //         "登不上"，而是"首次登录之前，users 表里存着可读明文"，
+            //         这与本工程"库里只有哈希"的口径不符；
+            //      2) status 不置 1：登录对 null 是放行的（`getStatus() != null && != 1`），
+            //         同样不挡登录，但账号会以"状态未定"存着，列表里状态列是空的；
+            //      3) 不查重名：重名直接抛唯一键异常，报错对管理员没有意义。
+            //    createUser() 这三件都做了，改调它。
+            //
+            //    @Transactional 是补上的：这个方法会写 users + 可能写一张 profile 表，
+            //    没有事务时后半段失败会留下"接口报错、账号已经建出来了"的半截状态 ——
+            //    实测过一次：teacher_profile.college_id 是 NOT NULL，插入失败抛 500，
+            //    而 users 里那个账号已经落库了（id=76），管理员看到报错会再建一次，
+            //    于是撞重名。deleteUser 早就是 @Transactional，这里对齐。
+            boolean ok = userService.createUser(user);
+            if (!ok) {
+                return ApiResponse.error("用户名已存在：" + user.getUsername());
+            }
+
+            createProfileIfNeeded(user);
+
+            log.info("User created: id={}, username={}, role={}", user.getId(), user.getUsername(), user.getRole());
             return ApiResponse.success("User created successfully");
         } catch (Exception e) {
             log.error("Create user failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            // 抛出去让事务回滚：返回 error 而不抛，@Transactional 会以为一切正常照常提交
+            throw new RuntimeException("Create user failed: " + e.getMessage(), e);
         }
+    }
+
+    /**
+     * 给新建账号补一张最小 profile 行（只在缺的时候补）。
+     *
+     * 口径：**只在该角色的必填列都拿得到时才建**，拿不到就不建、也不猜。
+     * 各表 NOT NULL 且无默认值的列（实测 information_schema）：
+     *   student_profile        user_id, student_id, name   → 新建时全都有（用户名即学号）
+     *   teacher_profile        user_id, **college_id**     → 建号表单里没有学院 → 不建
+     *   counselor_profiles     user_id                     → 有（编号用用户名兜）
+     *   college_admin_profile  user_id, name, **college_id** → 同上 → 不建
+     * 也就是"教师/学院管理员新建出来的账号只有账号、没有资料行"，
+     * 学院要由管理员在资料里补 —— 这比造一个 college_id=0 的假资料要好：
+     * 0 不是任何学院，查学院时会静默漏掉这些人。
+     * users.username 就是学号/工号/编号（学生 2023020616、教师 10001 都是这么存的）。
+     */
+    private void createProfileIfNeeded(User user) {
+        if (user.getId() == null || user.getRole() == null) {
+            return;
+        }
+        String name = user.getName() != null ? user.getName() : user.getUsername();
+        if (user.getRole() == 1) {
+            QueryWrapper<StudentProfile> exists = new QueryWrapper<StudentProfile>().eq("user_id", user.getId());
+            if (studentProfileMapper.selectCount(exists) == 0) {
+                StudentProfile profile = new StudentProfile();
+                profile.setUserId(user.getId());
+                profile.setStudentId(user.getUsername());
+                profile.setName(name);
+                studentProfileMapper.insert(profile);
+            }
+        } else if (user.getRole() == 3) {
+            QueryWrapper<CounselorProfile> exists = new QueryWrapper<CounselorProfile>().eq("user_id", user.getId());
+            if (counselorProfileMapper.selectCount(exists) == 0) {
+                CounselorProfile profile = new CounselorProfile();
+                profile.setUserId(user.getId());
+                // 编号列有唯一约束，用 users.username 兜（'C53' 那种命名是种子数据的手工编号，
+                // 新建账号没有编号来源，用账号本身最不容易撞）
+                profile.setCounselorId(user.getUsername());
+                profile.setStaffId(user.getUsername());
+                profile.setName(name);
+                profile.setStatus(1);
+                counselorProfileMapper.insert(profile);
+            }
+        }
+        // 教师(2)/学院管理员(5) 的 profile 必填列里有 college_id，建号入参里没有学院，故不建。
     }
 
     public ApiResponse<String> createUserFallback(User user, Throwable t) {
@@ -425,7 +522,30 @@ public class AdminController {
     public ApiResponse<String> updateUser(@PathVariable Long id, @RequestBody User user) {
         try {
             user.setId(id);
-            userService.updateById(user);
+
+            // ⚠️ 密码必须单独处理，不能跟着 updateById 一起写，两条理由：
+            //    1) 空串是**真锁死**。表单上写着"留空表示不修改密码"（PC AdminUsers.vue
+            //       的编辑弹窗），但留空提交上来的是空字符串而不是 null，而 MyBatis-Plus
+            //       只跳过 null 字段 —— 于是 password='' 落库。登录时 `password.isEmpty()`
+            //       挡的是请求参数，比对那一步看到 '' 不以 $2a$ 开头就走明文兼容分支，
+            //       拿真实口令去 equals('') 永远为 false：这个账号此后谁都登不上，
+            //       且没有任何提示指向"密码字段被清空了"。
+            //    2) 非空明文会以明文落库。登录有明文兼容分支，能登进去并自愈成哈希，
+            //       但在那之前库里存的是可读明文，不符合"库里只有哈希"的口径。
+            //    口径：非空 → 加密后写入；空串或未传 → 不碰这个字段。
+            String rawPassword = user.getPassword();
+            if (rawPassword == null || rawPassword.trim().isEmpty()) {
+                user.setPassword(null);   // MyBatis-Plus 默认不更新 null 字段
+            } else if (!rawPassword.startsWith("$2a$")
+                    && !rawPassword.startsWith("$2b$")
+                    && !rawPassword.startsWith("$2y$")) {
+                // 已经是 BCrypt 串的就原样写回，避免二次加密（表单回显哈希的场景）
+                user.setPassword(passwordEncoder.encode(rawPassword));
+            }
+
+            userService.updateUser(user);
+            log.info("User updated: id={}, username={}, passwordChanged={}",
+                    id, user.getUsername(), user.getPassword() != null);
             return ApiResponse.success("User updated successfully");
         } catch (Exception e) {
             log.error("Update user failed: {}", e.getMessage());
@@ -467,8 +587,17 @@ public class AdminController {
                 QueryWrapper<CounselorProfile> counselorQuery = new QueryWrapper<>();
                 counselorQuery.eq("user_id", id);
                 counselorProfileMapper.delete(counselorQuery);
+            } else if (user.getRole() == 5) {
+                // 学院管理员原来**不在**这里的清理名单里：删掉账号后
+                // college_admin_profile 会留下一行 user_id 指向不存在的账号。
+                // 它本身不报错（按学院查账号是 `users in (ids)`，多出来的 id 匹配不到任何人），
+                // 但会污染 userIdsInCollege 的结果集，也让"删干净"这句话不成立。
+                QueryWrapper<CollegeAdminProfile> adminQuery = new QueryWrapper<>();
+                adminQuery.eq("user_id", id);
+                collegeAdminProfileMapper.delete(adminQuery);
             }
-            
+            // 角色 4（系统管理员）没有对应的 profile 表，只删账号行。
+
             userService.removeById(id);
             return ApiResponse.success("User deleted successfully");
         } catch (Exception e) {
@@ -488,25 +617,28 @@ public class AdminController {
             if (user == null) {
                 return ApiResponse.notFound("User not found");
             }
-            String newPassword = generateRandomPassword();
-            user.setPassword(passwordEncoder.encode(newPassword));
+            // ⚠️ 这里原来生成随机密码，然后提示「新密码已发送至用户注册邮箱」。
+            //    但本工程**没有任何邮件发送代码**，密码又是 BCrypt 单向哈希
+            //    （服务端自己取不回明文），也没有"管理员指定新密码"的接口 ——
+            //    三重叠加的结果是：点了重置，账号就被永久锁死，提示还在说已经发邮件了。
+            //    本库全部账号本来就用统一演示口令 123456（见 db_backups 种子脚本，
+            //    批量导入用户那条路径的默认值也是 123456），所以这里重置成同一个口令，
+            //    并把提示写成实话。若要恢复"随机密码"语义，需先补一个把新密码
+            //    交付给用户/管理员的通道（邮件服务或一次性回显），否则不可用。
+            final String defaultPassword = "123456";
+            user.setPassword(passwordEncoder.encode(defaultPassword));
             userService.updateById(user);
-            return ApiResponse.success("密码重置成功，新密码已发送至用户注册邮箱");
+            log.info("Reset password to demo default for user id={}, username={}", id, user.getUsername());
+            return ApiResponse.success("密码已重置为演示口令 123456（系统无邮件服务，特此明示）");
         } catch (Exception e) {
             log.error("Reset password failed: {}", e.getMessage());
             return ApiResponse.error(e.getMessage());
         }
     }
     
-    private String generateRandomPassword() {
-        String chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-        StringBuilder sb = new StringBuilder();
-        Random random = new Random();
-        for (int i = 0; i < 8; i++) {
-            sb.append(chars.charAt(random.nextInt(chars.length())));
-        }
-        return sb.toString();
-    }
+    // generateRandomPassword() 已删除：它是给"随机重置密码"用的，
+    // 而随机密码没有任何交付通道（无邮件服务、无一次性回显），只会锁死账号。
+    // 恢复随机语义前，先补上把新密码交给用户/管理员的通道。
 
     @PostMapping("/users/{id}/toggle-status")
     public ApiResponse<String> toggleStatus(@PathVariable Long id) {
@@ -582,13 +714,30 @@ public class AdminController {
             if (role != null) {
                 queryWrapper.eq("role", role);
             }
+
+            // 按学院过滤必须落进 SQL（见 userIdsInCollege 的注释）。
+            // 之前是在内存里滤这一页，导致 total 与分页都错：
+            // 实测 collegeId=2 返回 total=35（全库用户数）、items 只有 1 条。
+            if (collegeId != null) {
+                Set<Long> collegeUserIds = userIdsInCollege(collegeId);
+                if (collegeUserIds.isEmpty()) {
+                    // 该学院一个账号都没有。不能把空集合交给 in()（SQL 会变成 in () 语法错），
+                    // 直接返回空页；total=0 也是这里唯一正确的答案。
+                    Map<String, Object> emptyPage = new HashMap<>(2);
+                    emptyPage.put("total", 0L);
+                    emptyPage.put("items", List.of());
+                    return ApiResponse.success(emptyPage);
+                }
+                queryWrapper.in("id", collegeUserIds);
+            }
+
             // 待审批用户置顶
             queryWrapper.orderByAsc("status").orderByDesc("id");
-            
+
             long total = userService.count(queryWrapper);
             int start = (page - 1) * size;
             List<User> users = userService.list(queryWrapper.last("LIMIT " + start + ", " + size));
-            
+
             List<Map<String, Object>> enhancedUsers = new ArrayList<>(users.size());
             for (User user : users) {
                 Map<String, Object> userMap = new HashMap<>();
@@ -604,12 +753,6 @@ public class AdminController {
                 enhancedUsers.add(userMap);
             }
 
-            if (collegeId != null) {
-                enhancedUsers = enhancedUsers.stream()
-                        .filter(user -> collegeId.equals(user.get("collegeId")))
-                        .collect(Collectors.toList());
-            }
-
             Map<String, Object> result = new HashMap<>(2);
             result.put("total", total);
             result.put("items", enhancedUsers);
@@ -621,6 +764,57 @@ public class AdminController {
         }
     }
     
+    /**
+     * 某学院下所有账号的 users.id 集合。
+     *
+     * 为什么要绕 profile 表：学院只挂在四张 profile 表上（student_profile /
+     * teacher_profile / counselor_profiles / college_admin_profile），
+     * users 表自己**没有** college_id 列，所以"按学院查账号"只能先把学院翻译成 id 集合。
+     *
+     * ⚠️ 表名注意：辅导员的表是 `counselor_profiles`（复数），学院管理员的是
+     * `college_admin_profile`（单数）—— 差异来自 @TableName，别按命名习惯猜。
+     *
+     * 收 role 1/2/3/5，与下面 enhanceUserProfile 能填出 collegeId 的角色一致；
+     * role=4 系统管理员不属于任何学院，所以永远不在结果里。
+     */
+    private Set<Long> userIdsInCollege(Long collegeId) {
+        Set<Long> ids = new HashSet<>();
+
+        List<StudentProfile> students = studentProfileMapper.selectList(
+                new QueryWrapper<StudentProfile>().select("user_id").eq("college_id", collegeId));
+        for (StudentProfile p : students) {
+            if (p.getUserId() != null) {
+                ids.add(p.getUserId());
+            }
+        }
+
+        List<TeacherProfile> teachers = teacherProfileMapper.selectList(
+                new QueryWrapper<TeacherProfile>().select("user_id").eq("college_id", collegeId));
+        for (TeacherProfile p : teachers) {
+            if (p.getUserId() != null) {
+                ids.add(p.getUserId());
+            }
+        }
+
+        List<CounselorProfile> counselors = counselorProfileMapper.selectList(
+                new QueryWrapper<CounselorProfile>().select("user_id").eq("college_id", collegeId));
+        for (CounselorProfile p : counselors) {
+            if (p.getUserId() != null) {
+                ids.add(p.getUserId());
+            }
+        }
+
+        List<CollegeAdminProfile> collegeAdmins = collegeAdminProfileMapper.selectList(
+                new QueryWrapper<CollegeAdminProfile>().select("user_id").eq("college_id", collegeId));
+        for (CollegeAdminProfile p : collegeAdmins) {
+            if (p.getUserId() != null) {
+                ids.add(p.getUserId());
+            }
+        }
+
+        return ids;
+    }
+
     private void enhanceUserProfile(User user, Map<String, Object> userMap) {
         if (user.getRole() == 1) {
             try {
@@ -653,7 +847,13 @@ public class AdminController {
                 teacherQuery.eq("user_id", user.getId());
                 TeacherProfile teacherProfile = teacherProfileMapper.selectOne(teacherQuery);
                 if (teacherProfile != null) {
-                    userMap.put("jobNumber", teacherProfile.getUserId());
+                    // 这里原来写的是 userMap.put("jobNumber", teacherProfile.getUserId())
+                    // —— 把 users.id（于凤海 = 29）塞进了"工号"字段。teacher_profile
+                    // 表里根本没有工号列，教师的工号就是 users.username（10001）。
+                    // 不填这个字段，前端会落到 username（PC AdminUsers.vue 的
+                    // `row.jobNumber || row.username`），也就是真实工号；而填了错值
+                    // 反而更糟：PC 的编辑弹窗会把 29 预填进工号输入框，保存时
+                    // 按 `jobNumber !== username` 把它写回 username，等于把账号改名。
                     userMap.put("collegeId", teacherProfile.getCollegeId());
                     if (teacherProfile.getCollegeId() != null) {
                         College college = collegeService.getById(teacherProfile.getCollegeId());
@@ -667,22 +867,49 @@ public class AdminController {
             }
         } else if (user.getRole() == 3) {
             try {
-                ApiResponse<CounselorProfile> counselorResponse = counselorServiceClient.getCounselorById(user.getId());
-                if (counselorResponse != null && counselorResponse.getCode() == 200) {
-                    CounselorProfile counselorProfile = counselorResponse.getData();
-                    if (counselorProfile != null) {
-                        userMap.put("jobNumber", counselorProfile.getStaffId());
-                        userMap.put("collegeId", counselorProfile.getCollegeId());
-                        if (counselorProfile.getCollegeId() != null) {
-                            College college = collegeService.getById(counselorProfile.getCollegeId());
-                            if (college != null) {
-                                userMap.put("collegeName", college.getName());
-                            }
+                // 原来这里走 Feign：counselorServiceClient.getCounselorById(user.getId())。
+                // 两个问题叠在一起，导致这一支**从来没生效过**（静默 warn 掉）：
+                //   1) counselor-service 的 /counselors/{id} 是按 `counselor_id` 列查的
+                //      （'C53' 这种编号），传进去的却是 users.id（53）；
+                //   2) 该路径参数是 String，Feign 传 Long 也只是换个写法。
+                // 本地就有 CounselorProfileMapper，按 user_id 查是同一张表、同一个语义，
+                // 和上面 role=1/2 两支完全一致，还省掉一次跨服务调用。
+                QueryWrapper<CounselorProfile> counselorQuery = new QueryWrapper<>();
+                counselorQuery.eq("user_id", user.getId());
+                CounselorProfile counselorProfile = counselorProfileMapper.selectOne(counselorQuery);
+                if (counselorProfile != null) {
+                    userMap.put("jobNumber", counselorProfile.getStaffId());
+                    userMap.put("collegeId", counselorProfile.getCollegeId());
+                    if (counselorProfile.getCollegeId() != null) {
+                        College college = collegeService.getById(counselorProfile.getCollegeId());
+                        if (college != null) {
+                            userMap.put("collegeName", college.getName());
                         }
                     }
                 }
             } catch (Exception e) {
                 log.warn("Failed to get counselor profile for user {}: {}", user.getId(), e.getMessage());
+            }
+        } else if (user.getRole() == 5) {
+            try {
+                // 学院管理员：补上学院与职务，否则这一类账号在列表里"学院"列是空的，
+                // 而按学院过滤时又会被 userIdsInCollege 收进来 —— 过滤出来却看不到学院，
+                // 会让人以为过滤错了。
+                QueryWrapper<CollegeAdminProfile> collegeAdminQuery = new QueryWrapper<>();
+                collegeAdminQuery.eq("user_id", user.getId());
+                CollegeAdminProfile collegeAdminProfile = collegeAdminProfileMapper.selectOne(collegeAdminQuery);
+                if (collegeAdminProfile != null) {
+                    userMap.put("collegeId", collegeAdminProfile.getCollegeId());
+                    userMap.put("title", collegeAdminProfile.getTitle());
+                    if (collegeAdminProfile.getCollegeId() != null) {
+                        College college = collegeService.getById(collegeAdminProfile.getCollegeId());
+                        if (college != null) {
+                            userMap.put("collegeName", college.getName());
+                        }
+                    }
+                }
+            } catch (Exception e) {
+                log.warn("Failed to get college admin profile for user {}: {}", user.getId(), e.getMessage());
             }
         }
     }
@@ -1094,8 +1321,21 @@ public class AdminController {
     @DeleteMapping("/teachers/{id}")
     public ApiResponse<String> deleteTeacher(@PathVariable Long id) {
         try {
+            // ⚠️ 两个 ID 空间不能混：路径里的 id 是 teacher_profile.id，
+            //    而 users 表认的是 users.id，两者不是同一个数。
+            //    原实现先 teacherProfileMapper.deleteById(id) 再 userService.removeById(id)，
+            //    传 profile id=1（于凤海，其账号是 users#29）时，删掉的账号是
+            //    **users#1 —— admin 账号**，而于凤海的账号还留在库里。
+            //    这个接口目前没有页面在调，但它能在演示中把管理员删没，所以顺手修掉：
+            //    先按 profile 查出 user_id，再删账号（顺序与 deleteUser 一致）。
+            TeacherProfile teacher = teacherProfileMapper.selectById(id);
+            if (teacher == null) {
+                return ApiResponse.notFound("Teacher not found");
+            }
             teacherProfileMapper.deleteById(id);
-            userService.removeById(id);
+            if (teacher.getUserId() != null) {
+                userService.removeById(teacher.getUserId());
+            }
             return ApiResponse.success("Teacher deleted successfully");
         } catch (Exception e) {
             log.error("Delete teacher failed: {}", e.getMessage());
@@ -1126,9 +1366,19 @@ public class AdminController {
     @GetMapping("/counselors/{id}")
     public ApiResponse<CounselorProfile> getCounselorById(@PathVariable Long id) {
         try {
-            ApiResponse<CounselorProfile> response = counselorServiceClient.getCounselorById(id);
-            if (response != null && response.getCode() == 200) {
-                return ApiResponse.success(response.getData());
+            // ⚠️ 这里原来把 id 直接转给 counselor-service 的 /counselors/{counselorId}，
+            //    而那条路径是按 **counselor_id 编号列**（'C53' 这种字符串）查的，
+            //    不是按数字 id。从上表 /admin/counselors 拿到的 id 是 profile 主键，
+            //    传过去必然查不到 —— 于是这个接口对任何真实 id 都返回 notFound。
+            //    本地按主键查即正确；顺带兜一层 users.id，因为"辅导员管理"之外的
+            //    调用方手里可能是账号 id（本工程两套 ID 混用是常见坑）。
+            CounselorProfile counselor = counselorProfileMapper.selectById(id);
+            if (counselor == null) {
+                counselor = counselorProfileMapper.selectOne(
+                        new QueryWrapper<CounselorProfile>().eq("user_id", id));
+            }
+            if (counselor != null) {
+                return ApiResponse.success(counselor);
             }
             return ApiResponse.notFound("Counselor not found");
         } catch (Exception e) {
@@ -1176,24 +1426,23 @@ public class AdminController {
     @SentinelResource(value = "adminApi:getWarnings", fallback = "getWarningsFallback")
     public ApiResponse<List<AcademicWarning>> getWarnings() {
         try {
-            ApiResponse<Object> response = warningServiceClient.getWarnings();
-            if (response != null && response.getCode() == 200) {
-                @SuppressWarnings("unchecked")
-                List<AcademicWarning> warnings = (List<AcademicWarning>) response.getData();
-                return ApiResponse.success(warnings);
-            }
-            // Feign returned error, fallback to direct DB query
+            // 这里原来先走 Feign（warning-service 的 /warnings/list），失败再兜底查本地库。
+            // 实测：Feign 那一支**从来没成功过** —— 它返回的 data 是
+            // {warnings:[...], total:n} 这个 Map，而这里直接
+            // (List<AcademicWarning>) response.getData() 强转，抛
+            // "LinkedHashMap cannot be cast to List"，被 catch 吞掉后走兜底，
+            // 所以列表看着是好的，实际数据一直来自兜底分支。
+            // 表和实体本来就是同一张：admin-service 的 AcademicWarningMapper 与
+            // warning-service 读的都是 academic_warning，实体同为
+            // com.academic.common.entity.AcademicWarning，所以直连本地库不是"退而求其次"。
+            // 要走 Feign 也不是不行，但得先把返回改成带 DTO 的类型化分页
+            // （Map 里的 LocalDateTime 需要 Spring 的 ObjectMapper 才能转回实体），
+            // 在那之前，留一个装样子的跨服务调用只会掩盖真实数据来源。
             List<AcademicWarning> warnings = academicWarningMapper.selectList(null);
             return ApiResponse.success(warnings);
         } catch (Exception e) {
-            log.warn("Feign getWarnings failed, falling back to direct DB: {}", e.getMessage());
-            try {
-                List<AcademicWarning> warnings = academicWarningMapper.selectList(null);
-                return ApiResponse.success(warnings);
-            } catch (Exception e2) {
-                log.error("Direct DB getWarnings also failed: {}", e2.getMessage());
-                return ApiResponse.error(e2.getMessage());
-            }
+            log.error("Get warnings failed: {}", e.getMessage());
+            return ApiResponse.error(e.getMessage());
         }
     }
 
@@ -1205,15 +1454,13 @@ public class AdminController {
     @GetMapping("/warnings/{id}")
     public ApiResponse<AcademicWarning> getWarningById(@PathVariable Long id) {
         try {
-            ApiResponse<Object> response = warningServiceClient.getWarnings();
-            if (response != null && response.getCode() == 200) {
-                @SuppressWarnings("unchecked")
-                List<AcademicWarning> warnings = (List<AcademicWarning>) response.getData();
-                for (AcademicWarning warning : warnings) {
-                    if (warning.getId().equals(id)) {
-                        return ApiResponse.success(warning);
-                    }
-                }
+            // 原实现同上：把 /warnings/list 的 Map 载荷强转成 List 再循环找 id，
+            // 因为这个接口**没有兜底分支**，强转异常直接变成 HTTP 200 + code:500
+            // （"class java.util.LinkedHashMap cannot be cast to class java.util.List"）。
+            // 按主键查本地库即可，与列表同一个数据源，天然一致。
+            AcademicWarning warning = academicWarningMapper.selectById(id);
+            if (warning != null) {
+                return ApiResponse.success(warning);
             }
             return ApiResponse.notFound("Warning not found");
         } catch (Exception e) {
@@ -2097,19 +2344,11 @@ public class AdminController {
                 cell.setCellValue(headers[i]);
             }
 
-            List<AcademicWarning> warnings = new ArrayList<>();
-            try {
-                ApiResponse<Object> responseData = warningServiceClient.getWarnings();
-                if (responseData != null && responseData.getCode() == 200) {
-                    @SuppressWarnings("unchecked")
-                    List<AcademicWarning> data = (List<AcademicWarning>) responseData.getData();
-                    if (data != null) {
-                        warnings.addAll(data);
-                    }
-                }
-            } catch (Exception e) {
-                log.warn("Failed to get warnings from service: {}", e.getMessage());
-            }
+            // 同一个 Map 强转问题（见 /warnings 的注释）：这里原来是
+            // try { (List<AcademicWarning>) responseData.getData() } catch { warn }
+            // —— 抛异常被吞掉后 warnings 保持空列表，于是导出的 xlsx **只有表头没有数据行**，
+            // 而且还会把 recordCount=0 写进导出历史。导出是 PC 端在用的功能。
+            List<AcademicWarning> warnings = academicWarningMapper.selectList(null);
 
             int rowNum = 1;
             for (AcademicWarning warning : warnings) {
@@ -2203,7 +2442,9 @@ public class AdminController {
             if (response != null && response.getCode() == 200) {
                 return ApiResponse.success(response.getData());
             }
-            return ApiResponse.error("Failed to send broadcast");
+            // 把下游的原话带上去。原来一律回 "Failed to send broadcast"，
+            // 于是"广播确实失败了（0/2 条写入成功）"这种可追问的原因被抹平成一句英文。
+            return ApiResponse.error(response != null ? response.getMessage() : "Failed to send broadcast");
         } catch (Exception e) {
             log.error("Send broadcast failed: {}", e.getMessage());
             return ApiResponse.error(e.getMessage());
@@ -2217,7 +2458,7 @@ public class AdminController {
             if (response != null && response.getCode() == 200) {
                 return ApiResponse.success(response.getData());
             }
-            return ApiResponse.error("Failed to send message");
+            return ApiResponse.error(response != null ? response.getMessage() : "Failed to send message");
         } catch (Exception e) {
             log.error("Send message failed: {}", e.getMessage());
             return ApiResponse.error(e.getMessage());
