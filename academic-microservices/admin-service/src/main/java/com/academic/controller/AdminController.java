@@ -426,9 +426,17 @@ public class AdminController {
         return ApiResponse.notFound("User not found");
     }
 
+    // ⚠️ 两个写端点（本方法与 deleteUser）**不要**挂 @SentinelResource 的 fallback。
+    //    实测（2026-09-30）：Sentinel 的切面落在事务边界**内侧**，与注解书写顺序无关。
+    //    fallback 一旦接住异常，事务拦截器看到的就是"正常返回"（日志里打的是
+    //    "Completing transaction for [...]"，异常路径才会打 "Initiating transaction rollback"），
+    //    于是把前半截写入照常提交 —— 用一个 student_id 超长的用户名建号，
+    //    users 插入成功、student_profile 插入失败，结果 users 那行照样留在库里，
+    //    而 @Transactional 的存在让人以为不会。去掉 fallback，异常才能抵达事务拦截器。
+    //    限流不受影响：BlockException 归 blockHandler 管，这两个端点都没有 blockHandler。
     @PostMapping("/users")
     @Transactional
-    @SentinelResource(value = "adminApi:createUser", fallback = "createUserFallback")
+    @SentinelResource(value = "adminApi:createUser")
     public ApiResponse<String> createUser(@RequestBody User user) {
         try {
             // ⚠️ 原来是 userService.save(user) —— MyBatis-Plus 的裸插入，绕过了
@@ -509,10 +517,6 @@ public class AdminController {
         // 教师(2)/学院管理员(5) 的 profile 必填列里有 college_id，建号入参里没有学院，故不建。
     }
 
-    public ApiResponse<String> createUserFallback(User user, Throwable t) {
-        return ApiResponse.error("adminApi:createUser API is degraded: " + t.getMessage());
-    }
-
     @PutMapping("/users/{id}")
     @SentinelResource(value = "adminApi:updateUser", fallback = "updateUserFallback")
     public ApiResponse<String> updateUser(@PathVariable Long id, @RequestBody User user) {
@@ -555,7 +559,8 @@ public class AdminController {
 
     @Transactional
     @DeleteMapping("/users/{id}")
-    @SentinelResource(value = "adminApi:deleteUser", fallback = "deleteUserFallback")
+    // fallback 同理去掉 —— 见上面 createUser 上方的说明。
+    @SentinelResource(value = "adminApi:deleteUser")
     public ApiResponse<String> deleteUser(@PathVariable Long id) {
         try {
             User user = userService.getById(id);
@@ -598,12 +603,11 @@ public class AdminController {
             return ApiResponse.success("User deleted successfully");
         } catch (Exception e) {
             log.error("Delete user failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            // 必须抛出去：原来是 return ApiResponse.error(...)，异常根本没离开方法，
+            // @Transactional 看到的是"正常返回"，于是"profile 删了、账号还在"这类
+            // 半截状态会照常提交 —— 这里比 createUser 更直白，连 Sentinel 都不需要。
+            throw new RuntimeException("Delete user failed: " + e.getMessage(), e);
         }
-    }
-
-    public ApiResponse<String> deleteUserFallback(Long id, Throwable t) {
-        return ApiResponse.error("adminApi:deleteUser API is degraded: " + t.getMessage());
     }
 
     @PostMapping("/users/{id}/reset-password")
