@@ -11,6 +11,7 @@ import com.academic.mapper.UserMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 
@@ -142,10 +143,18 @@ public class TeacherClassApplicationService {
     
     /**
      * 解除班级管理权限
+     *
+     * <p>两个写操作：先把 {@code classes.teacher_id} 置空，再把相关申请单置为"已取消"。
+     * 两步之间失败会留下"班级没人管、申请单还挂着已通过"，所以整个方法必须是一个事务。
+     * 这里不加 try/catch —— 方法内吞掉异常会让 @Transactional 以为一切正常照常提交
+     * （那就是个假事务）；DB 异常直接抛出，调用方 TeacherController 的 catch 在事务
+     * 边界之外，回滚不受影响。
+     *
      * @param teacherId 用户ID（User.id）
      * @param classId 班级ID
      * @return null表示成功，否则返回错误消息
      */
+    @Transactional(rollbackFor = Exception.class)
     public String cancelClassManagement(Long teacherId, Long classId) {
         // 1. 检查班级是否存在
         ClassInfo classInfo = classInfoMapper.selectById(classId);

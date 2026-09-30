@@ -14,6 +14,7 @@ import com.academic.service.AssistancePlanService;
 import com.academic.service.CommunicationLogService;
 import com.academic.service.StudentService;
 import com.academic.service.ClassInfoService;
+import com.academic.service.ClassManagementService;
 import com.academic.mapper.CounselorClassApplicationMapper;
 import com.academic.mapper.ClassInfoMapper;
 import com.academic.mapper.ScoreMapper;
@@ -56,6 +57,12 @@ public class CounselorController {
 
     @Autowired
     private CounselorClassApplicationMapper counselorClassApplicationMapper;
+
+    // 申请/审核/解除三条写路径下沉到这个 service：它们各写两张表，必须在一个事务里。
+    // 别再把这些写操作挪回 controller —— controller 的 catch 在事务边界之外，
+    // 拿它当"错误处理"没问题，拿它当"回滚手段"则不行。
+    @Autowired
+    private ClassManagementService classManagementService;
 
     @Autowired
     private ClassInfoService classInfoService;
@@ -713,6 +720,11 @@ public class CounselorController {
 
     /**
      * 申请管理班级（申请管理或解除管理）
+     *
+     * <p>判断与写库都在 {@link ClassManagementService#applyForClass}，那边带事务 ——
+     * 这条路径会写 counselor_profile（getByUserId 见到缺失记录会插一行）与
+     * counselor_class_application 两张表，半截落库就是"申请单在、人却对不上号"。
+     * 业务拒绝以返回值回来，这里的 catch 在事务边界之外，只负责把 DB 异常转成提示。
      */
     @PostMapping("/class-management/apply")
     public ApiResponse<String> applyForClass(@RequestBody Map<String, Object> request) {
@@ -721,64 +733,19 @@ public class CounselorController {
             Long classId = ((Number) request.get("classId")).longValue();
             String className = (String) request.get("className");
             String reason = (String) request.get("reason");
-            
+
             // 获取申请类型，默认为0（申请管理）
             Integer applicationType = 0;
             if (request.get("applicationType") != null) {
                 applicationType = ((Number) request.get("applicationType")).intValue();
             }
-            
-            // 获取辅导员姓名
-            CounselorProfile counselor = counselorService.getByUserId(counselorId);
-            String counselorName = counselor != null ? counselor.getName() : "";
-            
-            // 获取班级信息
-            ClassInfo classInfo = classInfoMapper.selectById(classId);
-            
-            // 申请管理
-            if (applicationType == 0) {
-                // 1. 检查班级是否存在且无辅导员
-                if (classInfo != null && classInfo.getCounselorId() != null && classInfo.getCounselorId() > 0) {
-                    return ApiResponse.error("该班级已有辅导员管理，无法重复申请");
-                }
-                
-                // 2. 检查辅导员是否已经有待审核的同类申请（仅阻塞 status=0 待审核的情况）
-                List<CounselorClassApplication> existingApplications = counselorClassApplicationMapper.selectList(
-                    new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<CounselorClassApplication>()
-                        .eq("counselor_id", counselorId)
-                        .eq("class_id", classId)
-                        .eq("status", 0)
-                );
-                if (existingApplications != null && !existingApplications.isEmpty()) {
-                    for (CounselorClassApplication app : existingApplications) {
-                        if (app.getApplicationType() == null || app.getApplicationType() == 0) {
-                            return ApiResponse.error("您已有一条该班级的待审核申请，请等待管理员处理");
-                        }
-                    }
-                }
-            } else {
-                // 解除管理
-                // 检查班级是否存在且该辅导员是当前管理者
-                if (classInfo == null || classInfo.getCounselorId() == null || !classInfo.getCounselorId().equals(counselorId)) {
-                    return ApiResponse.error("您不是该班级的辅导员，无法提交解除申请");
-                }
+
+            String errorMessage = classManagementService.applyForClass(
+                    counselorId, classId, className, reason, applicationType);
+            if (errorMessage != null) {
+                return ApiResponse.error(errorMessage);
             }
-            
-            // 创建班级申请记录
-            CounselorClassApplication application = new CounselorClassApplication();
-            application.setCounselorId(counselorId);
-            application.setClassId(classId);
-            application.setClassName(className);
-            application.setReason(reason);
-            application.setStatus(0); // 0-待审核
-            application.setCounselorName(counselorName);
-            application.setApplicationType(applicationType);
-            
-            counselorClassApplicationMapper.insert(application);
-            
-            String action = applicationType == 1 ? "解除管理" : "申请管理";
-            log.info("辅导员 {}({}) {}班级 {} ({})，理由: {}", counselorId, counselorName, action, classId, className, reason);
-            
+
             String message = applicationType == 1 ? "解除申请提交成功，等待审核" : "申请提交成功，等待审核";
             return ApiResponse.success(message);
         } catch (Exception e) {
@@ -789,6 +756,10 @@ public class CounselorController {
 
     /**
      * 解除班级管理权限
+     *
+     * <p>写库在 {@link ClassManagementService#cancelClassManagement}（带事务）：这条路径
+     * 先清 {@code classes.counselor_id}、再把申请单置为"已取消"，两步之间失败就成了
+     * "班级没人管、申请单还挂着已通过"。
      */
     @PostMapping("/class-management/cancel")
     public ApiResponse<String> cancelClassManagement(@RequestBody Map<String, Object> request) {
@@ -796,54 +767,11 @@ public class CounselorController {
             // 前端传递的是用户ID（User.id）
             Long userId = ((Number) request.get("counselorId")).longValue();
             Long classId = ((Number) request.get("classId")).longValue();
-            
-            // 根据用户ID查询辅导员Profile
-            // 注意：classes.counselor_id 存储的是 User.id，不是 CounselorProfile.id
-            // 所以这里不需要转换为 CounselorProfile.id，直接使用 userId 即可
-            CounselorProfile profile = counselorService.getByUserId(userId);
-            
-            // 无论是否找到 CounselorProfile，都使用传入的 userId 进行验证
-            // 因为 classes.counselor_id 存储的就是 User.id
-            Long realCounselorId = userId;
-            
-            // 检查班级是否存在
-            ClassInfo classInfo = classInfoMapper.selectById(classId);
-            if (classInfo == null) {
-                return ApiResponse.error("班级不存在");
+
+            String errorMessage = classManagementService.cancelClassManagement(userId, classId);
+            if (errorMessage != null) {
+                return ApiResponse.error(errorMessage);
             }
-            
-            // 检查辅导员是否管理该班级
-            // 如果班级没有辅导员（counselor_id为null），说明已经没有管理者，直接返回成功
-            if (classInfo.getCounselorId() == null) {
-                log.info("用户ID {} 尝试解除班级 {} 的管理权限，班级counselorId已为null，无需解除", userId, classId);
-                return ApiResponse.success("班级管理权限已解除");
-            }
-            
-            if (!classInfo.getCounselorId().equals(realCounselorId)) {
-                log.warn("用户ID {} 尝试解除班级 {} 的管理权限，但班级的counselorId是 {}，realCounselorId是 {}", 
-                    userId, classId, classInfo.getCounselorId(), realCounselorId);
-                return ApiResponse.error("您不是该班级的管理者");
-            }
-            
-            // 解除班级与辅导员的关联（使用 UpdateWrapper 确保 counselor_id 被设置为 null）
-            com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper<ClassInfo> updateWrapper = new com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper<>();
-            updateWrapper.eq("id", classId).set("counselor_id", null);
-            classInfoMapper.update(null, updateWrapper);
-            
-            // 更新相关申请记录状态为"已取消"
-            List<CounselorClassApplication> applications = counselorClassApplicationMapper.selectList(
-                new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<CounselorClassApplication>()
-                    .eq("counselor_id", realCounselorId)
-                    .eq("class_id", classId)
-            );
-            if (applications != null && !applications.isEmpty()) {
-                for (CounselorClassApplication application : applications) {
-                    application.setStatus(3); // 3-已取消
-                    counselorClassApplicationMapper.updateById(application);
-                }
-            }
-            
-            log.info("辅导员用户ID {} 解除班级 {} 的管理权限", userId, classId);
             return ApiResponse.success("班级管理权限已解除");
         } catch (Exception e) {
             log.error("解除班级管理权限失败: {}", e.getMessage());
@@ -880,6 +808,9 @@ public class CounselorController {
 
     /**
      * 审核辅导员班级申请（供管理员使用）
+     *
+     * <p>写库在 {@link ClassManagementService#reviewApplication}（带事务）：批准时先改申请单
+     * 状态、再把班级交给辅导员，两步不是原子的话会留下"申请已批准、班级还没交出去"。
      */
     @PostMapping("/class-management/applications/{id}/review")
     public ApiResponse<String> reviewCounselorApplication(
@@ -887,40 +818,12 @@ public class CounselorController {
             @RequestBody Map<String, Object> request) {
         try {
             Integer status = (Integer) request.get("status");
-            CounselorClassApplication application = counselorClassApplicationMapper.selectById(id);
-            
-            if (application == null) {
-                return ApiResponse.error("申请不存在");
+
+            String errorMessage = classManagementService.reviewApplication(id, status);
+            if (errorMessage != null) {
+                return ApiResponse.error(errorMessage);
             }
-            
-            // 更新申请状态
-            application.setStatus(status);
-            counselorClassApplicationMapper.updateById(application);
-            
-            // 如果通过，根据申请类型处理
-            if (status == 1) {
-                ClassInfo classInfo = classInfoMapper.selectById(application.getClassId());
-                if (classInfo != null) {
-                    // 使用 UpdateWrapper 确保字段被正确更新
-                    com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper<ClassInfo> updateWrapper = 
-                        new com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper<>();
-                    updateWrapper.eq("id", application.getClassId());
-                    
-                    if (application.getApplicationType() == null || application.getApplicationType() == 0) {
-                        // 申请管理：设置辅导员ID
-                        updateWrapper.set("counselor_id", application.getCounselorId());
-                        classInfoMapper.update(null, updateWrapper);
-                        log.info("班级 {} 已分配给辅导员 {}", application.getClassId(), application.getCounselorId());
-                    } else {
-                        // 解除管理：将辅导员ID设置为null
-                        updateWrapper.set("counselor_id", null);
-                        classInfoMapper.update(null, updateWrapper);
-                        log.info("班级 {} 的辅导员已移除", application.getClassId());
-                    }
-                }
-            }
-            
-            log.info("管理员审核辅导员班级申请: id={}, status={}, applicationType={}", id, status, application.getApplicationType());
+
             return ApiResponse.success(status == 1 ? "申请已批准" : "申请已拒绝");
         } catch (Exception e) {
             log.error("审核辅导员班级申请失败: {}", e.getMessage());
