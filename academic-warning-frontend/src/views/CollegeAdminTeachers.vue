@@ -103,7 +103,7 @@ onMounted(() => loadData())
 
 <style scoped>
 .cad-page { padding: 20px; min-height: 100vh; background: #f8f9fa; }
-.cad-hero { position: relative; background: var(--theme-gradient, linear-gradient(135deg, #1e3a8a, #2563eb, #3b82f6)); border-radius: 10px; padding: 24px 36px; overflow: hidden; margin-bottom: 20px; }
+.cad-hero { position: relative; background: var(--theme-gradient, linear-gradient(135deg, #0EA5E9 0%, #38BDF8 100%)); border-radius: 10px; padding: 24px 36px; overflow: hidden; margin-bottom: 20px; }
 .cad-hglow { position: absolute; border-radius: 50%; filter: blur(80px); pointer-events: none; }
 .cad-hg1 { width: 200px; height: 200px; background: #3b82f6; top: -50px; right: -30px; opacity: .2; }
 .cad-hg2 { width: 120px; height: 120px; background: #60a5fa; bottom: -30px; left: 30%; opacity: .15; }
