@@ -170,19 +170,33 @@ const submitNotification = async () => {
     ElMessage.error('请输入通知内容')
     return
   }
+  // ⚠️ 只认两个数值型 ID：userId(users.id) / id(student_profile.id)。
+  // 原来的兜底里有 studentId —— 那是**学号字符串**（如 "2023001"），一旦 userId 为空，
+  // 就会把学号当接收人发出去。后端两个 ID 空间都认，但学号不认。
+  const targetId = selectedStudent.value.userId || selectedStudent.value.id
+  if (!targetId) {
+    ElMessage.error('这个学生没有可用的用户 ID（student_profile.user_id 为空），发不了通知')
+    return
+  }
   try {
     const data = {
-      student_ids: [selectedStudent.value.userId || selectedStudent.value.studentId || selectedStudent.value.id],
+      student_ids: [targetId],
       message: notificationForm.value.content
     }
-    console.log('发送通知数据:', data)
-    await counselorAPI.notifyStudents(data)
-    ElMessage.success('通知已发送')
+    const res = await counselorAPI.notifyStudents(data)
+    const delivered = Number(res?.delivered) || 0
+    const undeliverable = Array.isArray(res?.undeliverable) ? res.undeliverable : []
+    if (delivered === 0) {
+      // 后端如实回了 0 就别说"已发送"
+      ElMessage.warning('未送达：' + (undeliverable[0] ? `学生 ${undeliverable[0]} 的档案没绑登录账号` : '接收人解析失败'))
+    } else {
+      ElMessage.success('通知已发送')
+    }
     notificationDialogVisible.value = false
     notificationForm.value.content = ''
   } catch (error) {
     console.error('发送通知失败:', error)
-    ElMessage.error('发送失败')
+    ElMessage.error('发送失败: ' + (error.message || '网络错误'))
   }
 }
 </script>

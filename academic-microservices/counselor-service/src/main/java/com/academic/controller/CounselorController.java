@@ -12,6 +12,7 @@ import com.academic.entity.ClassInfo;
 import com.academic.service.CounselorService;
 import com.academic.service.AssistancePlanService;
 import com.academic.service.CommunicationLogService;
+import com.academic.service.CounselorNotificationService;
 import com.academic.service.StudentService;
 import com.academic.service.ClassInfoService;
 import com.academic.service.ClassManagementService;
@@ -51,6 +52,11 @@ public class CounselorController {
 
     @Autowired
     private CommunicationLogService communicationLogService;
+
+    // 发通知要在一个事务里写两张表（communication_logs + notifications），所以下沉到 service。
+    // 同 ClassManagementService 那条注释：controller 的 catch 在事务边界之外，别拿它当回滚手段。
+    @Autowired
+    private CounselorNotificationService counselorNotificationService;
 
     @Autowired
     private StudentService studentService;
@@ -1251,79 +1257,74 @@ public class CounselorController {
         }
     }
 
-    /** 通知学生 */
+    /**
+     * 通知学生。
+     *
+     * <p>此前这里只 log 一行就回 {@code {success:true,message:"通知发送成功"}} —— 不写任何库，
+     * 页面上却弹「通知已发送」。现在真落两张表：{@code communication_logs}（辅导员侧记录）
+     * + {@code notifications}（学生通知中心真的会读到）。写在一个事务里，见
+     * {@link com.academic.service.CounselorNotificationService}。
+     */
     @PostMapping("/students/notify")
     public ApiResponse<Map<String, Object>> notifyStudents(@RequestBody Map<String, Object> data) {
         try {
-            log.info("通知学生: {}", data);
-            // 记录通知日志
-            Map<String, Object> resp = new HashMap<>();
-            resp.put("success", true);
-            resp.put("message", "通知发送成功");
-            return ApiResponse.success(resp);
+            return ApiResponse.success(counselorNotificationService.send(data));
+        } catch (IllegalArgumentException e) {
+            // 内容为空 / 接收人解析不出来 / 缺少 counselor_id —— 都是请求的问题，不是 500
+            return ApiResponse.badRequest(e.getMessage());
         } catch (Exception e) {
-            log.error("通知学生失败: {}", e.getMessage());
+            log.error("通知学生失败: {}", e.getMessage(), e);
             return ApiResponse.serverError("通知学生失败: " + e.getMessage());
         }
     }
 
     // ==================== P0新增：通知中心 ====================
-    /** 获取通知历史 */
+    /**
+     * 获取通知历史。
+     *
+     * <p>此前恒回 {@code {total:0, list:[]}} —— 页面永远「暂无通知记录」，哪怕刚发过。
+     * 现在读 {@code communication_logs} 里 category 属于通知类别的行，按「同一次发送」归并。
+     */
     @GetMapping("/notifications/history")
     public ApiResponse<Map<String, Object>> getNotificationHistory(@RequestParam("counselor_id") Long counselorId,
                                                                     @RequestParam(defaultValue = "1") Integer page,
                                                                     @RequestParam(defaultValue = "10") Integer size) {
         try {
-            Map<String, Object> resp = new HashMap<>();
-            resp.put("total", 0);
-            resp.put("page", page);
-            resp.put("size", size);
-            resp.put("list", new ArrayList<>());
-            return ApiResponse.success(resp);
+            return ApiResponse.success(counselorNotificationService.history(
+                    counselorId, page == null ? 1 : page, size == null ? 10 : size));
         } catch (Exception e) {
-            log.error("获取通知历史失败: {}", e.getMessage());
+            log.error("获取通知历史失败: {}", e.getMessage(), e);
             return ApiResponse.serverError("获取通知历史失败: " + e.getMessage());
         }
     }
 
-    /** 获取通知模板 */
+    /**
+     * 获取通知模板。
+     *
+     * <p>此前硬编码 3 条（学业预警通知 / 学期提醒 / 帮扶计划提醒）—— 库里没有任何模板表，
+     * 这 3 条是写给页面看的假数据，改一条得改代码。本系统没有"可配置模板"这个功能，
+     * 如实回空列表。（全仓没有任何视图在调这个接口。）
+     */
     @GetMapping("/notifications/templates")
     public ApiResponse<List<Map<String, Object>>> getNotificationTemplates() {
         try {
-            List<Map<String, Object>> templates = new ArrayList<>();
-            Map<String, Object> t1 = new HashMap<>();
-            t1.put("id", 1);
-            t1.put("name", "学业预警通知");
-            t1.put("content", "尊敬的同学，您的学业存在预警风险，请及时联系辅导员。");
-            Map<String, Object> t2 = new HashMap<>();
-            t2.put("id", 2);
-            t2.put("name", "学期提醒");
-            t2.put("content", "新学期即将开始，请做好学习计划。");
-            Map<String, Object> t3 = new HashMap<>();
-            t3.put("id", 3);
-            t3.put("name", "帮扶计划提醒");
-            t3.put("content", "您有未完成的帮扶计划，请尽快查看并完成。");
-            templates.add(t1);
-            templates.add(t2);
-            templates.add(t3);
-            return ApiResponse.success(templates);
+            return ApiResponse.success(new ArrayList<>());
         } catch (Exception e) {
-            log.error("获取通知模板失败: {}", e.getMessage());
+            log.error("获取通知模板失败: {}", e.getMessage(), e);
             return ApiResponse.serverError("获取通知模板失败: " + e.getMessage());
         }
     }
 
-    /** 获取每周通知数量 */
+    /**
+     * 获取每周通知数量。此前三个字段恒 0；现在按 {@code communication_logs} 的真实行数统计
+     * （见 {@link com.academic.service.CounselorNotificationService#weeklyCount}）。
+     */
     @GetMapping("/notifications/weekly-count")
     public ApiResponse<Map<String, Object>> getWeeklyNotificationCount(@RequestParam("counselor_id") Long counselorId) {
         try {
-            Map<String, Object> resp = new HashMap<>();
-            resp.put("thisWeek", 0);
-            resp.put("lastWeek", 0);
-            resp.put("total", 0);
-            return ApiResponse.success(resp);
+            return ApiResponse.success(counselorNotificationService.weeklyCount(counselorId));
         } catch (Exception e) {
-            log.error("获取每周通知数量失败: {}", e.getMessage());
+            log.error("获取每周通知数量失败: {}", e.getMessage(), e);
             return ApiResponse.serverError("获取每周通知数量失败: " + e.getMessage());
         }
     }
@@ -1364,28 +1365,19 @@ public class CounselorController {
         }
     }
 
-    /** 获取班级活动 */
+    /**
+     * 获取班级活动。
+     *
+     * <p>此前写死两条，其中一条的日期是 {@code LocalDate.now().plusDays(3)} —— 每次都"三天后
+     * 有个座谈会"，看着像真数据。库里没有班级活动表，本系统也没有"活动管理"功能，如实回空列表。
+     * （全仓没有任何视图在调这个接口。）
+     */
     @GetMapping("/classes/activities")
     public ApiResponse<List<Map<String, Object>>> getClassActivities(@RequestParam("counselor_id") Long counselorId) {
         try {
-            List<Map<String, Object>> activities = new ArrayList<>();
-            Map<String, Object> a1 = new HashMap<>();
-            a1.put("id", 1);
-            a1.put("title", "新学期学风建设班会");
-            a1.put("type", "班会");
-            a1.put("date", java.time.LocalDate.now().toString());
-            a1.put("status", "进行中");
-            Map<String, Object> a2 = new HashMap<>();
-            a2.put("id", 2);
-            a2.put("title", "学业预警学生座谈会");
-            a2.put("type", "座谈会");
-            a2.put("date", java.time.LocalDate.now().plusDays(3).toString());
-            a2.put("status", "待开始");
-            activities.add(a1);
-            activities.add(a2);
-            return ApiResponse.success(activities);
+            return ApiResponse.success(new ArrayList<>());
         } catch (Exception e) {
-            log.error("获取班级活动失败: {}", e.getMessage());
+            log.error("获取班级活动失败: {}", e.getMessage(), e);
             return ApiResponse.serverError("获取班级活动失败: " + e.getMessage());
         }
     }
