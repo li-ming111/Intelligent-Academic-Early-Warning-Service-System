@@ -24,11 +24,29 @@ dist/
 build/
 node_modules
 
-# 数据库完整备份
-/db_backups/
+# 数据库备份：**人工编写的迁移/回滚/校验脚本是"数据自洽"的证据链，必须入库**。
+# 之前整目录被忽略，导致 consistency_fix1..11 + verify_*.py 只存在于本机磁盘上。
+# 只排除临时草稿（_ 前缀）与 py 缓存。
+/db_backups/*
+!/db_backups/*.sql
+!/db_backups/*.py
+!/db_backups/*.sh
+!/db_backups/*.md
+/db_backups/_*
+/db_backups/__pycache__/
 
 # 本地工具缓存 / 误解压产物 / 散图
 .codebuddy/
 BOOT-INF/
 temp_gateway/
 generated-images/
+
+# 一次性草稿（接口转储、临时修复脚本）
+/tmp/
+academic-microservices/_*.txt
+
+# testsprite：脚本与 plan 入库，跑出来的产物不入库
+# （.txt 产物可能比源码旧 —— 见 memory，报红先核对源码）
+testsprite/local-check/*.txt
+testsprite/local-check/*.png
+testsprite/local-check/*.prev
