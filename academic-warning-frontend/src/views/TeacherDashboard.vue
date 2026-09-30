@@ -242,6 +242,12 @@ function fmtDate(d) {
 /* ===== Hero - 蓝色主题 ===== */
 .td-hero {
   position: relative;
+  /* ⚠️ 这里**故意**不用 var(--theme-gradient)（2026-09-30 定）。
+     教师主题的渐变是 Material 蓝 #2196F3→#64B5F6，而本页自己的链接、徽章、
+     lvl-1 语义色、头像渐变用的都是 Tailwind 蓝 #2563eb/#3b82f6。同一色相、
+     只差深浅，肉眼不构成冲突；换成主题变量反倒让 hero 与本页卡片差一档。
+     对照：管理员首页那页是真冲突（hero 蓝 vs 全站 Element Plus 紫），已改，
+     见 AdminDashboard.vue。 */
   background: linear-gradient(135deg, #1e40af 0%, #2563eb 30%, #3b82f6 60%, #60a5fa 100%);
   border-radius: 20px;
   padding: 40px 44px;

@@ -320,6 +320,13 @@ async function loadClass(uid) {
 /* ===== HERO ===== */
 .hero-section {
   position: relative; overflow: hidden;
+  /* ⚠️ 这里**故意**不用 var(--theme-gradient)（2026-09-30 定）。
+     学生主题的渐变是绿 #4CAF50→#81C784，但本页是一套刻意的紫/靛配色 ——
+     hero 的紫靛、.pp-fill 的 #7c3aed→#a78bfa、.orb-1 的 #a78bfa，
+     以及 randomGradient()（Dashboard.vue:249）那条 10 色轮转，彼此是一体的。
+     把 hero 单独改成绿色不是修一致性，是重新设计这一屏。
+     对照：管理员首页那页是真冲突（hero 蓝 vs 全站 Element Plus 紫），已改，
+     见 AdminDashboard.vue。 */
   background: linear-gradient(135deg, #1e1b4b 0%, #312e81 30%, #3730a3 60%, #4f46e5 100%);
   padding: 40px 32px 48px; color: #fff;
 }
