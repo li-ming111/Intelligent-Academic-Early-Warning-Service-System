@@ -176,11 +176,20 @@ onMounted(async () => {
 <style scoped>
 .ad-page { padding: 0 0 24px; min-height: 100vh; background: #f0f4ff; }
 
-/* Hero */
-.ad-hero { position: relative; background: linear-gradient(135deg, #1e3a8a, #2563eb, #3b82f6); padding: 32px 36px; overflow: hidden; }
+/* Hero
+   走 --theme-gradient（由 App.vue 按角色写入 :root），兜底取 admin 主题自己的
+   紫渐变，与 config/theme.js 的 admin.gradient 逐字一致 —— 与学院管理员那 9 个
+   页面的写法相同。
+   原先这里硬编码 linear-gradient(135deg, #1e3a8a, #2563eb, #3b82f6)，是重设计前
+   那套蓝。它与全站不一致：role=4 的 Element Plus 主色是 theme.js 里的 #667eea，
+   main.js 启动时就写到 :root 了，所以管理员页面上每个按钮、链接、页签本来就是
+   紫的，只有这一页的 hero 是蓝的。（同一个三元组此前还作为兜底值挂在学院管理员
+   的 9 个页面上，已在 ff7c2d9 清掉。） */
+.ad-hero { position: relative; background: var(--theme-gradient, linear-gradient(135deg, #667eea 0%, #764ba2 100%)); padding: 32px 36px; overflow: hidden; }
 .adh-glow { position: absolute; border-radius: 50%; filter: blur(80px); pointer-events: none; }
-.adh-g1 { width: 260px; height: 260px; background: #3b82f6; top: -70px; right: -50px; opacity: .25; }
-.adh-g2 { width: 180px; height: 180px; background: #60a5fa; bottom: -50px; left: 20%; opacity: .18; }
+/* 光斑跟着主题走：原来用的是 #3b82f6 / #60a5fa，蓝色抹在紫渐变上会发灰 */
+.adh-g1 { width: 260px; height: 260px; background: #764ba2; top: -70px; right: -50px; opacity: .25; }
+.adh-g2 { width: 180px; height: 180px; background: #869af5; bottom: -50px; left: 20%; opacity: .18; }
 .adh-inner { position: relative; z-index: 1; display: flex; justify-content: space-between; align-items: center; }
 .adh-left { display: flex; align-items: center; gap: 14px; }
 .adh-avatar { width: 48px; height: 48px; border-radius: 14px; background: rgba(255,255,255,.2); backdrop-filter: blur(8px); display: flex; align-items: center; justify-content: center; font-size: 20px; font-weight: 700; color: #fff; flex-shrink: 0; }
