@@ -641,22 +641,80 @@ public class TeacherController {
     }
 
     /**
-     * 处理预警
+     * 处理预警。
+     *
+     * <p>⚠️ 原实现是个**桩**：读一下请求体就返回
+     * {@code {status:"已处理", processedAt:now}}，一行库都不写。
+     * PC 端 {@code TeacherWarnings.vue} 拿到 200 就弹「已处理」，紧接着
+     * {@code loadWarnings()} 重新拉列表 —— 状态原样还是「待处理」。
+     * 同一屏里前脚报成功、后脚显示没变，是"报告与事实不符"最直白的一条。
+     * （同族的真实现见 {@code CounselorController.processWarning}。）
+     *
+     * <p>现在真的写 {@code academic_warning}，并且**回读一行再返回** ——
+     * 响应里的 {@code status/handledBy/handleResult/handledAt} 都是数据库里读回来的值，
+     * 不是本地拼的。写没写进去、写成了什么样，调用方看到的就是库里的样子。
+     *
+     * <p>取值口径：PC 端发的是 {@code {measures, remark}}（页面上的"帮扶措施"与
+     * "沟通记录"），辅导员端/小程序发的是 {@code {handleResult, handledBy}}。
+     * 两组 key 都收 —— 此前 {@code measures} 被静默丢弃，老师选的措施根本没落库，
+     * 落库的只有那个默认字符串。{@code remark} 与措施合并进 {@code handle_result}
+     * （该表没有单独放备注的列，两段都丢不得，只好并进同一列并保留标记）。
+     *
+     * <p>谁处理的取 {@code X-Username}（网关注入）。直连服务时该头可能为空，
+     * 那就如实记 {@code null}，不编一个名字。
+     *
+     * <p>⚠️ **"已处理"不是永久的。** {@code WarningScheduledTask} 每 30 分钟增量扫一次，
+     * 判重只看"该生有没有 status=0 的预警"
+     * （{@code ScoreReadMapper.findExistingWarningStudentIds} 里写死 {@code WHERE status = 0}）。
+     * 所以置成已处理之后，只要该生挂科门数仍 > 0，下一轮扫描就会**再生成一条新的**
+     * （新 id、status=0，页面上就是"这个人又冒出来了"）。这不是本方法的问题，
+     * 是那个判重口径的问题；没在这条路径上顺手改，因为它会改变全库的预警生成行为。
      */
     @PostMapping("/warnings/{warningId}/process")
-    public ApiResponse<Object> processWarning(@PathVariable Long warningId, @RequestBody Map<String, Object> data) {
+    public ApiResponse<Object> processWarning(@PathVariable Long warningId,
+                                             @RequestBody(required = false) Map<String, Object> data,
+                                             HttpServletRequest request) {
+        Map<String, Object> body = data == null ? new HashMap<>() : data;
         try {
-            String action = (String) data.getOrDefault("action", "处理");
-            String remark = (String) data.getOrDefault("remark", "");
+            com.academic.common.entity.AcademicWarning warning = academicWarningMapper.selectById(warningId);
+            if (warning == null) {
+                return ApiResponse.notFound("预警不存在");
+            }
+
+            // 帮扶措施：PC 端叫 measures，辅导员端叫 handleResult
+            String measures = firstNonBlank(body.get("handleResult"), body.get("measures"));
+            String remark = firstNonBlank(body.get("remark"));
+            String handleResult = joinHandleResult(measures, remark);
+            String handledBy = truncate(firstNonBlank(body.get("handledBy"),
+                    request.getHeader("X-Username")), 100);
+
+            java.time.LocalDateTime now = java.time.LocalDateTime.now();
+            warning.setStatus(1);
+            warning.setHandleResult(handleResult);
+            warning.setHandledBy(handledBy);
+            warning.setHandledAt(now);
+            warning.setUpdatedBy(handledBy);
+            warning.setUpdatedAt(now);
+            academicWarningMapper.updateById(warning);
+
+            // 回读：返回给前端的必须是库里的真实状态，而不是上面刚 set 的值
+            com.academic.common.entity.AcademicWarning saved = academicWarningMapper.selectById(warningId);
+            if (saved == null) {
+                return ApiResponse.serverError("预警处理失败：写入后回读不到该条记录");
+            }
+
             Map<String, Object> result = new HashMap<>();
-            result.put("warningId", warningId);
-            result.put("action", action);
-            result.put("remark", remark);
-            result.put("status", "已处理");
-            result.put("processedAt", java.time.LocalDateTime.now().toString());
+            result.put("warningId", saved.getId());
+            result.put("studentId", saved.getStudentId());
+            result.put("studentName", saved.getStudentName());
+            result.put("status", saved.getStatus() != null && saved.getStatus() == 1 ? "已处理" : "待处理");
+            result.put("handledBy", saved.getHandledBy());
+            result.put("handleResult", saved.getHandleResult());
+            result.put("handledAt", saved.getHandledAt());
             return ApiResponse.success(result);
         } catch (Exception e) {
-            return ApiResponse.error(e.getMessage());
+            log.error("处理预警失败: warningId={}, {}", warningId, e.getMessage(), e);
+            return ApiResponse.serverError("处理预警失败: " + e.getMessage());
         }
     }
 
@@ -1793,6 +1851,49 @@ public class TeacherController {
             try { return Long.parseLong(header); } catch (NumberFormatException ignored) {}
         }
         return null;
+    }
+
+    /** 取第一个非空白的值并 trim；都没有则返回 {@code null}。 */
+    private static String firstNonBlank(Object... values) {
+        for (Object value : values) {
+            if (value != null && !value.toString().trim().isEmpty()) {
+                return value.toString().trim();
+            }
+        }
+        return null;
+    }
+
+    /**
+     * 帮扶措施 + 沟通记录 → {@code handle_result}。
+     *
+     * <p>{@code academic_warning} 没有单独放备注的列，但这两段都是"处理了什么"的一部分，
+     * 丢掉哪一段都又是一处"提交体被静默丢弃"，所以合并存进同一列并保留可读的标记。
+     * 两段都空时给中性默认值「已处理」（与 warning-service 的 {@code handleWarning} 一致）。
+     */
+    private static String joinHandleResult(String measures, String remark) {
+        String m = measures == null ? "" : measures;
+        String r = remark == null ? "" : remark;
+        if (m.isEmpty() && r.isEmpty()) {
+            return "已处理";
+        }
+        if (r.isEmpty()) {
+            return m;
+        }
+        if (m.isEmpty()) {
+            return "沟通记录：" + r;
+        }
+        return "帮扶措施：" + m + "；沟通记录：" + r;
+    }
+
+    /**
+     * {@code handled_by} 是 {@code varchar(100)}；严格模式下超长会直接抛
+     * {@code DataTooLong}，那会变成"处理失败"而其实只是名字太长。截断比报错合理。
+     */
+    private static String truncate(String value, int max) {
+        if (value == null || value.length() <= max) {
+            return value;
+        }
+        return value.substring(0, max);
     }
 
     private boolean isAdmin(HttpServletRequest request) {

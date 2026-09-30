@@ -271,11 +271,17 @@ class ApiClient {
      * 我的班级的预警。行里 `warningLevel` 与 `status` 都是**中文**
      * （"中度"/"待处理"），一律过 `utils/warning.js` 的 `normalizeWarning` 再用。
      * `className` 后端已查好，可直接显示。
-     * ⚠️ `POST /teachers/warnings/{id}/process` 是**纯桩**（只回一个 Map，不写库），
-     *    所以教师端预警页**不提供处理按钮** —— 处理入口在辅导员端与学院管理员端。
+     * ⚠️ 教师端预警页**不提供处理按钮** —— 处理入口在辅导员端与学院管理员端。
+     *    （2026-09-30 之前这里写的是"因为 `process` 是纯桩所以不做"；桩已经补成真实现，
+     *     但小程序端仍**有意**不给入口，原因不再是"接口是假的"，而是它与辅导员端职责重叠。
+     *     要加的话，接口本身已可用。）
      */
     getWarnings: (teacherId, status) => this._get(`/teachers/warnings/${teacherId}${status !== undefined && status !== null && status !== '' ? '?status=' + status : ''}`),
-    /** **纯桩，不落库**。保留声明只为标注明白，页面不要调用。 */
+    /**
+     * 处理预警，真落库（2026-09-30 起）。返回体的 `status/handledBy/handleResult/handledAt`
+     * 都是**回读数据库**得到的值，不是后端本地拼的。
+     * 入参兼容 `{handleResult, handledBy}` 与 PC 端的 `{measures, remark}`。
+     */
     processWarning: (id, data) => this._post(`/teachers/warnings/${id}/process`, data),
 
     // —— 反馈 ——
