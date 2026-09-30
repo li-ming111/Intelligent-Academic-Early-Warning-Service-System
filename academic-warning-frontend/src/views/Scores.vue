@@ -234,7 +234,7 @@ const dashWarningLevel = ref('')
 const detailVisible = ref(false)
 const detailRow = ref(null)
 const appealVisible = ref(false)
-const appealForm = ref({ courseName: '', currentScore: '', reason: '', description: '' })
+const appealForm = ref({ courseId: null, courseName: '', currentScore: '', reason: '', description: '' })
 const gpaChartRef = ref(null)
 const distChartRef = ref(null)
 let gpaChart = null
@@ -493,7 +493,7 @@ function gradeTagType(g) {
 
 // ---- 申诉 ----
 function openAppeal(row) {
-  appealForm.value = { courseName: row.courseName, currentScore: row.scoreTotal, reason: '', description: '' }
+  appealForm.value = { courseId: row.courseId ?? null, courseName: row.courseName, currentScore: row.scoreTotal, reason: '', description: '' }
   appealVisible.value = true
 }
 function openDetail(row) { detailRow.value = row; detailVisible.value = true }
@@ -502,8 +502,16 @@ async function submitAppeal() {
     ElMessage.warning('请完善申诉信息'); return
   }
   try {
+    // ⚠️ 这里从前只发 {studentId, reason, description} —— **没发 courseId**。
+    // 页面上明明写着"课程：xxx"，库里那行的 course_id 却是 NULL，
+    // 于是在申诉列表里显示成「未知科目」。row 本来就有 courseId，直接带上。
+    if (!appealForm.value.courseId) {
+      ElMessage.error('这条成绩没有课程编号，没法提交申诉，请联系管理员')
+      return
+    }
     await studentAPI.submitAppeal({
       studentId: localStorage.getItem('userId'),
+      courseId: appealForm.value.courseId,
       reason: appealForm.value.reason,
       description: appealForm.value.description
     })

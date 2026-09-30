@@ -792,27 +792,52 @@ public class StudentServiceImpl implements StudentService {
     }
 
     // ==================== 申诉 ====================
+    /** 提交体认得的 key。其余一律**记日志**，不再一声不响地丢（见下面 submitAppeal 的注释）。 */
+    private static final java.util.Set<String> APPEAL_KEYS = java.util.Set.of(
+            "studentId", "scoreId", "reason", "courseId", "attachments", "description");
+
+    /**
+     * 提交成绩申诉。
+     *
+     * <p>⚠️ 2026-09-30 修：此前这里只读 {@code studentId/scoreId/reason/courseId/attachments}，
+     * 而 {@code request} 是 {@code Map}，多出来的 key 被**静默丢弃**。偏偏 PC 端两个页面
+     * （{@code Appeals.vue:196}、{@code Scores.vue:501}）的"请详细描述申诉理由"都是**必填**，
+     * 填了不让空着交，交上去却从来没进过库 —— 学生写了正文，库里只剩一个原因代码。
+     * 现在 {@code description} 有对应的列（{@code score_appeals.description}，
+     * 见 db_backups/appeal_description_20260930_apply.sql），真写进去。
+     *
+     * <p>剩下没认出来的 key 仍然**不拒绝**（拒绝会打断现有页面），但会打 WARN 把 key 名列出来，
+     * 所以"提交体被吞"这件事至少是可查的，不再是无声的。
+     */
     @Override
     public Object submitAppeal(Object request) {
         log.info("提交成绩申诉: {}", request);
         try {
             @SuppressWarnings("unchecked")
             Map<String, Object> req = (Map<String, Object>) request;
+            java.util.List<String> ignored = req.keySet().stream()
+                    .filter(k -> !APPEAL_KEYS.contains(k)).sorted().toList();
+            if (!ignored.isEmpty()) {
+                log.warn("提交申诉时忽略了不认识的字段（未落库）: keys={}", ignored);
+            }
             ScoreAppeal appeal = new ScoreAppeal();
             // 前端传来的是 userId，通过 StudentProfile 查找真实 studentId
             Long uid = req.containsKey("studentId") ? Long.valueOf(req.get("studentId").toString()) : null;
-            if (uid != null) {
-                StudentProfile sp = studentProfileMapper.selectByUserId(uid);
-                if (sp != null) {
-                    appeal.setStudentId(sp.getId());
-                } else {
-                    return Map.of("error", "学生档案不存在");
-                }
+            if (uid == null) {
+                // 从前没这条判断：studentId 缺失时会带着 null 的 student_id 去 insert，
+                // 撞 NOT NULL 外键后由 catch 兜住，返回的是一句 JDBC 报错
+                return Map.of("error", "缺少 studentId");
             }
+            StudentProfile sp = studentProfileMapper.selectByUserId(uid);
+            if (sp == null) {
+                return Map.of("error", "学生档案不存在");
+            }
+            appeal.setStudentId(sp.getId());
             if (req.containsKey("scoreId")) appeal.setScoreId(Long.valueOf(req.get("scoreId").toString()));
             if (req.containsKey("reason")) appeal.setReason(req.get("reason").toString());
             if (req.containsKey("courseId")) appeal.setCourseId(Long.valueOf(req.get("courseId").toString()));
             if (req.containsKey("attachments")) appeal.setAttachments(req.get("attachments").toString());
+            if (req.containsKey("description")) appeal.setDescription(req.get("description").toString());
             appeal.setStatus(0); // pending
             appeal.setCreatedAt(java.time.LocalDateTime.now());
             appeal.setUpdatedAt(java.time.LocalDateTime.now());
@@ -820,6 +845,12 @@ public class StudentServiceImpl implements StudentService {
             Map<String, Object> resp = new HashMap<>();
             resp.put("id", appeal.getId());
             resp.put("message", "申诉提交成功");
+            // 回读，返回的必须是库里的值（尤其是 description 到底写没写进去）
+            ScoreAppeal saved = scoreAppealMapper.selectById(appeal.getId());
+            if (saved == null) {
+                return Map.of("error", "申诉提交失败：写入后回读不到该条记录");
+            }
+            resp.put("description", saved.getDescription());
             return resp;
         } catch (Exception e) {
             log.error("提交申诉失败: {}", e.getMessage());
@@ -1392,6 +1423,8 @@ public class StudentServiceImpl implements StudentService {
         m.put("courseId", a.getCourseId());
         m.put("warningId", a.getWarningId());
         m.put("reason", a.getReason());
+        // 学生自己写的正文。加列（2026-09-30）之前的申诉这里是 null，前端按空处理、不显示那一块。
+        m.put("description", a.getDescription());
         m.put("attachments", a.getAttachments());
         m.put("status", a.getStatus());
         m.put("reply", a.getReply());

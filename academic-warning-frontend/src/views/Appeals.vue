@@ -84,6 +84,11 @@
         <div class="detail-item"><span class="dl">编号</span><span class="dv">#{{ detail.id }}</span></div>
         <div class="detail-item"><span class="dl">科目</span><span class="dv">{{ detail.courseName || '未知' }}</span></div>
         <div class="detail-item"><span class="dl">原因</span><span class="dv">{{ reasonLabel(detail.reason) }}</span></div>
+        <!-- 学生自己写的正文。加列（2026-09-30）之前的申诉没有这段文字，那就整块不显示，
+             不要渲染成空的"详细说明："，看着像数据丢了 -->
+        <div v-if="detail.description" class="detail-item detail-desc">
+          <span class="dl">详细说明</span><span class="dv">{{ detail.description }}</span>
+        </div>
         <div class="detail-item"><span class="dl">状态</span><el-tag :type="statusColor(detail.status)" size="small">{{ statusName(detail.status) }}</el-tag></div>
         <div class="detail-item"><span class="dl">提交时间</span><span class="dv">{{ fmt(detail.createdAt) }}</span></div>
         <div v-if="detail.reply" class="detail-reply">
@@ -241,6 +246,9 @@ async function withdraw(id) {
 .detail-item { display: flex; align-items: center; margin-bottom: 12px; gap: 12px; }
 .detail-item .dl { width: 70px; color: #71717a; flex-shrink: 0; }
 .detail-item .dv { flex: 1; color: #18181b; }
+/* 正文可能多段（学生自己敲的回车），要对齐顶部并把换行原样显示 */
+.detail-desc { align-items: flex-start; }
+.detail-desc .dv { white-space: pre-wrap; word-break: break-word; line-height: 1.6; }
 .detail-reply { background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; padding: 12px; margin-top: 10px; }
 .reply-label { font-size: 13px; color: #16a34a; margin-bottom: 6px; font-weight: 600; }
 .reply-text { color: #3f3f46; line-height: 1.5; white-space: pre-wrap; }

@@ -114,10 +114,13 @@
           </view>
         </view>
 
-        <!-- 这里**刻意没有**「详细说明」输入框：
-             submitAppeal 只读 studentId/scoreId/reason/courseId/attachments 五个 key，
-             自由文本 description 会被后端直接丢掉 —— PC 端就有这个框，填了等于没填。
-             与其给一个假装能记录意见的输入框，不如不给。 -->
+        <!-- 这里**刻意没有**「详细说明」输入框。
+             ⚠️ 2026-09-30 起这条**不再是**"后端存不下"：score_appeals 已经加了
+             description 列（db_backups/appeal_description_20260930_apply.sql），
+             submitAppeal 也真的写它、并回读返回。PC 端两个页面的那个必填框从"填了等于没填"
+             变成了"真的存进去"。
+             小程序这边仍然不给这个框，是**产品选择**（小屏输长文体验差，且申诉在
+             PC 端有完整入口），不是后端限制 —— 将来要加就发 `description` 这个 key。 -->
         <text class="form__note">说明：申诉仅记录所选课程与原因，如需补充材料请联系任课教师。</text>
       </view>
 
