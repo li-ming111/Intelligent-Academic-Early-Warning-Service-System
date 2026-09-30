@@ -1,0 +1,45 @@
+idempotency-key: cli-run-c3fd2aeb-bb46-4cea-8e4c-c1709dcaf428
+[tunnel] Reaching http://localhost:5173 through TestSprite (client a0e7b75d-a46e-485e-b481-d6831d46ee05).
+Run e8958c17-95a6-4383-ac72-3e902856ee18
+Dashboard: https://www.testsprite.com/dashboard-v3/o/3579c109-8540-53ab-9b87-3496c1e1ce4d/projects/04bc77d3-80d7-4b4f-a470-90c6c69e5d28/test-cases/ccf8adb9-2412-4f41-815f-0a14e6665934
+[tunnel] Target connect failed: Target connect failed for clients2.google.com:80: connect timeout 10000ms
+[tunnel] Target connect failed: Target connect failed for accounts.google.com:443: connect timeout 10000ms
+[tunnel] Target connect failed: Target connect failed for accounts.google.com:443: connect timeout 10000ms
+[tunnel] Target connect failed: Target connect failed for accounts.google.com:443: connect timeout 10000ms
+[tunnel] Target connect failed: Target connect failed for accounts.google.com:443: connect timeout 10000ms
+[tunnel] Target connect failed: Target connect failed for accounts.google.com:443: connect timeout 10000ms
+{
+  "runId": "e8958c17-95a6-4383-ac72-3e902856ee18",
+  "testId": "ccf8adb9-2412-4f41-815f-0a14e6665934",
+  "testTitle": "辅导员登录后仪表盘问候语显示真名而非兜底文案",
+  "projectId": "04bc77d3-80d7-4b4f-a470-90c6c69e5d28",
+  "userId": "b408f408-20e1-70bd-9d0e-738885be10a1",
+  "status": "passed",
+  "source": "cli",
+  "createdAt": "2026-09-21T08:38:32.277Z",
+  "startedAt": null,
+  "finishedAt": "2026-09-21T08:40:33.240Z",
+  "codeVersion": null,
+  "targetUrl": "http://localhost:5173",
+  "environment": {
+    "id": "10d6848b-9726-48ec-a35f-a9beb98a0ac5",
+    "name": "local-5173"
+  },
+  "createdFrom": null,
+  "failedStepIndex": null,
+  "failureKind": null,
+  "error": "",
+  "videoUrl": "https://testsprite-videos.s3.us-east-1.amazonaws.com/20260921-084032-bd14e3eb.webm?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=ASIAZQ3DRZAIBUMIUB7K%2F20260921%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20260921T084033Z&X-Amz-Expires=604800&X-Amz-Security-Token=IQoJb3JpZ2luX2VjEL3%2F%2F%2F%2F%2F%2F%2F%2F%2F%2FwEaCXVzLWVhc3QtMSJGMEQCIFIrPsZamFzYUIa43VbHb3bmIxMl3GhhP5M%2FFvzbEFnFAiB9PxCpBS3YVvQVV1jcADJrVwT9bhtMQh5cMQ0nGUtvvCqEBAiG%2F%2F%2F%2F%2F%2F%2F%2F%2F%2F8BEAAaDDY1NDY1NDQyNTEwNCIM4m%2BSFGHTQuq%2FmtDrKtgDD9F95JEKl8Bpfoizbj4%2BWOdAO5iDNs8vjz1agtHyshQMyDnqRB8diTY3dCMnTjmzvlZ6CH%2FunzFshqxxZ2iIaId9cmhTtV1TKeMgFS%2F9SNY3wTNHSOy1diT3GNZxtevhlUwSRTi4FecaMrCNFWnyPWcIBOmJnUXCZg3gzDQdoz8%2BlVKQL5N5sWNuDyqQi%2FWToL9iyve7vLUK%2FnLzdb6DL5042cKWGG%2FMLe0J58US8yAq3DGZyELjlNK5zxvkJiz8oAY2nF5Zuus2evaTwVMc2bxG7MX%2B%2FqR%2Fx85b3UiRm4qDyVh6gYjrCPW9J4Zy17VPxNRULqps4d%2FvJZfxEU39G6SdJNHCCjonnNrYBa%2BdTP2BEMN9GdmoKPBfpaxJFiPoLe%2B6ZnXYWB8gkLfYZZZivvT6tOwwj28g%2BtKooPmhHOdHdphM%2BcyKgvQKqe2QRBF8dgF%2B5mgdkKJxC1hMOpd7WxK%2BTS4HAUCHETcQv7xImpUFLkKnG%2FI2WLrFzKlLFBENjroQXKcgb6qba3lK1XU0%2FFE4ki8vveOBJ3GNTcShAgThzyDyEizSlYLXjOHPduPIWvwyfMh2n3CdL913DimnCrA12kLblHlnrjAlwpbfP44%2BjcyUdb5lGTDD4sLVBjqmAQwuv1RHscR4yB1QIk7sb4zDFhYurK3jaLU%2Bcw6ND6VyzcVEPsdmrXQif69oQ9VYvuTKASpMUHXO3R68ASNoOvbnM4EXVrQj4YmiXl8zy5D4U%2Bnu2Vg2KYnK%2BppSEIl%2Ba%2F1NBQ2Q0Um7y5wBzTDbSA%2Br7D0g8AvBaXiumPYrleMT7qlrGMcWjBBwydtWxVcvh8mtoNpQ6CcxRYELpcOfg8J3eyPa80w%3D&X-Amz-Signature=6c2571cfc8d6b2714216fefb1e65732c8351e8ccbeb6d092844b3482d2693be3&X-Amz-SignedHeaders=host&x-amz-checksum-mode=ENABLED&x-id=GetObject",
+  "stepSummary": {
+    "total": 7,
+    "completed": 7,
+    "passedCount": 7,
+    "failedCount": 0
+  },
+  "dashboardUrl": "https://www.testsprite.com/dashboard-v3/o/3579c109-8540-53ab-9b87-3496c1e1ce4d/projects/04bc77d3-80d7-4b4f-a470-90c6c69e5d28/test-cases/ccf8adb9-2412-4f41-815f-0a14e6665934",
+  "executionUrl": "https://www.testsprite.com/dashboard-v3/o/3579c109-8540-53ab-9b87-3496c1e1ce4d/projects/04bc77d3-80d7-4b4f-a470-90c6c69e5d28/execution/05873a40-556d-4378-8be2-ea0f356181af",
+  "apiOutput": null,
+  "trace": null
+}
+requestId: cli_cd0f3ae7-ee4e-4b86-9fc3-e37dbd469e0e
+[tunnel] Target connect failed: Target connect failed for accounts.google.com:443: connect timeout 10000ms

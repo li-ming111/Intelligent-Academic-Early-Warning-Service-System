@@ -1,0 +1,20 @@
+{
+  "$schema": "https://raw.githubusercontent.com/TestSprite/testsprite-cli/v0.12.0/schemas/plan.schema.json",
+  "projectId": "04bc77d3-80d7-4b4f-a470-90c6c69e5d28",
+  "type": "frontend",
+  "name": "学生首页顶部姓名区显示真实姓名而非学号",
+  "planSteps": [
+    {
+      "type": "action",
+      "description": "打开 /login。用户名输入框填入 2023020616，密码输入框填入 123456，验证码输入框填入 1234，点击「登 录」按钮"
+    },
+    {
+      "type": "assertion",
+      "description": "跳到 /student/dashboard 后，定位页面顶部问候卡片里的大号姓名标题——它紧跟在「早上好/下午好/晚上好」这类问候语的正下方，字号明显大于正文。该标题显示的文本必须是「司明」"
+    },
+    {
+      "type": "assertion",
+      "description": "上面那个顶部大号姓名标题的文本中不得出现学号「2023020616」。重要：只检查这一个标题元素。页面上其他位置（例如预警描述、成绩列表、课程卡片等正文区域）即使出现「司明」或「2023020616」也不算数，不要用它们来满足本断言"
+    }
+  ]
+}
