@@ -563,6 +563,13 @@ public class StudentController {
     }
 
     // ==================== 帮扶反馈 (P0新增) ====================
+    /**
+     * 提交 / 更新帮扶评价。
+     *
+     * <p>⚠️ 注意这里的**双重信封**：本方法把 service 的返回（可能是
+     * {@code {"success":false,"message":"..."}}）再包一层放进 `data`，
+     * 而 HTTP 与 `code` 都是 200 —— 判断成败必须看 `data.success`，不是看请求有没有成功。
+     */
     @PostMapping("/evaluations/submit")
     public ApiResponse<Object> submitEvaluation(@RequestBody Object evaluation) {
         try {
@@ -574,6 +581,14 @@ public class StudentController {
         }
     }
 
+    /**
+     * 某学生的评价列表。
+     *
+     * <p>⚠️ 路径里的 `{studentId}` 是 **`student_profile.id`**（司明 = 3），
+     * 不是 `users.id`（司明 = 27）—— 与 `/students/**` 其它接口的口径**不一样**，
+     * 因为底层 SQL 走的是 `assistance_plans.student_id`（存的是 profile id）。
+     * 两个 id 空间有重叠值，传错**不报错、只会返回空数组**。
+     */
     @GetMapping("/evaluations/{studentId}/list")
     public ApiResponse<Object> getEvaluationsByStudent(@PathVariable String studentId) {
         try {
@@ -585,6 +600,12 @@ public class StudentController {
         }
     }
 
+    /**
+     * 某条帮扶计划下的评价。
+     *
+     * <p>⚠️ 路径里的 `{planId}` 是 **`assistance_plans.id`**，和上面那套 profile id
+     * 完全是另一个空间，但两个都是纯数字 —— 调用时别看错路径。没有评价时返回**空数组**（原来回 `{"error":"无评价数据"}`）。
+     */
     @GetMapping("/evaluations/{planId}/detail")
     public ApiResponse<Object> getPlanEvaluation(@PathVariable Long planId) {
         try {
@@ -596,6 +617,7 @@ public class StudentController {
         }
     }
 
+    /** 评价统计。⚠️ `{studentId}` 同样是 **`student_profile.id`**（见上面的 list 接口）。 */
     @GetMapping("/evaluations/{studentId}/statistics")
     public ApiResponse<Object> getEvaluationStatistics(@PathVariable String studentId) {
         try {

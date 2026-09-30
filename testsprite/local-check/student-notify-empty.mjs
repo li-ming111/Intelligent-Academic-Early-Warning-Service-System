@@ -93,6 +93,7 @@ const main = async () => {
   }
 
   await send('Page.enable'); await send('Runtime.enable'); await send('Network.enable')
+  closeBrowser = async () => { try { await send('Browser.close') } catch {} }
 
   await send('Page.navigate', { url: `${APP}/login` })
   await sleep(3000)
@@ -197,7 +198,12 @@ const main = async () => {
 }
 
 let code = 1
+let closeBrowser = async () => {}
 try { code = (await main()) ? 1 : 0 } catch (e) { console.log(`\n脚本异常: ${e.message}`) }
+// 直接 kill 浏览器会让 vite dev server 吃到未捕获的 socket ECONNRESET 而整个进程退出
+// （2026-09-30 实测：跑一次脚本死一次，下一轮报"登录表单没找全"，看着像页面坏了）。
+await closeBrowser()
+await sleep(800)
 try { chrome.kill() } catch {}
 try { rmSync(profile, { recursive: true, force: true }) } catch {}
 console.log(code === 0 ? '\nPASS(0)  页面对得上接口' : '\nFAIL(1)  页面与接口对不上（见上）')

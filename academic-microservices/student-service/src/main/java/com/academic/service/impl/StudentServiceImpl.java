@@ -794,7 +794,10 @@ public class StudentServiceImpl implements StudentService {
     // ==================== 申诉 ====================
     /** 提交体认得的 key。其余一律**记日志**，不再一声不响地丢（见下面 submitAppeal 的注释）。 */
     private static final java.util.Set<String> APPEAL_KEYS = java.util.Set.of(
-            "studentId", "scoreId", "reason", "courseId", "attachments", "description");
+            "studentId", "scoreId", "reason", "courseId", "attachments", "description",
+            // PC 端 AppealManagement.vue 的「关联预警」发的是 warningId，
+            // score_appeals 有 warning_id 列 —— 此前它同样被静默丢弃（该页那个输入框填了等于没填）
+            "warningId");
 
     /**
      * 提交成绩申诉。
@@ -805,6 +808,9 @@ public class StudentServiceImpl implements StudentService {
      * 填了不让空着交，交上去却从来没进过库 —— 学生写了正文，库里只剩一个原因代码。
      * 现在 {@code description} 有对应的列（{@code score_appeals.description}，
      * 见 db_backups/appeal_description_20260930_apply.sql），真写进去。
+     *
+     * <p>同一批还接上了 {@code warningId}（{@code score_appeals.warning_id}）——
+     * {@code AppealManagement.vue} 的「关联预警」输入框一直发这个键，也一直被丢掉。
      *
      * <p>剩下没认出来的 key 仍然**不拒绝**（拒绝会打断现有页面），但会打 WARN 把 key 名列出来，
      * 所以"提交体被吞"这件事至少是可查的，不再是无声的。
@@ -838,6 +844,28 @@ public class StudentServiceImpl implements StudentService {
             if (req.containsKey("courseId")) appeal.setCourseId(Long.valueOf(req.get("courseId").toString()));
             if (req.containsKey("attachments")) appeal.setAttachments(req.get("attachments").toString());
             if (req.containsKey("description")) appeal.setDescription(req.get("description").toString());
+            // warning_id 这一列**没有外键**（实测 information_schema 里 score_appeals 只挂了
+            // score_id→scores.id 和 student_id→student_profile.id），所以随便填一个数都会被静默存下，
+            // 事后看库完全看不出这条"关联预警"指向空气。这里显式把它查一遍：
+            // 查不到就拒；查到了但不是这个学生的预警（academic_warning.student_id 用的是 profile id），
+            // 也拒 —— 否则学生可以把自己档案挂到别人的预警上。
+            if (req.containsKey("warningId")) {
+                Object raw = req.get("warningId");
+                if (raw != null && !"".equals(raw.toString())) {
+                    Long wid = asLong(raw);
+                    if (wid == null) {
+                        return Map.of("error", "warningId 必须是数字: " + raw);
+                    }
+                    AcademicWarning w = academicWarningMapper.selectById(wid);
+                    if (w == null) {
+                        return Map.of("error", "预警不存在: " + wid);
+                    }
+                    if (!sp.getId().equals(w.getStudentId())) {
+                        return Map.of("error", "预警 " + wid + " 不属于该学生，申诉未提交");
+                    }
+                    appeal.setWarningId(wid);
+                }
+            }
             appeal.setStatus(0); // pending
             appeal.setCreatedAt(java.time.LocalDateTime.now());
             appeal.setUpdatedAt(java.time.LocalDateTime.now());
@@ -851,6 +879,7 @@ public class StudentServiceImpl implements StudentService {
                 return Map.of("error", "申诉提交失败：写入后回读不到该条记录");
             }
             resp.put("description", saved.getDescription());
+            resp.put("warningId", saved.getWarningId());
             return resp;
         } catch (Exception e) {
             log.error("提交申诉失败: {}", e.getMessage());
@@ -1046,43 +1075,159 @@ public class StudentServiceImpl implements StudentService {
     }
 
     // ==================== 订阅管理 ====================
+
+    /** 订阅设置认识的 9 个 key（顺序固定，报错信息才稳定）。其余打 WARN，不再无声丢弃。 */
+    private static final List<String> SUBSCRIPTION_KEYS = List.of(
+            "subscribeWarnings", "subscribeLow", "subscribeMedium", "subscribeHigh",
+            "subscribeAssistance", "subscribeSystem",
+            "pushEmail", "pushSms", "pushApp");
+
+    /**
+     * 读取订阅偏好。
+     *
+     * <p>⚠️ 参数是 **`student_profile.id`**（`subscription_preferences.student_id` 存的就是它）。
+     *
+     * <p>2026-09-30 改：原来查不到就 `insertDefault(studentId)` —— **一个 GET 会写库**，
+     * 而且传进来的是 `users.id` 时（两个 id 空间有重叠值），它会照着那个错的 id
+     * 造一条指向别人的默认偏好行，页面照常显示默认值、数据库里多一行，全程没人看得出来。
+     * 现在先确认这个 id 真是一个学生档案；不是就如实报错，不再制造幽灵行。
+     */
     @Override
     public Object getSubscriptionPreferences(Long studentId) {
-        log.info("获取订阅偏好: studentId={}", studentId);
+        log.info("获取订阅偏好: profileId={}", studentId);
+        if (studentProfileMapper.selectById(studentId) == null) {
+            return subscriptionFail("学生档案不存在: " + studentId + "（这里要的是 student_profile.id）");
+        }
         SubscriptionPreference sp = subscriptionPreferenceMapper.selectByStudentId(studentId);
         if (sp == null) {
-            // 创建默认偏好
+            // 确实是学生、只是还没有偏好行 → 建一行默认的再读回来（写入的 id 是核对过的）
             subscriptionPreferenceMapper.insertDefault(studentId);
             sp = subscriptionPreferenceMapper.selectByStudentId(studentId);
+            if (sp == null) {
+                return subscriptionFail("订阅偏好创建后回读不到（studentId=" + studentId + "）");
+            }
         }
         return subToMap(sp);
     }
 
+    /**
+     * 更新订阅偏好。
+     *
+     * <p>⚠️ 参数同样是 **`student_profile.id`**。
+     *
+     * <p>2026-09-30 改：原来逐字段 `(Integer) pref.get(...)` **硬转**，而页面上的
+     * `el-checkbox` v-model 提交出来的是**布尔值** —— 于是「保存设置」必然
+     * `ClassCastException`（拦在 controller 的 catch 里，回 code 500），
+     * 而那时页面用死分支读响应，看不出任何异常，就是"点了没反应"。
+     * 现在 true/false 与 1/0 都收；认不出的值**报错**而不是静默跳过；写完回读一行再返回。
+     */
     @Override
     public Object updateSubscriptionPreferences(Long studentId, Object preferences) {
-        log.info("更新订阅偏好: studentId={}", studentId);
+        log.info("更新订阅偏好: profileId={}, preferences={}", studentId, preferences);
         @SuppressWarnings("unchecked")
         Map<String, Object> pref = (Map<String, Object>) preferences;
-        // 使用 MyBatis-Plus 的 updateById
+        if (pref == null || pref.isEmpty()) {
+            return subscriptionFail("没有要更新的订阅设置");
+        }
+        if (studentProfileMapper.selectById(studentId) == null) {
+            return subscriptionFail("学生档案不存在: " + studentId + "（这里要的是 student_profile.id）");
+        }
+
+        List<String> ignored = pref.keySet().stream()
+                .filter(k -> !SUBSCRIPTION_KEYS.contains(k)).sorted().toList();
+        if (!ignored.isEmpty()) {
+            log.warn("更新订阅偏好时忽略了不认识的字段（未落库）: keys={}", ignored);
+        }
+
+        Map<String, Integer> values = new LinkedHashMap<>();
+        for (String key : SUBSCRIPTION_KEYS) {
+            if (!pref.containsKey(key)) {
+                continue;
+            }
+            Integer v = asFlag(pref.get(key));
+            if (v == null) {
+                return subscriptionFail("订阅设置 " + key + " 只能是 true/false 或 1/0（收到 "
+                        + pref.get(key) + "）");
+            }
+            values.put(key, v);
+        }
+        if (values.isEmpty()) {
+            return subscriptionFail("没有可识别的订阅设置（认识的是 " + SUBSCRIPTION_KEYS + "）");
+        }
+
         SubscriptionPreference sp = subscriptionPreferenceMapper.selectByStudentId(studentId);
         if (sp == null) {
             subscriptionPreferenceMapper.insertDefault(studentId);
             sp = subscriptionPreferenceMapper.selectByStudentId(studentId);
+            if (sp == null) {
+                return subscriptionFail("订阅偏好创建后回读不到（studentId=" + studentId + "）");
+            }
         }
-        if (sp != null) {
-            if (pref.containsKey("subscribeWarnings")) sp.setSubscribeWarnings((Integer)pref.get("subscribeWarnings"));
-            if (pref.containsKey("subscribeLow")) sp.setSubscribeLow((Integer)pref.get("subscribeLow"));
-            if (pref.containsKey("subscribeMedium")) sp.setSubscribeMedium((Integer)pref.get("subscribeMedium"));
-            if (pref.containsKey("subscribeHigh")) sp.setSubscribeHigh((Integer)pref.get("subscribeHigh"));
-            if (pref.containsKey("subscribeAssistance")) sp.setSubscribeAssistance((Integer)pref.get("subscribeAssistance"));
-            if (pref.containsKey("subscribeSystem")) sp.setSubscribeSystem((Integer)pref.get("subscribeSystem"));
-            if (pref.containsKey("pushEmail")) sp.setPushEmail((Integer)pref.get("pushEmail"));
-            if (pref.containsKey("pushSms")) sp.setPushSms((Integer)pref.get("pushSms"));
-            if (pref.containsKey("pushApp")) sp.setPushApp((Integer)pref.get("pushApp"));
-            sp.setUpdatedAt(java.time.LocalDateTime.now());
-            subscriptionPreferenceMapper.updateById(sp);
+        // 用 for 而不是 forEach：`sp` 在上面可能被重新赋值过（不是 effectively final），lambda 捕获不了
+        for (Map.Entry<String, Integer> e : values.entrySet()) {
+            String k = e.getKey();
+            int v = e.getValue();
+            switch (k) {
+                case "subscribeWarnings" -> sp.setSubscribeWarnings(v);
+                case "subscribeLow" -> sp.setSubscribeLow(v);
+                case "subscribeMedium" -> sp.setSubscribeMedium(v);
+                case "subscribeHigh" -> sp.setSubscribeHigh(v);
+                case "subscribeAssistance" -> sp.setSubscribeAssistance(v);
+                case "subscribeSystem" -> sp.setSubscribeSystem(v);
+                case "pushEmail" -> sp.setPushEmail(v);
+                case "pushSms" -> sp.setPushSms(v);
+                case "pushApp" -> sp.setPushApp(v);
+                default -> log.warn("未处理的订阅字段: {}", k);
+            }
         }
-        return Map.of("success", true);
+        sp.setUpdatedAt(java.time.LocalDateTime.now());
+        int rows = subscriptionPreferenceMapper.updateById(sp);
+        if (rows <= 0) {
+            return subscriptionFail("订阅设置写入失败（影响 0 行）");
+        }
+
+        // 回读：响应里的值必须是库里的值（本服务里"报成功但没写进去"已出现过好几次）
+        SubscriptionPreference saved = subscriptionPreferenceMapper.selectByStudentId(studentId);
+        if (saved == null) {
+            return subscriptionFail("订阅设置写入后回读不到（studentId=" + studentId + "）");
+        }
+        Map<String, Object> resp = new LinkedHashMap<>(subToMap(saved));
+        resp.put("success", true);
+        return resp;
+    }
+
+    /** 订阅接口失败时的统一形状（HTTP 与 code 仍是 200，成败只在载荷里）。 */
+    private static Map<String, Object> subscriptionFail(String message) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("success", false);
+        m.put("message", message);
+        return m;
+    }
+
+    /**
+     * 订阅开关 → 1/0。
+     * 接受 `true/false`（el-checkbox 实际发的）、`1/0`（库里原来的存法）、`"true"/"false"/"1"/"0"`；
+     * 其它一律返回 null，由调用方报错 —— 不猜、不静默当成 0。
+     */
+    private static Integer asFlag(Object value) {
+        if (value == null) {
+            return null;
+        }
+        if (value instanceof Boolean b) {
+            return b ? 1 : 0;
+        }
+        if (value instanceof Number n) {
+            int i = n.intValue();
+            return (i == 0 || i == 1) ? i : null;
+        }
+        String s = value.toString().trim();
+        if ("true".equalsIgnoreCase(s) || "1".equals(s)) {
+            return 1;
+        }
+        if ("false".equalsIgnoreCase(s) || "0".equals(s)) {
+            return 0;
+        }
+        return null;
     }
 
     @Override
@@ -1131,47 +1276,310 @@ public class StudentServiceImpl implements StudentService {
     }
 
     // ==================== 帮扶反馈 ====================
+
+    /**
+     * 帮扶评价提交体里**认识**的 key（其余的一律打 WARN，不再无声丢弃）。
+     *
+     * <p>`rating` / `feedback` 是 PC 端 `AssistanceFeedback.vue` **一直在发**的名字，
+     * 和库里的 `score` / `content` 对不上，历史行为是**静默丢弃** —— 实测：
+     * 学生点 4 分、填 5 分有效性、写一整段反馈，接口回 `{"success":true,"message":"评价提交成功"}`，
+     * 而库里那一行是 `score=NULL, content=NULL`（`effectiveness` 当时连列都没有）。
+     * 现在两个名字都收（规范名优先），前端也已统一到 `score` / `content`。
+     *
+     * <p>`studentId` 收下但**不参与写入**（学生身份由 `planId` 关联出来），
+     * 只在传了的时候用来做一次一致性校对，见 {@link #submitEvaluation}。
+     */
+    private static final Set<String> EVALUATION_KEYS = Set.of(
+            "id", "planId", "studentId", "counselorId",
+            "score", "rating", "content", "feedback", "effectiveness");
+
+    /**
+     * 提交 / 更新帮扶评价。
+     *
+     * <p>2026-09-30 之前这个方法只会 INSERT，且只认 4 个 key。由此产生三个问题，
+     * 都在这里一起修掉（每一条都实测复现过）：
+     *
+     * <ol>
+     *   <li>**静默丢字段**：页面发 `rating` / `effectiveness` / `feedback`，方法只读 `score` / `content`，
+     *       多出来的键一声不响地消失，接口仍回 `success:true`。现在收别名 + 校验 + 打 WARN。</li>
+     *   <li>**"编辑评价"不生效、反而多出一行**：页面的编辑弹窗会带 `id` 提交，方法却总是 INSERT ——
+     *       实测带 `id=2` 再提交一次，返回的是 `id=3`，库里变成两条同计划的评价。现在带 `id` 走更新。</li>
+     *   <li>**报告与事实不符**：无论写没写进去都回 `{"success":true,"message":"评价提交成功"}`。
+     *       现在写完**回读**一次，响应里的 score/content/effectiveness/counselorId 是库里的值；
+     *       写不进去就返回 `{"success":false,"message":"..."}`，不再假报成功。</li>
+     * </ol>
+     *
+     * <p>身份与辅导员都取自 `planId` 指向的那条帮扶计划：学生 = 计划的 student（所以没有
+     * 独立的 studentId 入库字段），辅导员 = 计划的 counselor_id。客户端传的 `counselorId`
+     * 只用来比对，**不信它**（否则谁都能把评价挂到别的辅导员名下）。
+     *
+     * <p>一条帮扶计划只保留一条评价：不带 `id` 但该计划已有评价时，更新那一行并如实回
+     * `message="该计划已有评价，本次为更新"`，不堆重复行（页面按 planId 判断"是否已评价"）。
+     */
     @Override
     public Object submitEvaluation(Object evaluation) {
         log.info("提交帮扶评价: {}", evaluation);
-        @SuppressWarnings("unchecked")
-        Map<String, Object> req = (Map<String, Object>) evaluation;
-        AssistanceEvaluation ae = new AssistanceEvaluation();
-        if (req.containsKey("planId")) ae.setPlanId(Long.valueOf(req.get("planId").toString()));
-        if (req.containsKey("counselorId")) ae.setCounselorId(Long.valueOf(req.get("counselorId").toString()));
-        if (req.containsKey("content")) ae.setContent(req.get("content").toString());
-        if (req.containsKey("score")) ae.setScore(Integer.valueOf(req.get("score").toString()));
-        ae.setCreatedAt(java.time.LocalDateTime.now());
-        ae.setUpdatedAt(java.time.LocalDateTime.now());
-        assistanceEvaluationMapper.insert(ae);
-        return Map.of("success", true, "id", ae.getId(), "message", "评价提交成功");
+        try {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> req = (Map<String, Object>) evaluation;
+
+            List<String> ignored = req.keySet().stream()
+                    .filter(k -> !EVALUATION_KEYS.contains(k)).sorted().toList();
+            if (!ignored.isEmpty()) {
+                log.warn("提交帮扶评价时忽略了不认识的字段（未落库）: keys={}", ignored);
+            }
+
+            // ---- ① 计划：这条评价归属谁、评的是哪个辅导员，全由它决定 ----
+            Long planId = asLong(req.get("planId"));
+            if (planId == null) {
+                return evaluationFail("缺少 planId（要评价哪条帮扶计划）");
+            }
+            AssistancePlan plan = assistancePlanMapper.selectById(planId);
+            if (plan == null) {
+                return evaluationFail("帮扶计划不存在: " + planId);
+            }
+            if (req.get("studentId") != null) {
+                // studentId 传的是 users.id（与 /students/** 其它接口一致）。
+                // 对不上就拒绝：两个身份打架时静默挑一个，正是这次要修的那类问题。
+                Long profileId = resolveProfileId(asLong(req.get("studentId")));
+                if (profileId == null || !profileId.equals(plan.getStudentId())) {
+                    return evaluationFail("帮扶计划 " + planId + " 不属于该学生，评价未写入");
+                }
+            }
+
+            // ---- ② 评分：必填，且必须是 1-5 的整数 ----
+            Object rawScore = req.get("score") != null ? req.get("score") : req.get("rating");
+            if (rawScore == null) {
+                return evaluationFail("缺少评分（score 或 rating，1-5）");
+            }
+            Integer score = asInteger(rawScore);
+            if (score == null) {
+                return evaluationFail("评分必须是整数（score=" + rawScore + "）");
+            }
+            if (score < 1 || score > 5) {
+                return evaluationFail("评分必须在 1-5 之间（score=" + score + "）");
+            }
+
+            // ---- ③ 有效性：页面标了必填，这里就当真必填（0 不等于"没打分"）----
+            Integer effectiveness = null;
+            if (req.get("effectiveness") != null) {
+                effectiveness = asInteger(req.get("effectiveness"));
+                if (effectiveness == null) {
+                    return evaluationFail("有效性评分必须是整数（effectiveness=" + req.get("effectiveness") + "）");
+                }
+                if (effectiveness < 1 || effectiveness > 5) {
+                    return evaluationFail("有效性评分必须在 1-5 之间（effectiveness=" + effectiveness + "）");
+                }
+            }
+
+            // ---- ④ 定位目标行：带 id 按 id，否则按 planId 找已有评价 ----
+            Long targetId = asLong(req.get("id"));
+            AssistanceEvaluation ae;
+            String message;
+            if (targetId != null) {
+                ae = assistanceEvaluationMapper.selectById(targetId);
+                if (ae == null) {
+                    return evaluationFail("要更新的评价不存在: " + targetId);
+                }
+                if (!planId.equals(ae.getPlanId())) {
+                    return evaluationFail("评价 " + targetId + " 不属于帮扶计划 " + planId + "，未改动");
+                }
+                message = "评价已更新";
+            } else {
+                List<AssistanceEvaluation> existing = assistanceEvaluationMapper.selectByPlanId(planId);
+                if (!existing.isEmpty()) {
+                    ae = existing.get(0);
+                    message = "该计划已有评价，本次为更新";
+                } else {
+                    ae = new AssistanceEvaluation();
+                    ae.setPlanId(planId);
+                    ae.setCreatedAt(java.time.LocalDateTime.now());
+                    message = "评价提交成功";
+                }
+            }
+
+            // ---- ⑤ 辅导员一律取计划上的；客户端传的值只用于比对 ----
+            Long sentCounselor = asLong(req.get("counselorId"));
+            if (sentCounselor != null && !sentCounselor.equals(plan.getCounselorId())) {
+                log.warn("客户端传的 counselorId={} 与计划的辅导员 {} 不一致，按计划取值",
+                        sentCounselor, plan.getCounselorId());
+            }
+            ae.setCounselorId(plan.getCounselorId());
+            ae.setScore(score);
+            ae.setEffectiveness(effectiveness);
+            // 提交体里带了 content（或 feedback）才动这一列：带空串 = 学生清空了输入框，
+            // 如实写空串；完全没带 = 不动（新建时为 NULL）。
+            Object rawContent = req.containsKey("content") ? req.get("content") : req.get("feedback");
+            if (rawContent != null) {
+                ae.setContent(rawContent.toString());
+            } else if (ae.getId() == null) {
+                ae.setContent(null);
+            }
+            ae.setUpdatedAt(java.time.LocalDateTime.now());
+
+            int rows = ae.getId() == null
+                    ? assistanceEvaluationMapper.insert(ae)
+                    : assistanceEvaluationMapper.updateById(ae);
+            if (rows <= 0) {
+                return evaluationFail("评价写入失败（影响 0 行）");
+            }
+
+            // ---- ⑥ 回读：响应里的值必须是库里的值 ----
+            AssistanceEvaluation saved = assistanceEvaluationMapper.selectById(ae.getId());
+            if (saved == null) {
+                return evaluationFail("评价写入后回读不到该条记录（id=" + ae.getId() + "）");
+            }
+            Map<String, Object> resp = new LinkedHashMap<>();
+            resp.put("success", true);
+            resp.put("id", saved.getId());
+            resp.put("message", message);
+            resp.put("score", saved.getScore());
+            resp.put("effectiveness", saved.getEffectiveness());
+            resp.put("content", saved.getContent());
+            resp.put("counselorId", saved.getCounselorId());
+            return resp;
+        } catch (Exception e) {
+            log.error("提交帮扶评价失败: {}", e.getMessage(), e);
+            return evaluationFail("提交帮扶评价失败: " + e.getMessage());
+        }
     }
 
+    /**
+     * 某学生的评价列表。
+     *
+     * <p>⚠️ 参数是 **`student_profile.id`**，不是 `users.id`：SQL 走
+     * `assistance_evaluations JOIN assistance_plans ON ae.plan_id = ap.id WHERE ap.student_id = ?`，
+     * 而 `assistance_plans.student_id` 存的是 profile id（1001 号计划 = 3）。
+     * 两个 id 空间有重叠值，**传错不会报错、只会永远返回空数组**，
+     * 所以调用方必须先把 users.id 换成 profile id（PC 端走 `/students/student-by-user/{uid}`）。
+     */
     @Override
     public Object getEvaluationsByStudent(Long studentId) {
-        log.info("获取学生评价列表: studentId={}", studentId);
+        log.info("获取学生评价列表: profileId={}", studentId);
         List<AssistanceEvaluation> list = assistanceEvaluationMapper.selectByStudentId(studentId);
         return list.stream().map(this::evaluationToMap).toList();
     }
 
+    /**
+     * 某条帮扶计划的评价。
+     *
+     * <p>⚠️ 参数是 **`assistance_plans.id`**（与列表接口的 profile id 是两套空间，注意别混）。
+     * 原实现在没有评价时返回 `{"error":"无评价数据"}` —— 一个列表接口对"空"回错误信封，
+     * 调用方 `list.map(...)` 会直接崩，而且 HTTP 与 code 都是 200，看不出是空还是坏。
+     * 现在如实返回空数组。
+     */
     @Override
     public Object getPlanEvaluation(Long planId) {
         log.info("获取帮扶计划评价: planId={}", planId);
         List<AssistanceEvaluation> list = assistanceEvaluationMapper.selectByPlanId(planId);
-        if (list.isEmpty()) return Map.of("error", "无评价数据");
         return list.stream().map(this::evaluationToMap).toList();
     }
 
+    /**
+     * 评价统计。
+     *
+     * <p>⚠️ 参数同样是 **`student_profile.id`**（见 {@link #getEvaluationsByStudent}）。
+     *
+     * <p>2026-09-30 补：原来只回 `averageScore` / `totalCount`，而页面要的是
+     * 「平均评分 / 有效性评分 / 评分分布」三项，全都没有 —— 于是页面上「有效性评分」
+     * 恒为 0.0、「评分分布」恒显示"暂无数据"（不是页面写错字，是后端没这个字段）。
+     * 现在补 `avgEffectiveness` 与 `ratingDistribution`，并**保留**原来的
+     * `averageScore` / `totalCount` 两个键（小程序等既有调用方不用改）。
+     *
+     * <p>`ratingDistribution` 的五个键（"1".."5"）**一律给出、没有的填 0**，
+     * 前端不用自己补零；`avgEffectiveness` 在"有评价但都没填有效性"时是 0，
+     * 与"确实打了 0 分"不可能混淆（1-5 是唯一合法取值，0 不会入库）。
+     */
     @Override
     public Object getEvaluationStatistics(Long studentId) {
-        log.info("获取评价统计: studentId={}", studentId);
+        log.info("获取评价统计: profileId={}", studentId);
         Double avg = assistanceEvaluationMapper.avgScoreByStudentId(studentId);
+        Double avgEffectiveness = assistanceEvaluationMapper.avgEffectivenessByStudentId(studentId);
         int count = assistanceEvaluationMapper.countByStudentId(studentId);
+        List<Integer> scores = assistanceEvaluationMapper.scoresByStudentId(studentId);
+
+        Map<String, Integer> distribution = new LinkedHashMap<>();
+        for (int s = 1; s <= 5; s++) {
+            distribution.put(String.valueOf(s), 0);
+        }
+        for (Integer s : scores) {
+            if (s == null) {
+                continue;
+            }
+            if (s < 1 || s > 5) {
+                // 提交路径已拦住越界分，这里兜的是历史脏数据：不伪造桶，也不悄悄丢，
+                // 打一条 WARN 让它可查（丢进分布里会凭空多出一行星级，更糟）。
+                log.warn("发现越界评分（1-5 之外），已从分布中排除: studentId={}, score={}", studentId, s);
+                continue;
+            }
+            distribution.merge(String.valueOf(s), 1, Integer::sum);
+        }
+
         Map<String, Object> stats = new HashMap<>();
         stats.put("averageScore", avg != null ? BigDecimal.valueOf(avg).setScale(1, RoundingMode.HALF_UP) : 0);
         stats.put("totalCount", count);
+        stats.put("avgEffectiveness", avgEffectiveness != null
+                ? BigDecimal.valueOf(avgEffectiveness).setScale(1, RoundingMode.HALF_UP) : 0);
+        stats.put("ratingDistribution", distribution);
         return stats;
     }
+
+    /**
+     * 评价失败时的统一形状（与成功形状 `{"success":true,...}` 对称）。
+     *
+     * <p>⚠️ 失败也是 **HTTP 200 + code 200**，成败只在载荷里 —— 前端必须显式判
+     * `res.success === false`，不能只看请求有没有成功。
+     */
+    private static Map<String, Object> evaluationFail(String message) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("success", false);
+        m.put("message", message);
+        return m;
+    }
+
+    /** JSON 数字/字符串 → Long；不是数字就返回 null（不抛异常，让调用方决定怎么报错）。 */
+    private static Long asLong(Object value) {
+        if (value == null) {
+            return null;
+        }
+        if (value instanceof Number n) {
+            return n.longValue();
+        }
+        try {
+            return Long.valueOf(value.toString().trim());
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    /**
+     * JSON 数字/字符串 → Integer，但**严格**：3.5 这种不截断、也不四舍五入，返回 null。
+     *
+     * <p>为什么必须严格：score / effectiveness 都是 INT 列，MySQL 会把 3.5 静默存成 4 ——
+     * 学生点 3.5 星、库里 4 星、页面显示 4 星，全程没人知道。页面的 el-rate 已去掉
+     * allow-half，这里是不信任客户端时的第二道。
+     */
+    private static Integer asInteger(Object value) {
+        if (value == null) {
+            return null;
+        }
+        double d;
+        if (value instanceof Number n) {
+            d = n.doubleValue();
+        } else {
+            try {
+                d = Double.parseDouble(value.toString().trim());
+            } catch (NumberFormatException e) {
+                return null;
+            }
+        }
+        if (!Double.isFinite(d) || d != Math.rint(d)
+                || d < Integer.MIN_VALUE || d > Integer.MAX_VALUE) {
+            return null;
+        }
+        return (int) d;
+    }
+
 
     // ==================== 设置 ====================
     @Override
@@ -1470,6 +1878,10 @@ public class StudentServiceImpl implements StudentService {
         m.put("counselorId", ae.getCounselorId());
         m.put("content", ae.getContent());
         m.put("score", ae.getScore());
+        // 2026-09-30 补：有效性评分原来**没有列也没有这个键**，页面读 `row.effectiveness`
+        // 恒为 undefined（表格里那一栏永远显示 "0 / 5"）。加列同时把它列出来。
+        // 加列前的历史行为 NULL —— 是"当时没收集"，不是 0 分，页面不要拿 `|| 0` 盖过去。
+        m.put("effectiveness", ae.getEffectiveness());
         m.put("createdAt", ae.getCreatedAt() != null ? ae.getCreatedAt().toString() : null);
         return m;
     }

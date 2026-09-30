@@ -1,22 +1,28 @@
 <template>
   <div class="feedback-container">
-    <!-- 评价统计 -->
+    <!-- 评价统计
+         ⚠️ key 一律用后端 `GET /students/evaluations/{profileId}/statistics` 真实返回的四个名字：
+            totalCount / averageScore / avgEffectiveness / ratingDistribution。
+            改前这里是 total / avgRating —— 后端从来没有这两个键（`|| 0` 兜住 undefined），
+            所以「已评价计划」恒 0、「平均评分」恒 0.0，无论学生评价过几次。 -->
     <el-row :gutter="20" class="stats-row">
       <el-col :xs="24" :sm="12" :md="6">
         <el-card class="stat-card" shadow="hover">
-          <div class="stat-number">{{ statistics.total || 0 }}</div>
+          <div class="stat-number">{{ statistics.totalCount || 0 }}</div>
           <div class="stat-label">已评价计划</div>
         </el-card>
       </el-col>
       <el-col :xs="24" :sm="12" :md="6">
         <el-card class="stat-card" shadow="hover">
-          <div class="stat-number">{{ (statistics.avgRating || 0).toFixed(1) }}</div>
+          <!-- 一条评价都没有时后端回 0，但「0.0 分」读起来像"大家都打了 0 分"；
+               显示 "—" 才是实话：没有数据，不是平均值为零 -->
+          <div class="stat-number">{{ statistics.totalCount > 0 ? num(statistics.averageScore).toFixed(1) : '—' }}</div>
           <div class="stat-label">平均评分</div>
         </el-card>
       </el-col>
       <el-col :xs="24" :sm="12" :md="6">
         <el-card class="stat-card" shadow="hover">
-          <div class="stat-number">{{ (statistics.avgEffectiveness || 0).toFixed(1) }}</div>
+          <div class="stat-number">{{ statistics.totalCount > 0 ? num(statistics.avgEffectiveness).toFixed(1) : '—' }}</div>
           <div class="stat-label">有效性评分</div>
         </el-card>
       </el-col>
@@ -38,7 +44,10 @@
               <span class="title">评分分布</span>
             </div>
           </template>
-          <div v-if="statistics.ratingDistribution" class="distribution-list">
+          <!-- 判空用 totalCount 而不是 ratingDistribution：后端现在**总是**回 5 个桶
+               （"1".."5" 都在，没人打过的填 0），空对象在 JS 里是真值，
+               写 `v-if="statistics.ratingDistribution"` 会让"一条评价都没有"也画出一列 0 次。 -->
+          <div v-if="statistics.totalCount > 0" class="distribution-list">
             <div v-for="(count, rating) in statistics.ratingDistribution" :key="rating" class="distribution-item">
               <span class="rating-star">
                 <el-rate :model-value="parseInt(rating)" disabled size="small" />
@@ -81,21 +90,28 @@
           <el-table v-if="evaluations.length > 0" :data="evaluations" stripe style="width: 100%">
             <el-table-column prop="id" label="ID" width="60"></el-table-column>
             <el-table-column prop="planId" label="计划ID" width="80"></el-table-column>
+            <!-- 评分/反馈的字段名用后端的：score / content。
+                 改前读的是 rating / feedback —— 评价列表接口从来没回过这两个键，
+                 所以「评分」那栏永远是 0 颗星、「反馈」那栏永远空白。
+                 ⚠️ `:model-value` 而不是 `v-model`：v-model 会往 row 上写，改的是服务端数据的本地副本。 -->
             <el-table-column label="评分" width="80">
               <template #default="{ row }">
-                <el-rate v-model="row.rating" disabled size="small" />
+                <el-rate :model-value="num(row.score)" disabled size="small" />
               </template>
             </el-table-column>
-            <el-table-column label="有效性" width="80">
+            <el-table-column label="有效性" width="90">
               <template #default="{ row }">
-                <el-tag :type="getEffectivenessType(row.effectiveness)">
-                  {{ row.effectiveness || 0 }} / 5
+                <!-- 历史行为 NULL（加列前提交的评价根本没这一项），如实显示「未评分」，
+                     不用 `|| 0` 盖成 0 分 —— 那会把"没收集到"说成"打了 0 分"。 -->
+                <el-tag v-if="row.effectiveness != null" :type="getEffectivenessType(row.effectiveness)">
+                  {{ row.effectiveness }} / 5
                 </el-tag>
+                <span v-else class="feedback-text">未评分</span>
               </template>
             </el-table-column>
-            <el-table-column prop="feedback" label="反馈" min-width="200">
+            <el-table-column prop="content" label="反馈" min-width="200">
               <template #default="{ row }">
-                <span class="feedback-text">{{ row.feedback }}</span>
+                <span class="feedback-text">{{ row.content }}</span>
               </template>
             </el-table-column>
             <el-table-column prop="createdAt" label="评价时间" width="150">
@@ -124,14 +140,19 @@
           <el-table :data="activePlans" stripe style="width: 100%">
             <el-table-column prop="id" label="计划ID" width="80"></el-table-column>
             <el-table-column prop="title" label="计划名称" min-width="150"></el-table-column>
-            <el-table-column prop="status" label="状态" width="100">
+            <!-- 状态文案直接用后端给的 statusText（进行中/已完成/未开始）。
+                 改前是前端按 'initiated'/'in_progress' 这类**字符串**查表，而后端回的是数字
+                 （0/1/2），于是标签上显示的就是那个数字本身。 -->
+            <el-table-column prop="statusText" label="状态" width="100">
               <template #default="{ row }">
-                <el-tag :type="getStatusType(row.status)">{{ getStatusLabel(row.status) }}</el-tag>
+                <el-tag :type="getStatusType(row.status)">{{ row.statusText || '未开始' }}</el-tag>
               </template>
             </el-table-column>
+            <!-- 进度字段叫 progress（0-100 的整数），不是 progressPercentage ——
+                 改前读后者恒 undefined，`|| 0` 兜成 0，进度条**永远 0%**。 -->
             <el-table-column label="进度" width="150">
               <template #default="{ row }">
-                <el-progress :percentage="row.progressPercentage || 0" />
+                <el-progress :percentage="num(row.progress)" />
               </template>
             </el-table-column>
             <el-table-column label="操作" width="120" fixed="right">
@@ -159,15 +180,18 @@
             />
           </el-select>
         </el-form-item>
+        <!-- ⚠️ 两个 el-rate 都**不能**开 allow-half：库里的 score / effectiveness 都是 INT 列，
+             MySQL 会把 3.5 静默四舍五入成 4 —— 学生点 3.5 星、库里 4 星、页面显示 4 星。
+             后端现在也会对非整数评分报错（不是取整），这里的设置是让它根本不发出去。 -->
         <el-form-item label="计划评分" required>
-          <el-rate v-model="evaluationForm.rating" allow-half show-score />
+          <el-rate v-model="evaluationForm.score" show-score />
         </el-form-item>
         <el-form-item label="有效性评分" required>
-          <el-rate v-model="evaluationForm.effectiveness" allow-half show-score />
+          <el-rate v-model="evaluationForm.effectiveness" show-score />
         </el-form-item>
         <el-form-item label="反馈内容">
           <el-input
-            v-model="evaluationForm.feedback"
+            v-model="evaluationForm.content"
             type="textarea"
             rows="4"
             placeholder="请输入您对帮扶计划的评价和建议"
@@ -189,14 +213,14 @@
           <el-input v-model.number="evaluationForm.planId" disabled />
         </el-form-item>
         <el-form-item label="计划评分">
-          <el-rate v-model="evaluationForm.rating" allow-half show-score />
+          <el-rate v-model="evaluationForm.score" show-score />
         </el-form-item>
         <el-form-item label="有效性评分">
-          <el-rate v-model="evaluationForm.effectiveness" allow-half show-score />
+          <el-rate v-model="evaluationForm.effectiveness" show-score />
         </el-form-item>
         <el-form-item label="反馈内容">
           <el-input
-            v-model="evaluationForm.feedback"
+            v-model="evaluationForm.content"
             type="textarea"
             rows="4"
             placeholder="请输入您对帮扶计划的评价和建议"
@@ -218,15 +242,28 @@ import { ref, reactive, onMounted, computed } from 'vue'
 import { studentAPI } from '@/api'
 import { ElMessage } from 'element-plus'
 
+/**
+ * ⚠️ 这个页面要同时用到**两套 ID**，必须分清（两者有重叠值，传错不报错、只会静默查空）：
+ *  - `userId`    = `users.id`（司明 = 27）：`/students/assistance/{uid}`、`/students/student-by-user/{uid}`
+ *  - `profileId` = `student_profile.id`（司明 = 3）：`/students/evaluations/{profileId}/list|statistics`
+ *    （底层 SQL 走 `assistance_plans.student_id`，存的正是 profile id）
+ *
+ * 改前这里只有一个 `studentId`，取自 `localStorage.getItem('studentId')` ——
+ * 而 Login.vue 登录时**从来没写过这个键**，所以它恒为 undefined，
+ * 请求真的发成了 `/students/evaluations/undefined/list`（后端 parseLong 抛异常 → code 500），
+ * 而页面又用死分支读响应，于是"永远没有评价"看起来一切都正常。
+ */
 const userId = ref(null)
-const studentId = ref(null)
+const profileId = ref(null)
 
-const statistics = ref({
-  total: 0,
-  avgRating: 0,
+const EMPTY_STATISTICS = {
+  totalCount: 0,
+  averageScore: 0,
   avgEffectiveness: 0,
   ratingDistribution: {}
-})
+}
+
+const statistics = ref({ ...EMPTY_STATISTICS })
 
 const evaluations = ref([])
 const assistancePlans = ref([])
@@ -235,56 +272,85 @@ const filterStatus = ref('')
 const showEvaluationDialog = ref(false)
 const showEditDialog = ref(false)
 
+/**
+ * 提交体的 key 就是后端 `submitEvaluation` 读的那几个：
+ * `planId` / `score` / `effectiveness` / `content`（外加上两个名字 `rating` / `feedback`，
+ * 只为兼容旧页面，新代码不再用）。
+ * `id` 只在"编辑"时带上：后端见到 `id` 走**更新**，否则同一计划会被插成两条（实测过）。
+ */
 const evaluationForm = reactive({
+  id: null,
   planId: null,
-  rating: 0,
+  score: 0,
   effectiveness: 0,
-  feedback: '',
-  studentId: null
+  content: ''
 })
 
-// 计算待评价计划
+/**
+ * 计算待评价计划。
+ *
+ * ⚠️ 改前这里判的是 `p.status !== 'completed'`，但后端 `planStatusText` 用的是**数字**
+ * （0 未开始 / 1 进行中 / 2 已完成），这个条件恒为真 —— 「已完成」的计划也照样列进"待评价"。
+ */
 const activePlans = computed(() => {
+  const evaluatedIds = new Set(evaluations.value.map(e => String(e.planId)))
+  const notFinished = p => Number(p.status) !== 2
+
   if (filterStatus.value === 'pending') {
-    return assistancePlans.value.filter(p => {
-      const hasEvaluation = evaluations.value.some(e => e.planId === p.id)
-      return !hasEvaluation && p.status !== 'completed'
-    })
-  } else if (filterStatus.value === 'evaluated') {
-    return assistancePlans.value.filter(p => {
-      return evaluations.value.some(e => e.planId === p.id)
-    })
+    return assistancePlans.value.filter(p => !evaluatedIds.has(String(p.id)) && notFinished(p))
   }
-  return assistancePlans.value.filter(p => p.status !== 'completed')
+  if (filterStatus.value === 'evaluated') {
+    return assistancePlans.value.filter(p => evaluatedIds.has(String(p.id)))
+  }
+  return assistancePlans.value.filter(notFinished)
 })
 
 onMounted(async () => {
   const userInfo = JSON.parse(localStorage.getItem('user') || '{}')
   userId.value = localStorage.getItem('userId') || userInfo.userId || userInfo.id
-  studentId.value = localStorage.getItem('studentId') || userInfo.studentId
 
+  if (!userId.value) {
+    ElMessage.error('未取到当前登录用户，请重新登录')
+    return
+  }
   await loadAssistancePlans()
+  await loadProfileId()
   await loadEvaluations()
   await loadStatistics()
 })
 
+/** `users.id` → `student_profile.id`。评价相关的两个接口只认后者。 */
+async function loadProfileId() {
+  try {
+    const res = await studentAPI.getStudentInfoByUserId(userId.value)
+    if (res && res.id != null) {
+      profileId.value = res.id
+    } else {
+      // 查不到学生档案时后端回的是 `{error:"学生不存在"}`（同样 HTTP 200）
+      ElMessage.error((res && res.error) || '未找到学生档案，无法加载评价')
+    }
+  } catch (error) {
+    console.error('加载学生档案失败', error)
+  }
+}
+
 async function loadAssistancePlans() {
   try {
-    const response = await studentAPI.getAssistancePlans(userId.value)
-    if (response.data?.code === 200) {
-      assistancePlans.value = response.data.data || []
-    }
+    const res = await studentAPI.getAssistancePlans(userId.value)
+    // ⚠️ `client.js` 的响应拦截器在 code===200 时**已经把内层 data 解包返回**，
+    // 所以这里拿到的就是数组本身。写成 `res.data?.code === 200` 的分支恒为假、
+    // 且没有 else —— 不报错、不写日志、页面永远是空态（本次一并修掉的那类"死分支"）。
+    assistancePlans.value = Array.isArray(res) ? res : []
   } catch (error) {
     console.error('加载帮扶计划失败', error)
   }
 }
 
 async function loadEvaluations() {
+  if (!profileId.value) return
   try {
-    const response = await studentAPI.getStudentEvaluations(studentId.value)
-    if (response.data?.code === 200) {
-      evaluations.value = response.data.data || []
-    }
+    const res = await studentAPI.getStudentEvaluations(profileId.value)
+    evaluations.value = Array.isArray(res) ? res : []
   } catch (error) {
     ElMessage.error('加载评价列表失败')
     console.error(error)
@@ -292,95 +358,103 @@ async function loadEvaluations() {
 }
 
 async function loadStatistics() {
+  if (!profileId.value) return
   try {
-    const response = await studentAPI.getEvaluationStatistics(studentId.value)
-    if (response.data?.code === 200) {
-      statistics.value = response.data.data || {}
-    }
+    const res = await studentAPI.getEvaluationStatistics(profileId.value)
+    statistics.value = res && typeof res === 'object' ? res : { ...EMPTY_STATISTICS }
   } catch (error) {
     console.error('加载统计数据失败', error)
   }
 }
 
 function handleEvaluate(plan) {
+  evaluationForm.id = null
   evaluationForm.planId = plan.id
-  evaluationForm.rating = 0
+  evaluationForm.score = 0
   evaluationForm.effectiveness = 0
-  evaluationForm.feedback = ''
-  evaluationForm.studentId = studentId.value
+  evaluationForm.content = ''
   showEvaluationDialog.value = true
 }
 
 function handleEdit(evaluation) {
   evaluationForm.id = evaluation.id
   evaluationForm.planId = evaluation.planId
-  evaluationForm.rating = evaluation.rating || 0
-  evaluationForm.effectiveness = evaluation.effectiveness || 0
-  evaluationForm.feedback = evaluation.feedback || ''
-  evaluationForm.studentId = studentId.value
+  // 字段名用后端的 score / content —— 改前读的是 rating / feedback，
+  // 这两个键评价接口从来没回过，所以"编辑"弹窗里永远是空的评分和空白反馈。
+  evaluationForm.score = num(evaluation.score)
+  evaluationForm.effectiveness = num(evaluation.effectiveness)
+  evaluationForm.content = evaluation.content || ''
   showEditDialog.value = true
 }
 
-async function handleSubmit() {
+/** 两个弹窗共用的前置校验。 */
+function validateForm() {
   if (!evaluationForm.planId) {
     ElMessage.warning('请选择要评价的计划')
-    return
+    return false
   }
-
-  if (evaluationForm.rating === 0) {
-    ElMessage.warning('请评分')
-    return
+  if (!evaluationForm.score) {
+    ElMessage.warning('请为帮扶计划评分')
+    return false
   }
-
-  try {
-    const evaluation = {
-      planId: evaluationForm.planId,
-      studentId: studentId.value,
-      rating: evaluationForm.rating,
-      effectiveness: evaluationForm.effectiveness,
-      feedback: evaluationForm.feedback
-    }
-
-    const response = await studentAPI.submitEvaluation(evaluation)
-    if (response.data.success) {
-      ElMessage.success('评价已提交')
-      showEvaluationDialog.value = false
-      resetEvaluationForm()
-      await loadEvaluations()
-      await loadStatistics()
-    }
-  } catch (error) {
-    ElMessage.error('提交评价失败')
-    console.error(error)
+  if (!evaluationForm.effectiveness) {
+    // 页面上「有效性评分」本来就标着必填，那就真的拦住 ——
+    // 发一个 0 过去只会被后端拒绝（1-5 才是合法值），不如在这儿把话说清楚。
+    ElMessage.warning('请为帮扶有效性评分')
+    return false
   }
+  return true
+}
+
+async function handleSubmit() {
+  if (!validateForm()) return
+  await sendEvaluation(false)
 }
 
 async function handleUpdate() {
-  if (!evaluationForm.rating) {
-    ElMessage.warning('请评分')
-    return
-  }
+  if (!validateForm()) return
+  await sendEvaluation(true)
+}
 
+/**
+ * 提交或更新。
+ *
+ * ⚠️ 成败**不能**看 HTTP 状态，也不能看响应信封里的 `code` ——
+ * 校验失败同样是 200 + `code:200`，真正的结果在载荷里：`{success:false, message}`。
+ * 改前这里写的是 `response.data.success`：拦截器已经解包，`response.data` 是 undefined，
+ * 这一行**抛 TypeError**，被 catch 转成「提交评价失败」——
+ * 于是明明已经写进库了，页面还是报失败，还顺手把弹窗留着让你再点一次（再点就写第二条）。
+ */
+async function sendEvaluation(isEdit) {
   try {
     const evaluation = {
-      id: evaluationForm.id,
       planId: evaluationForm.planId,
-      studentId: studentId.value,
-      rating: evaluationForm.rating,
+      // users.id：后端拿它和计划所属学生核对，对不上直接拒绝写入（不静默改归属）
+      studentId: userId.value,
+      score: evaluationForm.score,
       effectiveness: evaluationForm.effectiveness,
-      feedback: evaluationForm.feedback
+      content: evaluationForm.content
+    }
+    if (isEdit) {
+      // 只有编辑才带 id：带上才走更新，否则同一计划会被插成第二条
+      evaluation.id = evaluationForm.id
     }
 
-    const response = await studentAPI.submitEvaluation(evaluation)
-    if (response.data.success) {
-      ElMessage.success('评价已更新')
-      showEditDialog.value = false
-      resetEvaluationForm()
-      await loadEvaluations()
-      await loadStatistics()
+    const res = await studentAPI.submitEvaluation(evaluation)
+    if (res && res.success === false) {
+      ElMessage.error(res.message || (isEdit ? '更新评价失败' : '提交评价失败'))
+      return
     }
+    // 用后端给的话，别在前端统一说"已提交" ——
+    // 不带 id 重复提交时后端回的是「该计划已有评价，本次为更新」，那才是事实。
+    ElMessage.success((res && res.message) || (isEdit ? '评价已更新' : '评价已提交'))
+    if (isEdit) showEditDialog.value = false
+    else showEvaluationDialog.value = false
+    resetEvaluationForm()
+    await loadEvaluations()
+    await loadStatistics()
   } catch (error) {
-    ElMessage.error('更新评价失败')
+    ElMessage.error(isEdit ? '更新评价失败' : '提交评价失败')
     console.error(error)
   }
 }
@@ -388,10 +462,15 @@ async function handleUpdate() {
 function resetEvaluationForm() {
   evaluationForm.id = null
   evaluationForm.planId = null
-  evaluationForm.rating = 0
+  evaluationForm.score = 0
   evaluationForm.effectiveness = 0
-  evaluationForm.feedback = ''
-  evaluationForm.studentId = null
+  evaluationForm.content = ''
+}
+
+/** JSON 里的值可能是 null / undefined / 字符串，统一成有限数字（拿不到就是 0）。 */
+function num(v) {
+  const n = Number(v)
+  return Number.isFinite(n) ? n : 0
 }
 
 function getRatingPercentage(count) {
@@ -417,24 +496,16 @@ function getEffectivenessType(effectiveness) {
   return 'danger'
 }
 
-function getStatusLabel(status) {
-  const labels = {
-    initiated: '已启动',
-    in_progress: '进行中',
-    completed: '已完成',
-    archived: '已归档'
-  }
-  return labels[status] || status
-}
-
+/**
+ * 状态码 → 标签色。状态**文案**直接用后端给的 `statusText`，不再在前端查表。
+ *
+ * 改前这里是按 'initiated' / 'in_progress' / 'completed' 这些字符串查的，
+ * 而后端 `planStatusText` 用的是数字（0 未开始 / 1 进行中 / 2 已完成），
+ * 于是 `getStatusLabel` 查不到、`|| status` 兜底，标签上显示的是数字本身。
+ */
 function getStatusType(status) {
-  const types = {
-    initiated: 'info',
-    in_progress: 'warning',
-    completed: 'success',
-    archived: 'info'
-  }
-  return types[status] || 'info'
+  const types = { 0: 'info', 1: 'warning', 2: 'success' }
+  return types[Number(status)] || 'info'
 }
 
 function formatTime(time) {

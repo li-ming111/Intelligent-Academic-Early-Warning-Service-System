@@ -22,7 +22,7 @@
       </el-col>
       <el-col :xs="24" :sm="12" :md="6">
         <el-card class="stat-card" shadow="hover">
-          <div class="stat-number">{{ successRate.toFixed(1) }}%</div>
+          <div class="stat-number">{{ Number(successRate || 0).toFixed(1) }}%</div>
           <div class="stat-label">成功率</div>
         </el-card>
       </el-col>
@@ -38,10 +38,10 @@
               <span class="title">申诉原因分布</span>
             </div>
           </template>
-          <div v-if="reasonStats && Object.keys(reasonStats).length > 0" class="reason-list">
-            <div v-for="(count, reason) in reasonStats" :key="reason" class="reason-item">
-              <span class="reason-name">{{ reason }}</span>
-              <el-tag>{{ count }}</el-tag>
+          <div v-if="reasonStats.length > 0" class="reason-list">
+            <div v-for="item in reasonStats" :key="item.reason" class="reason-item">
+              <span class="reason-name">{{ reasonLabel(item.reason) }}</span>
+              <el-tag>{{ item.count }}</el-tag>
             </div>
           </div>
           <div v-else class="no-data">暂无数据</div>
@@ -56,9 +56,12 @@
             <el-col :xs="24" :sm="12" :md="8">
               <el-select v-model="filterStatus" @change="loadAppeals" placeholder="筛选状态" style="width: 100%">
                 <el-option label="全部" value=""></el-option>
-                <el-option label="待处理" value="pending"></el-option>
-                <el-option label="已通过" value="approved"></el-option>
-                <el-option label="已驳回" value="rejected"></el-option>
+                <!-- value 必须是**数字**：后端 `by-status` 收的是 @RequestParam Integer status，
+                     从前写 'pending'/'approved' 会直接 400（页面又被死分支吞掉，看起来只是"没有数据"） -->
+                <el-option label="待处理" :value="0"></el-option>
+                <el-option label="已通过" :value="1"></el-option>
+                <el-option label="已驳回" :value="2"></el-option>
+                <el-option label="已撤销" :value="3"></el-option>
               </el-select>
             </el-col>
             <el-col :xs="24" :sm="12" :md="8">
@@ -89,7 +92,9 @@
             <el-table-column label="操作" width="120" fixed="right">
               <template #default="{ row }">
                 <el-button link type="primary" size="small" @click="handleDetail(row.id)">查看</el-button>
-                <el-button v-if="row.status === 'pending'" link type="danger" size="small" @click="handleWithdraw(row.id)">撤销</el-button>
+                <!-- status 是 int（0 待处理/1 已通过/2 已驳回/3 已撤销）。
+                     从前写的是 `row.status === 'pending'`，任何一行都匹配不上 —— 撤销按钮从来没出现过 -->
+                <el-button v-if="Number(row.status) === 0" link type="danger" size="small" @click="handleWithdraw(row.id)">撤销</el-button>
               </template>
             </el-table-column>
           </el-table>
@@ -112,10 +117,17 @@
     <el-dialog v-model="showSubmitDialog" title="发起申诉" width="600px" @close="resetSubmitForm">
       <el-form :model="submitForm" label-width="80px">
         <el-form-item label="关联预警">
-          <el-input v-model="submitForm.warningId" type="number" placeholder="请输入预警ID"></el-input>
+          <el-input v-model="submitForm.warningId" placeholder="可选：填写自己的预警ID（如 395）"></el-input>
         </el-form-item>
         <el-form-item label="申诉原因">
-          <el-input v-model="submitForm.reason" type="textarea" rows="4" placeholder="请详细描述申诉原因"></el-input>
+          <!-- reason 是**代码**列（'entry_error' 之类）：左侧「申诉原因分布」按它 GROUP BY，
+               塞自由文本会把每句话各算一类。自由描述放下面那个 description 框。 -->
+          <el-select v-model="submitForm.reason" placeholder="请选择申诉原因" style="width: 100%">
+            <el-option v-for="r in reasons" :key="r.value" :label="r.label" :value="r.value" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="详细描述">
+          <el-input v-model="submitForm.description" type="textarea" rows="4" placeholder="请详细描述申诉理由"></el-input>
         </el-form-item>
         <el-form-item label="附件">
           <el-input v-model="submitForm.attachments" placeholder="可选：输入附件URL或相关链接"></el-input>
@@ -142,7 +154,19 @@
         </div>
         <div class="detail-item">
           <span class="detail-label">申诉原因：</span>
-          <p>{{ currentDetail.reason }}</p>
+          <p>{{ reasonLabel(currentDetail.reason) }}</p>
+        </div>
+        <div v-if="currentDetail.description" class="detail-item">
+          <span class="detail-label">详细描述：</span>
+          <p>{{ currentDetail.description }}</p>
+        </div>
+        <div v-if="currentDetail.warningId" class="detail-item">
+          <span class="detail-label">关联预警：</span>
+          <span>{{ currentDetail.warningId }}</span>
+        </div>
+        <div v-if="currentDetail.reply" class="detail-item">
+          <span class="detail-label">处理回复：</span>
+          <p>{{ currentDetail.reply }}</p>
         </div>
         <div class="detail-item">
           <span class="detail-label">提交时间：</span>
@@ -150,7 +174,8 @@
         </div>
         <div v-if="currentDetail.attachments" class="detail-item">
           <span class="detail-label">附件：</span>
-          <el-link type="primary" href="currentDetail.attachments" target="_blank">{{ currentDetail.attachments }}</el-link>
+          <!-- 原来漏了 `:`，href 被当成字面量 "currentDetail.attachments"，链接永远点不开 -->
+          <el-link type="primary" :href="currentDetail.attachments" target="_blank">{{ currentDetail.attachments }}</el-link>
         </div>
       </div>
     </el-dialog>
@@ -162,8 +187,27 @@ import { ref, reactive, onMounted } from 'vue'
 import { studentAPI } from '@/api'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
+/* ============================================================================
+ * 这一页有三个坑，都在"请求发出去了、响应也回来了、页面却什么都不显示"这条线上：
+ *
+ * 1) id 空间：/students/appeals/{x}/** 全系列收的都是 **users.id**
+ *    （后端 resolveStudentProfileId / selectByUserId 现查 student_profile）。
+ *    而本页原来用的是 `localStorage.getItem('studentId') || userInfo.studentId` ——
+ *    'studentId' 这个键全仓**从来没有人写过**，于是每个请求的路径都是
+ *    `/appeals/undefined/statistics`，404 或参数转换异常，被 catch 吞成一句 toast。
+ *    只用 users.id（localStorage 'userId'）。
+ *
+ * 2) 响应形状：`src/api/client.js` 的响应拦截器在 code===200 时**已经解开一层**，
+ *    await 出来的就是内层载荷。本页原来通篇 `response.data?.code === 200`（恒假、
+ *    无 else、静默）、`response.data.success`（没有 `?.`，直接 TypeError）、
+ *    以及 `data.data`（历史接口的列表键叫 `list`）。
+ *
+ * 3) key 名：成功率接口回的是 `{total, success, rate}`，页面读的是 `.successRate`；
+ *    原因统计回的是 `[{reason, count}]` 数组，页面当成 `{reason: count}` 对象渲染。
+ *    这两个都不是"没数据"，是**名字对不上**。
+ * ========================================================================== */
+
 const userId = ref(null)
-const studentId = ref(null)
 
 const statistics = ref({
   total: 0,
@@ -173,7 +217,8 @@ const statistics = ref({
   withdrawn: 0
 })
 const successRate = ref(0)
-const reasonStats = ref({})
+/** 后端回的是数组 `[{reason, count}]`，不是对象 */
+const reasonStats = ref([])
 
 const appeals = ref([])
 const currentPage = ref(1)
@@ -185,16 +230,30 @@ const showSubmitDialog = ref(false)
 const showDetailDialog = ref(false)
 const currentDetail = ref(null)
 
+/** 申诉原因词表：与 Appeals.vue / Scores.vue / 小程序 dict.js 同一份，库里现有的 entry_error 与之吻合 */
+const reasons = [
+  { label: '成绩录入错误', value: 'entry_error' },
+  { label: '缓考未同步', value: 'makeup_not_sync' },
+  { label: '阅卷评分有误', value: 'grading_issue' },
+  { label: '数据异常', value: 'data_error' },
+  { label: '其他原因', value: 'other' }
+]
+
 const submitForm = reactive({
-  warningId: null,
+  warningId: '',
   reason: '',
+  description: '',
   attachments: ''
 })
 
 onMounted(async () => {
   const userInfo = JSON.parse(localStorage.getItem('user') || '{}')
   userId.value = localStorage.getItem('userId') || userInfo.userId || userInfo.id
-  studentId.value = localStorage.getItem('studentId') || userInfo.studentId
+
+  if (!userId.value) {
+    ElMessage.error('未找到登录用户信息，无法加载申诉数据')
+    return
+  }
 
   await loadStatistics()
   await loadAppeals()
@@ -203,15 +262,14 @@ onMounted(async () => {
 
 async function loadStatistics() {
   try {
-    const response = await studentAPI.getAppealStatistics(studentId.value)
-    if (response.data?.code === 200) {
-      statistics.value = response.data.data || {}
+    const stats = await studentAPI.getAppealStatistics(userId.value)
+    if (stats && typeof stats === 'object' && !stats.error) {
+      Object.assign(statistics.value, stats)
     }
-    
-    const successResp = await studentAPI.getAppealSuccessRate(studentId.value)
-    if (successResp.data?.code === 200) {
-      successRate.value = successResp.data.data.successRate || 0
-    }
+
+    const rate = await studentAPI.getAppealSuccessRate(userId.value)
+    // 键名是 `rate`（服务端 BigDecimal，形如 0.0）；从前读 `.successRate` 永远拿到 undefined → 0
+    successRate.value = rate && rate.rate != null ? Number(rate.rate) : 0
   } catch (error) {
     ElMessage.error('加载统计数据失败')
     console.error(error)
@@ -220,17 +278,17 @@ async function loadStatistics() {
 
 async function loadAppeals() {
   try {
-    let response
-    if (filterStatus.value) {
-      response = await studentAPI.getAppealsByStatus(studentId.value, filterStatus.value)
-      appeals.value = response.data.data || []
+    if (filterStatus.value !== '' && filterStatus.value !== null) {
+      const list = await studentAPI.getAppealsByStatus(userId.value, filterStatus.value)
+      appeals.value = Array.isArray(list) ? list : []
+      // 这个分支不走分页接口（服务端把该状态的全部一次给回来），所以 total 就是这一批的长度。
+      // 沿用上一次"全部"的 total 会让分页器摆出一堆翻不动的页码。
+      total.value = appeals.value.length
     } else {
-      response = await studentAPI.getAppealHistory(studentId.value, currentPage.value, pageSize.value)
-      if (response.data.success) {
-        const data = response.data.data || {}
-        appeals.value = data.data || []
-        total.value = data.total || 0
-      }
+      const page = await studentAPI.getAppealHistory(userId.value, currentPage.value, pageSize.value)
+      // 后端回 `{total, page, pageSize, list:[...]}` —— 列表键是 list
+      appeals.value = (page && page.list) || []
+      total.value = (page && page.total) || 0
     }
   } catch (error) {
     ElMessage.error('加载申诉列表失败')
@@ -240,10 +298,8 @@ async function loadAppeals() {
 
 async function loadReasonStats() {
   try {
-    const response = await studentAPI.getAppealReasonStatistics(studentId.value)
-    if (response.data?.code === 200) {
-      reasonStats.value = response.data.data || {}
-    }
+    const list = await studentAPI.getAppealReasonStatistics(userId.value)
+    reasonStats.value = Array.isArray(list) ? list : []
   } catch (error) {
     console.error('加载原因统计失败', error)
   }
@@ -251,26 +307,35 @@ async function loadReasonStats() {
 
 async function handleSubmit() {
   if (!submitForm.reason) {
-    ElMessage.warning('请输入申诉原因')
+    ElMessage.warning('请选择申诉原因')
     return
   }
 
   try {
     const appeal = {
-      studentId: studentId.value,
-      warningId: submitForm.warningId,
+      // 后端 `submitAppeal` 收的 studentId 是 **users.id**，它自己再查 student_profile
+      studentId: userId.value,
       reason: submitForm.reason,
+      description: submitForm.description,
       attachments: submitForm.attachments
     }
-    
-    const response = await studentAPI.submitAppeal(appeal)
-    if (response.data.success) {
-      ElMessage.success('申诉已提交')
-      showSubmitDialog.value = false
-      resetSubmitForm()
-      await loadAppeals()
-      await loadStatistics()
+    // 关联预警是可选的：空串不发这个键（后端对 "" 会当没填，但干脆别发更干净）
+    if (submitForm.warningId !== '' && submitForm.warningId != null) {
+      appeal.warningId = submitForm.warningId
     }
+
+    const res = await studentAPI.submitAppeal(appeal)
+    // 成功/失败都在 200 里：失败回 `{error:"..."}`（缺 studentId / 预警不存在 / 预警不属于该学生）
+    if (res && res.error) {
+      ElMessage.error(res.error)
+      return
+    }
+    ElMessage.success(res && res.message ? res.message : '申诉已提交')
+    showSubmitDialog.value = false
+    resetSubmitForm()
+    await loadAppeals()
+    await loadStatistics()
+    await loadReasonStats()
   } catch (error) {
     ElMessage.error('提交申诉失败')
     console.error(error)
@@ -279,11 +344,14 @@ async function handleSubmit() {
 
 async function handleDetail(appealId) {
   try {
-    const response = await studentAPI.getAppealDetail(appealId)
-    if (response.data.success) {
-      currentDetail.value = response.data.data
-      showDetailDialog.value = true
+    const detail = await studentAPI.getAppealDetail(appealId)
+    // 查不到时后端回 `{error:"申诉不存在"}`（HTTP 仍 200），从前这个分支根本到不了
+    if (!detail || detail.error) {
+      ElMessage.error((detail && detail.error) || '申诉不存在')
+      return
     }
+    currentDetail.value = detail
+    showDetailDialog.value = true
   } catch (error) {
     ElMessage.error('加载详情失败')
     console.error(error)
@@ -297,12 +365,16 @@ async function handleWithdraw(appealId) {
     type: 'warning'
   }).then(async () => {
     try {
-      const response = await studentAPI.withdrawAppeal(appealId)
-      if (response.data.success) {
-        ElMessage.success('申诉已撤销')
-        await loadAppeals()
-        await loadStatistics()
+      // 撤销接口的 studentId 是**必填查询参数**（@RequestParam Long studentId，没有默认值）。
+      // 从前只传 appealId，服务端 400，而页面的死分支把它当成"撤销失败"的 toast 吞掉。
+      const res = await studentAPI.withdrawAppeal(appealId, userId.value)
+      if (res && res.success === false) {
+        ElMessage.error(res.message || '撤销失败（可能该申诉已被处理）')
+        return
       }
+      ElMessage.success('申诉已撤销')
+      await loadAppeals()
+      await loadStatistics()
     } catch (error) {
       ElMessage.error('撤销申诉失败')
       console.error(error)
@@ -311,29 +383,39 @@ async function handleWithdraw(appealId) {
 }
 
 function resetSubmitForm() {
-  submitForm.warningId = null
+  submitForm.warningId = ''
   submitForm.reason = ''
+  submitForm.description = ''
   submitForm.attachments = ''
 }
 
+/** code → 中文。认不出原样返回 code（不吞成"未知"，否则没法排查） */
+function reasonLabel(reason) {
+  if (reason === null || reason === undefined || reason === '') return '未填写'
+  const found = reasons.find(r => r.value === String(reason))
+  return found ? found.label : String(reason)
+}
+
+// status 是 int：0 待处理 / 1 已通过 / 2 已驳回 / 3 已撤销。
+// 从前这里用的是字符串键，而库里存的是数字 —— 每一行都会落到 `|| status` 上显示成 "0"/"1"。
 function getStatusLabel(status) {
   const labels = {
-    pending: '待处理',
-    approved: '已通过',
-    rejected: '已驳回',
-    withdrawn: '已撤销'
+    0: '待处理',
+    1: '已通过',
+    2: '已驳回',
+    3: '已撤销'
   }
-  return labels[status] || status
+  return labels[Number(status)] || `未知状态(${status})`
 }
 
 function getStatusType(status) {
   const types = {
-    pending: 'warning',
-    approved: 'success',
-    rejected: 'danger',
-    withdrawn: 'info'
+    0: 'warning',
+    1: 'success',
+    2: 'danger',
+    3: 'info'
   }
-  return types[status] || 'info'
+  return types[Number(status)] || 'info'
 }
 
 function formatTime(time) {

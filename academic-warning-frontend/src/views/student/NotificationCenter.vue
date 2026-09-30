@@ -180,12 +180,17 @@ export default {
       }
     },
 
+    /**
+     * ⚠️ 本页所有请求都已经过 `src/api/client.js` 的响应拦截器：`code === 200` 时它
+     * **返回内层 data**（也就是载荷本身）。所以 `response.data?.code === 200` 恒为假、
+     * 而且没有 else —— 赋值语句一次都不执行，页面不崩、不报错、控制台也干净，
+     * 只是永远显示空态（实测：`/unread` 明明回了 2 条，页面却是「未读: 0 / 暂无数据 / 共 0 条」）。
+     * 现在统一按"await 的结果就是载荷"来写；真正的失败（HTTP 200 + code 500）会走 catch。
+     */
     async loadUnreadNotifications() {
       try {
-        const response = await studentAPI.getUnreadNotificationsAdvanced(this.userId)
-        if (response.data?.code === 200) {
-          this.unreadNotifications = response.data.data || []
-        }
+        const res = await studentAPI.getUnreadNotificationsAdvanced(this.userId)
+        this.unreadNotifications = Array.isArray(res) ? res : []
       } catch (error) {
         this.$message.error('加载未读通知失败')
       }
@@ -193,12 +198,10 @@ export default {
 
     async loadAllNotifications() {
       try {
-        const response = await studentAPI.getNotificationsPageable(this.userId, this.currentPage, this.pageSize)
-        if (response.data?.code === 200) {
-          const result = response.data.data
-          this.allNotifications = result.data || []
-          this.total = result.total || 0
-        }
+        const res = await studentAPI.getNotificationsPageable(this.userId, this.currentPage, this.pageSize)
+        // 后端回的是 `{total, page, pageSize, list:[...]}` —— 列表键叫 **list**，不是 data
+        this.allNotifications = (res && res.list) || []
+        this.total = (res && res.total) || 0
       } catch (error) {
         this.$message.error('加载通知列表失败')
       }
@@ -206,27 +209,39 @@ export default {
 
     async loadPreferences() {
       try {
-        // 先根据 userId 获取 studentId
-        const userId = parseInt(localStorage.getItem('userId')) || this.userId
-        const studentInfoResponse = await studentAPI.getStudentInfoByUserId(userId)
-        if (studentInfoResponse.data?.code === 200 && studentInfoResponse.data.data) {
-          const studentId = studentInfoResponse.data.data.id
-          const response = await studentAPI.getSubscriptionPreferences(studentId)
-          if (response.data?.code === 200) {
-            Object.assign(this.preferences, response.data.data)
-          }
+        // 先根据 userId 获取 profileId（订阅表存的是 student_profile.id）
+        const profileId = await this.resolveProfileId()
+        if (!profileId) {
+          console.warn('未找到学生档案，跳过订阅偏好加载')
+          return
+        }
+        const res = await studentAPI.getSubscriptionPreferences(profileId)
+        if (res && res.success === false) {
+          console.warn('订阅偏好不可用:', res.message)
+          return
+        }
+        if (res && typeof res === 'object') {
+          Object.assign(this.preferences, res)
         }
       } catch (error) {
         console.warn('加载订阅偏好失败', error)
       }
     },
 
+    /** `users.id` → `student_profile.id`；取不到就返回 null（调用方如实提示，不硬发请求）。 */
+    async resolveProfileId() {
+      const userId = parseInt(localStorage.getItem('userId')) || this.userId
+      if (!userId) return null
+      const studentInfo = await studentAPI.getStudentInfoByUserId(userId)
+      // 查不到人时后端回的是 `{error:"学生不存在"}`（HTTP 200），没有 id
+      return studentInfo && studentInfo.id != null ? studentInfo.id : null
+    },
+
     async loadUnreadCount() {
       try {
-        const response = await studentAPI.getUnreadNotificationCountAdvanced(this.userId)
-        if (response.data?.code === 200) {
-          this.unreadCount = response.data.data || 0
-        }
+        const res = await studentAPI.getUnreadNotificationCountAdvanced(this.userId)
+        // 后端回的是 `{unreadCount: n}` —— 改前把整个对象赋给了 unreadCount，标签上会显示 [object Object]
+        this.unreadCount = res && res.unreadCount != null ? res.unreadCount : 0
       } catch (error) {
         console.error('加载未读数量失败', error)
       }
@@ -234,16 +249,21 @@ export default {
 
     async savePreferences() {
       try {
-        // 先根据 userId 获取 studentId
-        const userId = parseInt(localStorage.getItem('userId')) || this.userId
-        const studentInfoResponse = await studentAPI.getStudentInfoByUserId(userId)
-        if (studentInfoResponse.data?.code === 200 && studentInfoResponse.data.data) {
-          const studentId = studentInfoResponse.data.data.id
-          const response = await studentAPI.updateSubscriptionPreferences(studentId, this.preferences)
-          if (response.data?.code === 200) {
-            this.$message.success('订阅设置已保存')
-          }
+        const profileId = await this.resolveProfileId()
+        if (!profileId) {
+          this.$message.error('未找到学生档案，无法保存订阅设置')
+          return
         }
+        // el-checkbox 的 v-model 写出来的是**布尔**，而库里是 1/0 —— 后端两种都收
+        // （改前后端是 `(Integer) pref.get(...)` 硬转，收到 true 直接 ClassCastException，
+        //   而页面又用死分支读响应，所以"保存设置"一直是个静默失败）。
+        const res = await studentAPI.updateSubscriptionPreferences(profileId, this.preferences)
+        if (res && res.success === false) {
+          this.$message.error(res.message || '保存设置失败')
+          return
+        }
+        this.$message.success('订阅设置已保存')
+        await this.loadPreferences()
       } catch (error) {
         this.$message.error('保存设置失败')
       }
@@ -251,11 +271,14 @@ export default {
 
     async markAsRead(notificationId) {
       try {
-        const response = await studentAPI.markNotificationRead(notificationId)
-        if (response.data?.code === 200) {
-          this.$message.success('已标记为已读')
-          this.init()
+        const res = await studentAPI.markNotificationRead(notificationId)
+        // 后端如实返回 {success, affected}：id 不存在时 success=false，不再假装成功
+        if (res && res.success === false) {
+          this.$message.error(res.message || '标记已读失败')
+          return
         }
+        this.$message.success('已标记为已读')
+        this.init()
       } catch (error) {
         this.$message.error('操作失败')
       }
@@ -268,11 +291,13 @@ export default {
           this.$message.info('没有未读通知')
           return
         }
-        const response = await studentAPI.markMultipleNotificationsAsRead(this.userId, notificationIds)
-        if (response.data?.code === 200) {
-          this.$message.success('已标记全部为已读')
-          this.init()
+        const res = await studentAPI.markMultipleNotificationsAsRead(this.userId, notificationIds)
+        if (res && res.success === false) {
+          this.$message.error(res.message || '批量标记失败')
+          return
         }
+        this.$message.success('已标记全部为已读')
+        this.init()
       } catch (error) {
         this.$message.error('操作失败')
       }
@@ -285,11 +310,13 @@ export default {
         type: 'warning'
       }).then(async () => {
         try {
-          const response = await studentAPI.deleteNotificationMsg(notificationId)
-          if (response.data?.code === 200) {
-            this.$message.success('删除成功')
-            this.init()
+          const res = await studentAPI.deleteNotificationMsg(notificationId)
+          if (res && res.success === false) {
+            this.$message.error(res.message || '删除失败')
+            return
           }
+          this.$message.success('删除成功')
+          this.init()
         } catch (error) {
           this.$message.error('删除失败')
         }
@@ -303,11 +330,11 @@ export default {
         type: 'warning'
       }).then(async () => {
         try {
-          const response = await studentAPI.clearReadNotifications(this.userId)
-          if (response.data?.code === 200) {
-            this.$message.success('已清空')
-            this.init()
-          }
+          const res = await studentAPI.clearReadNotifications(this.userId)
+          // 后端回 `{success:true, cleared:n}` —— 只回"已清空"会让"一条都没清"也说成功
+          const cleared = res && res.cleared != null ? res.cleared : 0
+          this.$message.success(cleared > 0 ? `已清空 ${cleared} 条已读通知` : '没有已读通知需要清空')
+          this.init()
         } catch (error) {
           this.$message.error('操作失败')
         }

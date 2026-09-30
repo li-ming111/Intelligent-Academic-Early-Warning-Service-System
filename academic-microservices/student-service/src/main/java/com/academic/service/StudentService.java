@@ -88,13 +88,21 @@ public interface StudentService {
     Object setPushChannel(Long studentId, String channel, Boolean enabled);
 
     // ========== 帮扶反馈新增方法 ==========
-    /** 提交帮扶评价 */
+    /**
+     * 提交 / 更新帮扶评价。
+     * 提交体认识：planId（必填）、score|rating（必填，1-5 整数）、effectiveness（1-5 整数）、
+     * content|feedback、id（带则更新该行）、counselorId（只用于比对，取值以计划为准）、
+     * studentId（只用于比对，取值以计划为准）。失败返回 {@code {success:false,message}} —— HTTP 仍是 200。
+     */
     Object submitEvaluation(Object evaluation);
-    /** 获取学生评价列表 */
+    /**
+     * 获取学生评价列表。
+     * ⚠️ 参数是 **student_profile.id**（不是 users.id）；传错不报错、只会永远返回空数组。
+     */
     Object getEvaluationsByStudent(Long studentId);
-    /** 获取帮扶计划评价 */
+    /** 获取帮扶计划评价。⚠️ 参数是 **assistance_plans.id**（与上面那套 id 空间不同）。 */
     Object getPlanEvaluation(Long planId);
-    /** 获取评价统计 */
+    /** 获取评价统计。⚠️ 参数是 **student_profile.id**。 */
     Object getEvaluationStatistics(Long studentId);
 
     // ========== 设置新增方法 ==========

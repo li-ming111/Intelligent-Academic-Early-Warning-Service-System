@@ -72,14 +72,14 @@
             <template #header>
               <div class="card-header">
                 <span>消息历史</span>
-                <span class="message-count">共 {{ messages.length }} 条消息</span>
+                <span class="message-count">共 {{ messageTotal }} 条消息</span>
               </div>
             </template>
 
             <div v-if="messages.length === 0" style="padding: 20px; text-align: center; color: #999;">
               暂无数据
             </div>
-            <el-table v-else :data="filteredMessages" stripe v-loading="loading" @selection-change="handleMessageSelectionChange">
+            <el-table v-else :data="messages" stripe v-loading="loading" @selection-change="handleMessageSelectionChange">
               <el-table-column type="selection" width="55" />
               <el-table-column prop="id" label="消息ID" width="100" sortable />
               <el-table-column prop="title" label="标题" min-width="150"></el-table-column>
@@ -117,7 +117,7 @@
                 v-model:current-page="messagePage"
                 v-model:page-size="messagePageSize"
                 :page-sizes="[10, 20, 50, 100]"
-                :total="messages.length"
+                :total="messageTotal"
                 layout="total, sizes, prev, pager, next, jumper"
                 @size-change="handleMessageSizeChange"
                 @current-change="handleMessageCurrentChange"
@@ -307,6 +307,8 @@ const loading = ref(false)
 const taskFilter = ref('all')
 const messagePage = ref(1)
 const messagePageSize = ref(20)
+/** 消息总数（服务端 total）。别再拿 `messages.length` 当总数 —— 那只是当前这一页 */
+const messageTotal = ref(0)
 const taskPage = ref(1)
 const taskPageSize = ref(20)
 const selectedMessages = ref([])
@@ -346,11 +348,10 @@ const filteredTasks = computed(() => {
   return filtered.slice(start, end)
 })
 
-const filteredMessages = computed(() => {
-  const start = (messagePage.value - 1) * messagePageSize.value
-  const end = start + messagePageSize.value
-  return messages.value.slice(start, end)
-})
+// 消息**不**做本地切片：`/admin/messages/list` 是服务端分页，自己也带 page/size。
+// 原来两边各切一刀（服务端只回第 1 页 20 条，本地再按页码切这 20 条），
+// 结果翻到第 2 页永远是空的，而卡片上「共 N 条」写的是**已取回的那一页的长度**，
+// 不是库里的总数。现在总数用服务端回的 total，翻页由服务端做。
 
 // 订阅实时消息
 const subscribeToMessages = async () => {
@@ -407,58 +408,58 @@ onUnmounted(async () => {
 })
 
 // 加载用户列表
+//
+// `src/api/client.js` 的响应拦截器在 code===200 时**已经解开一层**，await 出来就是载荷本身。
+// `/admin/users/all` 后端签名是 `ApiResponse<List<User>>`，所以这里拿到的是一个**数组**。
+// 从前那两级 `response.data.code === 200` / `response.data` 永远为假（静默、无 else），
+// 只有最后那个 `Array.isArray(response)` 兜底分支真的在工作 —— 三个分支里两个是死的，
+// 还把整张用户表（含 id/username/role/status）打进了控制台。现在只留真实的那一条。
 const loadUsers = async () => {
   try {
-    console.log('开始加载用户列表...')
     const response = await apiClient.get('/admin/users/all')
-    console.log('用户列表完整响应:', response)
-    console.log('response.data:', response.data)
-    
-    let users = []
-    if (response.data && response.data.code === 200 && Array.isArray(response.data.data)) {
-      users = response.data.data
-      console.log('从data.data获取用户:', users.length, '个')
-    } else if (response.data && Array.isArray(response.data)) {
-      users = response.data
-      console.log('从data获取用户:', users.length, '个')
-    } else if (Array.isArray(response)) {
-      users = response
-      console.log('从response获取用户:', users.length, '个')
+    if (!Array.isArray(response)) {
+      // 形状不对就说出来：不要再猜一个分支继续往下走，那正是它以前沉默的原因
+      console.warn('[AdminMessages] /admin/users/all 返回的不是数组，收到的类型:', typeof response)
+      users.value = []
+      return
     }
-    
-    users.value = users
-    console.log('最终用户列表:', users.value)
+    users.value = response
   } catch (error) {
+    // code !== 200（例如 Sentinel 降级回的那句 degraded 文案）会被拦截器 reject 到这里
     console.error('加载用户列表失败:', error)
     users.value = []
   }
 }
 
 // 加载消息
+//
+// ⚠️ `/admin/messages/list` 回的是 `ApiResponse<Map>`，解开后是 `{total, items:[...]}` ——
+// **不是数组**。所以原来的 `if (Array.isArray(response))` 恒为假，一条消息也不会渲染，
+// 而且没有 else、没有提示：接口 200、控制台干净、页面写"暂无消息"。这里改读 `items`。
 const loadMessages = async () => {
   loading.value = true
   try {
-    const response = await adminAPI.getMessages()
-    if (Array.isArray(response)) {
-      messages.value = response
-    }
+    const response = await adminAPI.getMessages(messagePage.value, messagePageSize.value)
+    messages.value = (response && response.items) || []
+    messageTotal.value = (response && response.total) || 0
   } catch (error) {
-    console.error('加载消息失败:', error)
+    ElMessage.error(error?.message ? `加载消息失败：${error.message}` : '加载消息失败')
   } finally {
     loading.value = false
   }
 }
 
 // 加载任务
+// ⚠️ 同上：`/admin/tasks/list` 也是 `{total, items}`，且服务端**写死返回空列表**
+// （"任务列表（目前为空，后续可扩展）"）。所以这里永远显示空 —— 但那是后端的真话，
+// 不是前端读错键导致的假空。改读 items，键名对上之后这个空才是有意义的。
 const loadTasks = async () => {
   loading.value = true
   try {
     const response = await adminAPI.getTasks()
-    if (Array.isArray(response)) {
-      tasks.value = response
-    }
+    tasks.value = (response && response.items) || []
   } catch (error) {
-    console.error('加载任务失败:', error)
+    ElMessage.error(error?.message ? `加载任务失败：${error.message}` : '加载任务失败')
   } finally {
     loading.value = false
   }
@@ -481,7 +482,9 @@ const sendMessage = async () => {
     resetMessageForm()
     await loadMessages()
   } catch (error) {
-    ElMessage.error('发送消息失败')
+    // 后端失败时把**它的原话**带出来（例如"0/2 条写入成功"、"接收人不存在"），
+    // 不再一律吞成一句"发送消息失败" —— 否则用户无法追问到底发给了谁
+    ElMessage.error(error?.message ? `发送消息失败：${error.message}` : '发送消息失败')
   }
 }
 
@@ -501,6 +504,8 @@ const confirmDelete = async () => {
       await adminAPI.deleteMessage(deleteItemId.value)
       ElMessage.success('消息已删除')
       messages.value = messages.value.filter(m => m.id !== deleteItemId.value)
+      // 总数同步减一：否则删完之后右上角「共 N 条」还挂着已经不存在的那条
+      messageTotal.value = Math.max(0, messageTotal.value - 1)
     } else if (deleteType.value === 'task') {
       await adminAPI.deleteTask(deleteItemId.value)
       ElMessage.success('任务已删除')
@@ -510,7 +515,8 @@ const confirmDelete = async () => {
     deleteItemId.value = null
     deleteType.value = ''
   } catch (error) {
-    ElMessage.error('删除失败')
+    // 带上后端的原话：删除接口失败时会说明是"消息不存在"还是"下游服务不可用"
+    ElMessage.error(error?.message ? `删除失败：${error.message}` : '删除失败')
   } finally {
     deleteLoading.value = false
   }
@@ -547,23 +553,47 @@ const batchDeleteTasks = () => {
 const confirmBatchDelete = async () => {
   deleteLoading.value = true
   try {
-    if (deleteType.value === 'message') {
-      const deletePromises = selectedMessages.value.map(m => adminAPI.deleteMessage(m.id))
-      await Promise.all(deletePromises)
-      ElMessage.success(`成功删除 ${selectedMessages.value.length} 条消息`)
-      messages.value = messages.value.filter(m => !selectedMessages.value.some(sm => sm.id === m.id))
+    const isMessage = deleteType.value === 'message'
+    const selected = isMessage ? selectedMessages.value : selectedTasks.value
+    const call = isMessage
+      ? (id) => adminAPI.deleteMessage(id)
+      : (id) => adminAPI.deleteTask(id)
+
+    // 用 allSettled 而不是 all：原来只要有一条失败，Promise.all 立刻 reject，
+    // 于是 ① 一条成功记录都不报、② 本地列表**一条都不移除**。
+    // 结果就是"库里已经删掉的几行还留在页面上"，而用户收到一句"批量删除失败"。
+    // 现在逐条对账：成功的从列表里移除，失败的把后端原话带出来。
+    const settled = await Promise.allSettled(selected.map(x => call(x.id)))
+    const okIds = new Set()
+    const failures = []
+    settled.forEach((r, i) => {
+      if (r.status === 'fulfilled') {
+        okIds.add(selected[i].id)
+      } else {
+        failures.push(`${selected[i].id}: ${r.reason?.message || r.reason}`)
+      }
+    })
+
+    if (isMessage) {
+      messages.value = messages.value.filter(m => !okIds.has(m.id))
+      messageTotal.value = Math.max(0, messageTotal.value - okIds.size)
       selectedMessages.value = []
-    } else if (deleteType.value === 'task') {
-      const deletePromises = selectedTasks.value.map(t => adminAPI.deleteTask(t.id))
-      await Promise.all(deletePromises)
-      ElMessage.success(`成功删除 ${selectedTasks.value.length} 个任务`)
-      tasks.value = tasks.value.filter(t => !selectedTasks.value.some(st => st.id === t.id))
+    } else {
+      tasks.value = tasks.value.filter(t => !okIds.has(t.id))
       selectedTasks.value = []
+    }
+
+    if (failures.length === 0) {
+      ElMessage.success(`成功删除 ${okIds.size} ${isMessage ? '条消息' : '个任务'}`)
+    } else if (okIds.size === 0) {
+      ElMessage.error(`全部 ${failures.length} 条都删除失败：${failures[0]}`)
+    } else {
+      ElMessage.warning(`成功 ${okIds.size} 条，失败 ${failures.length} 条：${failures[0]}`)
     }
     batchDeleteDialogVisible.value = false
     deleteType.value = ''
   } catch (error) {
-    ElMessage.error('批量删除失败')
+    ElMessage.error(error?.message ? `批量删除失败：${error.message}` : '批量删除失败')
   } finally {
     deleteLoading.value = false
   }
@@ -582,7 +612,7 @@ const createTask = async () => {
     resetTaskForm()
     await loadTasks()
   } catch (error) {
-    ElMessage.error('创建任务失败')
+    ElMessage.error(error?.message ? `创建任务失败：${error.message}` : '创建任务失败')
   }
 }
 
@@ -592,7 +622,7 @@ const updateTaskStatus = async (task) => {
     await adminAPI.updateTaskStatus(task.id, task.status)
     ElMessage.success('任务状态已更新')
   } catch (error) {
-    ElMessage.error('更新任务状态失败')
+    ElMessage.error(error?.message ? `更新任务状态失败：${error.message}` : '更新任务状态失败')
   }
 }
 
@@ -625,13 +655,16 @@ const resetTaskForm = () => {
 }
 
 // 分页处理
+// 改页码/页大小都要**回服务端取**：数据在服务端分页，本地没有第 2 页可切
 const handleMessageSizeChange = (val) => {
   messagePageSize.value = val
   messagePage.value = 1
+  loadMessages()
 }
 
 const handleMessageCurrentChange = (val) => {
   messagePage.value = val
+  loadMessages()
 }
 
 const handleTaskSizeChange = (val) => {
