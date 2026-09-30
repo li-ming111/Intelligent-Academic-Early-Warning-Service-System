@@ -31,6 +31,7 @@ import com.academic.mapper.CounselorProfileMapper;
 import com.academic.mapper.CollegeAdminProfileMapper;
 import com.academic.mapper.ScoreRecordMapper;
 import com.academic.mapper.AcademicWarningMapper;
+import com.academic.mapper.UserMapper;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
@@ -88,6 +89,9 @@ public class AdminController {
 
     @Autowired
     private AcademicWarningMapper academicWarningMapper;
+
+    @Autowired
+    private UserMapper userMapper;
 
     @Autowired
     private StudentServiceClient studentServiceClient;
@@ -567,15 +571,25 @@ public class AdminController {
             if (user == null) {
                 return ApiResponse.notFound("User not found");
             }
-            
-            // 先删除相关的消息记录（处理外键约束）
-            try {
-                // 通过MessageServiceClient删除相关消息
-                messageServiceClient.deleteMessagesByUserId(id);
-            } catch (Exception e) {
-                log.warn("Failed to delete messages via Feign, but will continue: {}", e.getMessage());
+
+            // 动手之前先数一遍关联数据。`users` 被 6 张表引用、`student_profile` 被 9 张、
+            // `teacher_profile` 被 teacher_course 引用，**全是 NO ACTION 外键**；而本方法
+            // 只清理四张 profile 表，其余一律不管 —— 所以只要还剩一行，整笔删除必然中途失败。
+            // 与其让管理员吃一个 HTTP 500「系统内部错误」（既不知原因，也不知能不能修），
+            // 不如直接说清被什么挡住。2026-09-30 实测：35 个演示账号里 34 个过不了这一关
+            // —— 学生卡在 student_profile 那一步，管理员/辅导员/学院管理员卡在账号级那一步。
+            String blocking = describeBlockingReferences(userMapper.countReferences(id));
+            if (blocking != null) {
+                return ApiResponse.error("该账号仍有关联数据，不能删除：" + blocking
+                        + "。可改为「停用」；如需彻底删除，要先清理这些数据。");
             }
-            
+
+            // 这里原来还有一次 messageServiceClient.deleteMessagesByUserId(id)（best-effort），已删。
+            // 它删的正是 messages 里 sender_id/receiver_id 命中该账号的行，与上面 countReferences
+            // 的谓词逐字一致 —— 能走到这一行就说明那两列一行都没有，它必然是空操作。
+            // 而 message-service 未启动时它要阻塞到 Feign 超时：实测 selectById 到
+            // DELETE FROM student_profile 之间隔了 12.1 秒，白白给每次删号加上这个等待。
+
             if (user.getRole() == 1) {
                 QueryWrapper<StudentProfile> studentQuery = new QueryWrapper<>();
                 studentQuery.eq("user_id", id);
@@ -608,6 +622,41 @@ public class AdminController {
             // 半截状态会照常提交 —— 这里比 createUser 更直白，连 Sentinel 都不需要。
             throw new RuntimeException("Delete user failed: " + e.getMessage(), e);
         }
+    }
+
+    /**
+     * 把 {@link com.academic.mapper.UserMapper#countReferences} 的分列计数翻成
+     * 「成绩 16 条、预警 1 条」这样一句话；各类别全为 0 时返回 {@code null}（表示可以删）。
+     *
+     * 顺序按管理员的思路排：学生学业数据在前，账号级数据在后 —— 前者是"这个学生有成绩，
+     * 当然删不掉"，后者更接近"这账号有登录痕迹"。别按 SQL 里的列顺序排，那样第一项会是
+     * scores，而一个只有 security_logs 的管理员账号会显示得像是没问题。
+     */
+    private String describeBlockingReferences(Map<String, Object> counts) {
+        if (counts == null || counts.isEmpty()) {
+            return null;
+        }
+        String[][] labels = {
+                {"scores", "成绩"}, {"warnings", "预警"}, {"enrollments", "选课记录"},
+                {"appeals", "成绩申诉"}, {"assistancePlans", "帮扶计划"},
+                {"studentSettings", "学生设置"}, {"subscriptions", "订阅偏好"},
+                {"benchmarks", "对标分析"}, {"feedbacks", "反馈"},
+                {"teacherCourses", "授课安排"},
+                {"userSettings", "账号设置"}, {"notifications", "通知"}, {"messages", "消息"},
+                {"securityLogs", "安全日志"}, {"auditLogs", "审计日志"},
+                {"adminProfile", "管理员档案"},
+        };
+        List<String> parts = new ArrayList<>();
+        for (String[] label : labels) {
+            Object raw = counts.get(label[0]);
+            long n = (raw instanceof Number) ? ((Number) raw).longValue() : 0L;
+            if (n > 0) {
+                parts.add(label[1] + " " + n + " 条");
+            }
+        }
+        // 计数列全为 0 却走了进来，只可能是 SQL 与 labels 对不上（比如加了新列忘了写标签）。
+        // 这种情况宁可放行删除、让外键自己去报错，也不要编一句"仍有关联数据："却列不出任何东西。
+        return parts.isEmpty() ? null : String.join("、", parts);
     }
 
     @PostMapping("/users/{id}/reset-password")
