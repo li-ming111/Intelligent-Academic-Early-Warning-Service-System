@@ -1531,14 +1531,21 @@ public class AdminController {
             }
             String handleResult = (String) handleData.getOrDefault("handleResult", "已处理");
             String remark = (String) handleData.getOrDefault("remark", "");
-            
+            // ⚠️ 原实现是 `warning.setHandledBy(remark)` —— 把**备注文本**写进了「处理人」列，
+            // 而且**从不读**请求里的 `handledBy`（前端传了也丢掉）。结果预警详情里
+            // 「处理人」显示的是"已电话联系学生"这类备注，处理人是谁反而没记。
+            // 现在：处理人取请求里的 handledBy（前端没传就退回 remark 里的旧行为不再发生），
+            // 备注若前端传了 remark 则并入 handleResult 一并保存，不占处理人的位置。
+            String handledBy = (String) handleData.getOrDefault("handledBy", null);
+
             warning.setStatus(1);
-            warning.setHandleResult(handleResult);
-            warning.setHandledBy(remark);
+            warning.setHandleResult(remark != null && !remark.isEmpty()
+                    ? handleResult + "（备注：" + remark + "）" : handleResult);
+            warning.setHandledBy(handledBy);
             warning.setHandledAt(LocalDateTime.now());
             academicWarningMapper.updateById(warning);
-            
-            log.info("Handled warning {}: result={}, remark={}", id, handleResult, remark);
+
+            log.info("Handled warning {}: result={}, remark={}, handledBy={}", id, handleResult, remark, handledBy);
             return ApiResponse.success("Warning handled successfully");
         } catch (Exception e) {
             log.error("Handle warning failed: {}", e.getMessage());
@@ -3238,66 +3245,45 @@ public class AdminController {
     }
 
     // ============= 数据备份接口 =============
+    //
+    // ⚠️ 2026-09-30：这一组接口原来是**编造的** ——
+    //   · `backupData` 只 log 一行、只在内存里拼了个文件名，**磁盘上什么也没有**，却回
+    //     "Backup created successfully: backup_xxx.sql"；
+    //   · `getBackupList` 返回**三条写死的假备份**（backup_20240101_120000.sql 等，
+    //     连大小 2.5/3.2/2.8 MB 和 2024 年的日期都是编的）；
+    //   · `restoreBackup` 直接回成功，不做任何恢复。
+    //   这是最典型的"报告与事实不符"：页面上列着三条备份历史，磁盘和库里却一条都不存在，
+    //   答辩时被问一句"这几个 sql 文件在哪"就答不上来。
+    //
+    //   本系统**没有运行时备份机制**；备份是仓库里 `db_backups/*.sql` 手工留存的文件
+    //   （apply/rollback 成对，可重复执行）。所以这里如实说明，而不是继续演。
+    private static final String BACKUP_NOT_IMPLEMENTED =
+        "本系统未实现运行时自动备份；数据库备份以仓库 db_backups/*.sql（apply/rollback 成对）手工留存，请勿依赖此按钮";
+
     @PostMapping("/backup")
     public ApiResponse<String> backupData() {
-        try {
-            log.info("Backup data requested");
-            
-            String backupFileName = "backup_" + LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss")) + ".sql";
-            log.info("Backup created: {}", backupFileName);
-            
-            return ApiResponse.success("Backup created successfully: " + backupFileName);
-        } catch (Exception e) {
-            log.error("Backup data failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
-        }
+        log.warn("backupData called: runtime backup is NOT implemented");
+        return ApiResponse.error(BACKUP_NOT_IMPLEMENTED);
     }
 
     @GetMapping("/backups/list")
     public ApiResponse<Map<String, Object>> getBackupList() {
-        try {
-            List<Map<String, Object>> backups = new ArrayList<>();
-            
-            Map<String, Object> backup1 = new HashMap<>();
-            backup1.put("id", "1");
-            backup1.put("fileName", "backup_20240101_120000.sql");
-            backup1.put("size", "2.5 MB");
-            backup1.put("createdAt", "2024-01-01 12:00:00");
-            backup1.put("status", "success");
-            backups.add(backup1);
-            
-            Map<String, Object> backup2 = new HashMap<>();
-            backup2.put("id", "2");
-            backup2.put("fileName", "backup_20240115_090000.sql");
-            backup2.put("size", "3.2 MB");
-            backup2.put("createdAt", "2024-01-15 09:00:00");
-            backup2.put("status", "success");
-            backups.add(backup2);
-            
-            Map<String, Object> backup3 = new HashMap<>();
-            backup3.put("id", "3");
-            backup3.put("fileName", "backup_20240130_180000.sql");
-            backup3.put("size", "2.8 MB");
-            backup3.put("createdAt", "2024-01-30 18:00:00");
-            backup3.put("status", "success");
-            backups.add(backup3);
-            
-            Map<String, Object> result = new HashMap<>();
-            result.put("total", backups.size());
-            result.put("items", backups);
-            
-            return ApiResponse.success(result);
-        } catch (Exception e) {
-            log.error("Get backup list failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
-        }
+        // 不再返回编造的备份行：如实回空列表并说明原因，前端显示"暂无备份记录"。
+        // （与 /admin/tasks/list 同一口径：那个空是真话，不是前端读错键。）
+        Map<String, Object> result = new HashMap<>();
+        result.put("total", 0);
+        result.put("items", new ArrayList<>());
+        result.put("implemented", false);
+        result.put("note", BACKUP_NOT_IMPLEMENTED);
+        return ApiResponse.success(result);
     }
 
     @PostMapping("/backup/{backupId}/restore")
     public ApiResponse<String> restoreBackup(@PathVariable String backupId) {
         try {
-            log.info("Restore backup requested: {}", backupId);
-            return ApiResponse.success("Backup " + backupId + " restored successfully");
+            log.warn("restoreBackup called: runtime restore is NOT implemented");
+            // 同 getBackupList：没有运行时可恢复的备份，不能回"恢复成功"（那会让管理员以为数据已回滚）
+            return ApiResponse.error(BACKUP_NOT_IMPLEMENTED);
         } catch (Exception e) {
             log.error("Restore backup failed: {}", e.getMessage());
             return ApiResponse.error(e.getMessage());

@@ -350,14 +350,19 @@ const loadUsers = async () => {
   loading.value = true
   try {
     const response = await adminAPI.getUsers(currentPage.value, pageSize.value)
-    if (Array.isArray(response)) {
-      users.value = response.map(u => ({
-        ...u,
-        role: u.role || 1,
-        enabled: u.status !== 1 ? 1 : 0
-      }))
-      totalUsers.value = response.length
-    }
+    // ⚠️ `/admin/users/page` 回的是 **{total, items:[...]}**（已实测），不是裸数组。
+    // 原来只判 `Array.isArray` → users 恒 []、totalUsers 恒 0，权限页的用户列表永远空。
+    const list = Array.isArray(response) ? response
+      : Array.isArray(response?.items) ? response.items
+      : Array.isArray(response?.records) ? response.records
+      : Array.isArray(response?.list) ? response.list
+      : []
+    users.value = list.map(u => ({
+      ...u,
+      role: u.role || 1,
+      enabled: u.status !== 1 ? 1 : 0
+    }))
+    totalUsers.value = Number(response?.total) || list.length
   } catch (error) {
     console.error('加载用户列表失败:', error)
   } finally {

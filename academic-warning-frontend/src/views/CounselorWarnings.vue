@@ -180,8 +180,12 @@ const generateOpinion = async () => {
     const prompt = `作为高校辅导员，为学生${handleForm.value.studentName}生成一份预警处理意见。请根据学生情况，包括预警原因、学习状态等，生成一段专业、合理的处理意见，内容应包括：1. 对学生情况的分析 2. 具体的帮扶措施 3. 后续跟踪计划。生成的内容要符合辅导员的专业身份，语言要正式、关怀。`
     
     const response = await aiAPI.getResponse(userId, prompt)
-    if (response && response.code === 200 && response.data) {
-      handleForm.value.opinion = response.data
+    // ⚠️ `/ai/chat` 回的是 `{studentId, reply[, analysis]}`（AIController.chat），
+    // 没有 `code`/`data` 两层（拦截器已解包）。原来那个条件**恒假** → 永远走 else，
+    // AI 明明答了也一律报"生成处理意见失败"。正文在 `reply`。
+    const reply = response?.reply ?? response?.data?.reply ?? response?.data
+    if (typeof reply === 'string' && reply.trim()) {
+      handleForm.value.opinion = reply
       ElMessage.success('处理意见生成成功')
     } else {
       ElMessage.error('生成处理意见失败')

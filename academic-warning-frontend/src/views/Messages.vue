@@ -168,7 +168,9 @@ async function loadUnread() {
   try {
     const uid = getUserId(); if (!uid) return
     const r = await studentAPI.getUnreadCount(uid)
+    // 同 StudentLayout：后端回 `{unreadCount: n}`，原来只认裸数字/`.data` → 恒 0
     if (typeof r === 'number') unreadCount.value = r
+    else if (r?.unreadCount !== undefined) unreadCount.value = Number(r.unreadCount) || 0
     else if (r?.data !== undefined) unreadCount.value = Number(r.data) || 0
   } catch (e) {}
 }

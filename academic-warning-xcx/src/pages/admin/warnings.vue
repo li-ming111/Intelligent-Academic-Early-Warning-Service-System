@@ -326,9 +326,13 @@ async function submitHandle() {
   }
   submitting.value = true
   try {
+    // `handledBy` 必须显式带上：后端原来是把 **remark 写进「处理人」列**、从不读这个键，
+    // 于是详情里「处理人」显示的是备注文本。后端已改为读 handledBy，这里补上当前登录者。
+    const operator = uni.getStorageSync('userName') || uni.getStorageSync('username') || ''
     await adminAPI.handleWarning(current.value.id, {
       handleResult: String(f.handleResult).trim(),
-      remark: String(f.remark || '').trim()
+      remark: String(f.remark || '').trim(),
+      handledBy: String(operator).trim()
     })
     toast('已提交处理')
     const id = current.value.id

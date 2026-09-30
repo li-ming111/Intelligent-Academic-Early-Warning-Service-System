@@ -217,12 +217,23 @@ async function loadData() {
     if (wlist.some(w => w.warningLevel === '严重')) {
       tdList.push({ id: 2, title: '严重预警关注', description: '存在严重预警学生，建议立即跟进', action: '查看', link: '/teacher/warnings', urgent: true })
     }
-    const feedbackRes = await teacherAPI.getTodos(tid).catch(() => null)
-    if (feedbackRes?.pendingFeedbacks > 0) {
-      tdList.push({ id: 3, title: '学生反馈待回复', description: `${feedbackRes.pendingFeedbacks}条反馈等待回复`, action: '回复', link: '/teacher/feedback' })
+    // ⚠️ `/teachers/todos/{id}` 回的是 **List<Map>{id,title,count,type}**（TeacherController.getTodos），
+    // 不是对象。原来读 `feedbackRes.pendingFeedbacks` —— 数组上取属性恒 undefined，
+    // 两个 if 都恒假 → 「学生反馈待回复」「成绩申诉处理」**永远不出现**，且不报错。
+    // 按 type 取数，而不是按想象的字段名。
+    const todosRes = await teacherAPI.getTodos(tid).catch(() => null)
+    const todosList = Array.isArray(todosRes) ? todosRes : (todosRes?.items ?? todosRes?.list ?? [])
+    const todoCount = (type) => {
+      const hit = todosList.find((t) => t?.type === type)
+      return Number(hit?.count) || 0
     }
-    if (feedbackRes?.pendingAppeals > 0) {
-      tdList.push({ id: 4, title: '成绩申诉处理', description: `${feedbackRes.pendingAppeals}条申诉待处理`, action: '处理', link: '/teacher/feedback' })
+    const pendingFeedbacks = todoCount('feedback')
+    const pendingClassReqs = todoCount('class_request')
+    if (pendingFeedbacks > 0) {
+      tdList.push({ id: 3, title: '学生反馈待回复', description: `${pendingFeedbacks}条反馈等待回复`, action: '回复', link: '/teacher/feedback' })
+    }
+    if (pendingClassReqs > 0) {
+      tdList.push({ id: 4, title: '班级申请待审核', description: `${pendingClassReqs}条班级申请待审核`, action: '查看', link: '/teacher/class-management' })
     }
     todos.value = tdList
   } catch (e) { console.error('加载看板失败', e) }

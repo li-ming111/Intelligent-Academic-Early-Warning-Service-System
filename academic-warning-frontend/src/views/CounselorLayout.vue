@@ -151,14 +151,18 @@ const loadCounselorInfo = async () => {
     const userId = localStorage.getItem('userId')
     if (!userId) return
     const response = await counselorAPI.getDashboard(userId)
-    if (response && response.code === 200 && response.data) {
-      const data = response.data
-      if (data.counselorName || data.name) {
-        const counselorNameFromApi = data.counselorName || data.name
-        counselorName.value = counselorNameFromApi
-        // 更新localStorage中的userName
-        localStorage.setItem('userName', counselorNameFromApi)
-      }
+    // ⚠️ 拦截器已解包：`response` 就是载荷本身，没有 `code`/`data` 两层，
+    // 原来判 `response.code === 200 && response.data` **恒假、且无 else** → 姓名从不更新。
+    // 第二个错更隐蔽：载荷里**根本没有** `counselorName`/`name` 这两个顶层键 ——
+    // 姓名在 `counselor.name` 里（CounselorController.getDashboard 只 put 了
+    // counselor / studentCount / warningCount / redWarnings / yellowWarnings /
+    // blueWarnings / classes）。所以只修解包那一层，姓名依旧是空的。
+    const data = response
+    const counselorNameFromApi = data?.counselor?.name || data?.counselorName || data?.name
+    if (counselorNameFromApi) {
+      counselorName.value = counselorNameFromApi
+      // 更新localStorage中的userName
+      localStorage.setItem('userName', counselorNameFromApi)
     }
   } catch (error) {
     console.error('加载辅导员信息失败:', error)

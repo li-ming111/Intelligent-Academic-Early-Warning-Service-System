@@ -364,6 +364,8 @@
             <!-- 备份列表 -->
             <div v-if="backupList.length === 0" style="padding: 20px; text-align: center; color: #999;">
               暂无备份记录
+              <!-- 后端说明"运行时备份未实现"时如实透出，而不是让人以为"点了就会有的" -->
+              <div v-if="backupNote" style="margin-top: 8px; font-size: 12px; color: #c0c4cc;">{{ backupNote }}</div>
             </div>
             <el-table v-else :data="backupList" stripe v-loading="backupLoading">
               <el-table-column type="selection" width="55" />
@@ -429,6 +431,7 @@ const exportHistory = ref([])
 const reportTemplates = ref([])
 const customTemplates = ref([])
 const backupList = ref([])
+const backupNote = ref('')
 const backupLoading = ref(false)
 const selectedHistory = ref([])
 const selectedBackups = ref([])
@@ -922,11 +925,18 @@ const loadBackupList = async () => {
   backupLoading.value = true
   try {
     const response = await adminAPI.getBackupList()
-    if (Array.isArray(response)) {
-      backupList.value = response.map(item => ({
-        ...item,
-        created_at: item.createdAt ? new Date(item.createdAt).toLocaleString('zh-CN') : ''
-      }))
+    // ⚠️ `/admin/backups/list` 回的是 {total, items}（不是裸数组）；原来只判 Array.isArray
+    // → 备份列表恒空。后端现在如实返回空列表 + implemented:false（不再编造三条假备份）。
+    const list = Array.isArray(response) ? response
+      : Array.isArray(response?.items) ? response.items
+      : []
+    backupList.value = list.map(item => ({
+      ...item,
+      created_at: item.createdAt ? new Date(item.createdAt).toLocaleString('zh-CN') : ''
+    }))
+    backupNote.value = response?.note || ''
+    if (response && response.implemented === false && !backupNote.value) {
+      backupNote.value = '本系统未实现运行时自动备份'
     }
   } catch (error) {
     console.error('加载备份列表失败:', error)

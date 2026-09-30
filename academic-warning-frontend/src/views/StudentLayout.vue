@@ -168,7 +168,10 @@ async function fetchUnread() {
     const uid = getUserId()
     if (!uid) return
     const res = await studentAPI.getUnreadCount(uid)
+    // 后端回的是 `Map.of("unreadCount", count)`（StudentServiceImpl.getUnreadMessageCount），
+    // 既不是裸数字、也没有 `.data` —— 原来两个分支都不中，**角标恒 0**（一条新消息也看不见）。
     if (typeof res === 'number') unreadCount.value = res
+    else if (res?.unreadCount !== undefined) unreadCount.value = Number(res.unreadCount) || 0
     else if (res?.data !== undefined) unreadCount.value = Number(res.data) || 0
   } catch (e) {}
 }
