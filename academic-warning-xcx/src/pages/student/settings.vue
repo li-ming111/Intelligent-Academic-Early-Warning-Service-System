@@ -106,7 +106,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { studentAPI, apiClient } from '@/services/api.js'
 import { useUser, logout } from '@/composables/useUser.js'
-import { roleThemeStyle } from '@/composables/useRoleTheme.js'
+import { roleThemeStyle, primaryOf } from '@/composables/useRoleTheme.js'
 import { USER_STATUS_TEXT, STATUS_TAG_TYPE, dictText } from '@/constants/dict.js'
 
 const { userId, role } = useUser()
@@ -147,13 +147,10 @@ const EMPTY = '—'
 
 /**
  * switch 是**原生组件**，不解析 CSS 变量，`color` 必须给字面量色值。
- * 这里按角色直接映射，不走 storage —— 少一个隐式的初始化顺序依赖。
- * （与 composables/useRoleTheme.js 的 ROLE_THEME 同源，改色要一起改。）
+ * 色值从 ROLE_THEME 取 —— 原先这里手抄了一份五角色色表，
+ * 改色要两处一起改，抄漏就是「同一个角色在设置页和其它页不同色」。
  */
-const switchColor = (() => {
-  const map = { 1: '#4caf50', 2: '#2196f3', 3: '#2563eb', 4: '#667eea', 5: '#0ea5e9' }
-  return map[Number(role)] || '#4caf50'
-})()
+const switchColor = primaryOf(role, '#4caf50')
 
 const statusText = computed(() => dictText(USER_STATUS_TEXT, info.value.status))
 

@@ -276,7 +276,13 @@ function goScores(courseId) {
   color: $color-text-hint;
 }
 
+/* 本体保持原来的 38×22 小胶囊，由伪元素撑命中区。
+   为什么不用 min-height 撑本体：圆角是 $radius-pill，
+   盒子一旦到 44 高就变成正圆（见 uni.scss 里 tap-area 的说明）。
+   横向要给 8rpx 外扩：两个字加内边距只有 38px 宽，只撑高仍不足 44。
+   卡片右上角左右都是空白，外扩不会抢到别的控件的点击。 */
 .c__edit {
+  @include tap-area($tap-min, 8rpx);
   flex-shrink: 0;
   margin-left: $spacing-sm;
   padding: 6rpx $spacing-md;
@@ -331,6 +337,7 @@ function goScores(courseId) {
 }
 
 .c__link {
+  @include tap-area;
   display: flex;
   align-items: center;
 }

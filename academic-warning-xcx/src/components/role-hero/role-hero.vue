@@ -107,6 +107,7 @@ defineProps({
 }
 
 .hero__stat {
+  min-height: $tap-min;
   flex: 1;
   min-width: 0;
   display: flex;

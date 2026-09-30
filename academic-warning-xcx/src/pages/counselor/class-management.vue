@@ -506,6 +506,7 @@ watch(tab, key => {
 }
 
 .tabs__item {
+  min-height: $tap-min;
   flex: 1;
   min-width: 0;
   padding: $spacing-sm 0;

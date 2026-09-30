@@ -445,7 +445,7 @@ async function openDetail(s) {
 
 .num__k {
   margin-top: 4rpx;
-  font-size: 20rpx;
+  font-size: $font-xs;
   color: $color-text-hint;
 }
 
@@ -614,7 +614,7 @@ async function openDetail(s) {
 .act {
   display: flex;
   align-items: center;
-  height: 68rpx;
+  height: $tap-min;
   padding: 0 $spacing-lg;
   border-radius: $radius-md;
   background: $color-bg;

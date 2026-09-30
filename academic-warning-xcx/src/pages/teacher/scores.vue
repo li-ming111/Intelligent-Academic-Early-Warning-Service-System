@@ -700,7 +700,7 @@ async function submitCreate() {
   color: $color-text;
 }
 
-.bar-head__btn {
+.bar-head__btn {  @include tap-area;
   padding: $spacing-xs $spacing-lg;
   border-radius: $radius-pill;
   background: var(--color-primary);

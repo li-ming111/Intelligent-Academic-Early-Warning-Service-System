@@ -21,6 +21,9 @@ $color-info: #3b82f6;
    这正是全项目最初那个 bug 的视觉根源。 */
 $color-pending: #9ca3af;
 
+$color-danger-weak: #fef2f2;
+$color-success-weak: #f0fdf4;
+
 /* ---------- 预警三级 ---------- */
 $level-1: #f59e0b; /* 轻度 */
 $level-2: #f97316; /* 中度 */
@@ -44,6 +47,19 @@ $role-teacher: #2196f3;
 $role-counselor: #2563eb;
 $role-admin: #667eea;
 $role-college-admin: #0ea5e9;
+
+/* ---------- 未登录页（登录 / 注册）的品牌色 ----------
+   登录页不属于任何角色，但不能因此自成一个调色板。
+   原先这两页写的是 #3b5ce8 —— 它不在本文件的任何 token 里，也不在
+   PC 端 theme.js 里，是重设计前"三套并行调色板"仅存的一处，
+   偏偏落在每次演示的第一屏（登录）上。
+
+   取值与 PC 端 academic-warning-frontend/src/views/Login.vue 的登录页
+   渐变同一组，两端同色 —— 与角色色同理，同一屏在两端不该是两种蓝。 */
+$brand-auth: #2563eb;
+$brand-auth-deep: #1e3a8a;
+$brand-auth-light: #60a5fa;
+$brand-auth-weak: #eff6ff;
 
 /* ---------- 圆角 ---------- */
 $radius-sm: 8rpx;
@@ -117,4 +133,50 @@ $tap-min: 88rpx;
   display: flex;
   align-items: center;
   justify-content: center;
+}
+
+/* 把控件的点击区撑到 $tap-min，而**不改外观**。
+   ==========================================================
+   用途：内联文字链（`查看全部` / `标记已读` / `删除`）与小胶囊
+   （`全部` / `轻度` / `编辑` 这类 chip）。
+   前者没有 height，盒子就是一行字高 —— 实测 16~17px；后者原本
+   只有 30rpx 高。按「声明了 height 才检查」的 grep 审计两类都
+   查不到（那一轮因此漏了 48 处，见 testsprite/local-check/xcx-tap-audit.mjs）。
+
+   为什么用伪元素而不是加 padding：这些控件大多在标题行或 chip 行里，
+   上下加内边距会把整行撑高，改变视觉节奏；伪元素只接管命中测试，
+   字形与行高一动不动。
+
+   ⚠️ 对**圆角是 $radius-pill 的胶囊，绝不能用 min-height 撑高**
+   ==========================================================
+   2026-09-29 踩到：给一批胶囊加 `min-height: $tap-min` 之后，
+   盒子的高度到了 44px，而宽度往往只有 46~58px。9999rpx 的圆角在
+   浏览器里会被钳到 min(w,h)/2，于是**视觉上从小胶囊变成了正圆/椭圆**
+   （教师端「编辑」38×44 直接成了个圆点，筛选栏那一整排 chip 全成圆球）。
+   胶囊的"形状"是靠宽高比撑出来的，一旦高度追平宽度，形状就没了。
+   所以胶囊必须用本体保持原高、由伪元素撑命中区。
+
+   $spread-x：横向外扩量，默认 0（不外扩 —— 防止盖住旁边的控件抢走点击，
+   例如 chip 行里相邻的两个胶囊只隔 12rpx）。只有"左右确实有空白"的
+   孤立按钮（如卡片右上角的「编辑」）才适合给一个正值。 */
+@mixin tap-area($min: $tap-min, $spread-x: 0) {
+  position: relative;
+  &::after {
+    content: '';
+    position: absolute;
+    /* 用 @if 而不是 if() 函数：Sass 已弃用 `if()`（让位给 CSS 原生 if()），
+       用它会在**每个** SFC 上打一条 DEPRECATION WARNING —— uni.scss 注入到了
+       全部 64 个组件的样式里。这里不用 silenceDeprecations 压掉，
+       因为那是把新写的代码的告警藏起来，而不是修掉它。 */
+    @if $spread-x == 0 {
+      left: 0;
+      right: 0;
+    } @else {
+      left: -$spread-x;
+      right: -$spread-x;
+    }
+    top: 50%;
+    transform: translateY(-50%);
+    height: $min;
+  }
 }

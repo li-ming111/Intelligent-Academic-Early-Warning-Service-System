@@ -420,7 +420,7 @@ async function doLookup() {
 
 .lookup__btn {
   width: 160rpx;
-  height: 80rpx;
+  height: $tap-min;
   margin-left: $spacing-sm;
   border-radius: $radius-md;
   background: var(--color-primary);

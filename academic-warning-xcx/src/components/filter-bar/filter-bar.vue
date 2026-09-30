@@ -96,11 +96,17 @@ function pick(value) {
 }
 
 .filter-bar__row {
+  /* 上下各 14rpx：chip 本体回到 60rpx，而伪元素命中区是 88rpx，
+         多出来的 (88-60)/2 = 14rpx 必须落在行的盒子里，否则会被
+         scroll-view 的 overflow 裁掉，看着有命中区其实点不到。 */
+  padding: 14rpx 0;
   display: inline-flex;
   align-items: center;
 }
 
 .filter-bar__chip {
+  @include tap-area;
+
   flex-shrink: 0;
   height: 60rpx;
   padding: 0 $spacing-lg;

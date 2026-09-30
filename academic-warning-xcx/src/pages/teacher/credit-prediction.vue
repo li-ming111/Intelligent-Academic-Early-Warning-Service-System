@@ -394,7 +394,7 @@ async function runBatch() {
   color: $color-text;
 }
 
-.bn__btn {
+.bn__btn {  @include tap-area;
   padding: $spacing-xs $spacing-lg;
   border-radius: $radius-pill;
   background: var(--color-primary);
@@ -468,7 +468,7 @@ async function runBatch() {
   color: $color-text-hint;
 }
 
-.chip {
+.chip {  @include tap-area;
   flex-shrink: 0;
   padding: 6rpx $spacing-md;
   border-radius: $radius-pill;

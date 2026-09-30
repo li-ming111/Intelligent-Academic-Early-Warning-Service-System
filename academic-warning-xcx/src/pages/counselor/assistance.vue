@@ -419,7 +419,7 @@ async function submit() {
   color: $color-text-secondary;
 }
 
-.bar__btn {
+.bar__btn {  @include tap-area;
   flex-shrink: 0;
   margin-left: $spacing-sm;
   padding: 10rpx 28rpx;

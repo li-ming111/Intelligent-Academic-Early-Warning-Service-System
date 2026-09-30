@@ -251,10 +251,12 @@ const loadClasses = async (collegeId) => {
 onMounted(() => { loadColleges() })
 </script>
 
-<style scoped>
+<style lang="scss" scoped>
+/* 与登录页同一套品牌蓝（$brand-auth = PC 端 Login.vue 的蓝），
+   不随角色变 —— 注册时还没有角色。 */
 .page {
   min-height: 100vh;
-  background: #3b5ce8;
+  background: $brand-auth;
 }
 
 .brand {
@@ -263,76 +265,77 @@ onMounted(() => { loadColleges() })
   align-items: center;
   padding: 80rpx 0 36rpx;
 }
-.logo { width: 72rpx; height: 72rpx; margin-bottom: 16rpx; }
-.brand-name { font-size: 30rpx; font-weight: 700; color: #fff; letter-spacing: 2rpx; }
-.brand-sub { font-size: 22rpx; color: rgba(255,255,255,0.55); margin-top: 6rpx; }
+.logo { width: 72rpx; height: 72rpx; margin-bottom: $spacing-md; }
+.brand-name { font-size: $font-lg; font-weight: 700; color: #fff; letter-spacing: 2rpx; }
+.brand-sub { font-size: $font-xs; color: rgba(255, 255, 255, 0.55); margin-top: 6rpx; }
 
 .card {
-  background: #fff;
-  border-radius: 32rpx 32rpx 0 0;
+  background: $color-card;
+  border-radius: $radius-xl $radius-xl 0 0;
   padding: 36rpx 40rpx 48rpx;
 }
 
-/* 角色标签 */
+/* 角色标签：是个可点控件，高度必须够 $tap-min */
 .role-tabs {
   display: flex;
-  margin-bottom: 28rpx;
-  gap: 16rpx;
+  margin-bottom: $spacing-xl;
+  gap: $spacing-md;
 }
 .role-tab {
   flex: 1;
+  height: $tap-min;
+  line-height: $tap-min;
   text-align: center;
-  padding: 18rpx 0;
-  font-size: 26rpx;
-  color: #86868b;
-  background: #f5f5f7;
-  border-radius: 12rpx;
+  font-size: $font-base;
+  color: $color-text-secondary;
+  background: $color-bg;
+  border-radius: $radius-md;
 }
 .role-tab.active {
-  background: #3b5ce8;
+  background: $brand-auth;
   color: #fff;
   font-weight: 600;
 }
 
 /* 字段 */
-.field { margin-bottom: 20rpx; }
-.field-label { display: block; font-size: 24rpx; color: #86868b; margin-bottom: 8rpx; }
+.field { margin-bottom: $spacing-lg; }
+.field-label { display: block; font-size: $font-sm; color: $color-text-secondary; margin-bottom: $spacing-xs; }
 .input {
-  width: 100%; height: 80rpx;
-  background: #f5f5f7; border-radius: 12rpx;
-  padding: 0 20rpx; font-size: 26rpx; color: #1d1d1f;
+  width: 100%; height: $tap-min;
+  background: $color-bg; border-radius: $radius-md;
+  padding: 0 $spacing-lg; font-size: $font-base; color: $color-text;
   box-sizing: border-box;
 }
-.ph { color: #aeaeb2; }
+.ph { color: $color-text-hint; }
 
 .picker-box {
-  width: 100%; height: 80rpx;
-  background: #f5f5f7; border-radius: 12rpx;
-  padding: 0 20rpx; font-size: 26rpx; color: #1d1d1f;
+  width: 100%; height: $tap-min;
+  background: $color-bg; border-radius: $radius-md;
+  padding: 0 $spacing-lg; font-size: $font-base; color: $color-text;
   display: flex; align-items: center; justify-content: space-between;
   box-sizing: border-box;
 }
-.picker-box .placeholder { color: #aeaeb2; }
-.arrow { font-size: 28rpx; color: #aeaeb2; }
+.picker-box .placeholder { color: $color-text-hint; }
+.arrow { font-size: $font-md; color: $color-text-hint; }
 
 /* 按钮 */
 .btn {
-  width: 100%; height: 84rpx; line-height: 84rpx;
-  background: #3b5ce8; color: #fff;
-  border-radius: 12rpx; border: none;
-  font-size: 30rpx; font-weight: 600;
-  letter-spacing: 6rpx; margin-top: 28rpx;
+  width: 100%; height: $tap-min; line-height: $tap-min;
+  background: $brand-auth; color: #fff;
+  border-radius: $radius-md; border: none;
+  font-size: $font-lg; font-weight: 600;
+  letter-spacing: 6rpx; margin-top: $spacing-xl;
 }
 .btn[disabled] { opacity: 0.5; }
 
 /* 消息 */
-.msg { padding: 16rpx 20rpx; border-radius: 10rpx; margin-top: 16rpx; font-size: 24rpx; }
-.error-msg { background: #fef2f2; color: #ef4444; }
-.success-msg { background: #f0fdf4; color: #22c55e; }
+.msg { padding: $spacing-md $spacing-lg; border-radius: $radius-sm; margin-top: $spacing-md; font-size: $font-sm; }
+.error-msg { background: $color-danger-weak; color: $color-danger; }
+.success-msg { background: $color-success-weak; color: $color-success; }
 
 /* 底部链接 */
 .login-link {
-  text-align: center; margin-top: 24rpx; font-size: 24rpx; color: #86868b;
+  text-align: center; margin-top: $spacing-xl; font-size: $font-sm; color: $color-text-secondary;
 }
-.link { color: #3b5ce8; font-weight: 500; }
+.link { color: $brand-auth; font-weight: 500; }
 </style>

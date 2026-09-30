@@ -365,7 +365,7 @@ async function doReject() {
 }
 
 .app__btn {
-  height: 68rpx;
+  height: $tap-min;
   padding: 0 $spacing-xl;
   margin-right: $spacing-sm;
   border-radius: $radius-md;

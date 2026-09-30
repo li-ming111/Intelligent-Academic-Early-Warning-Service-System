@@ -334,7 +334,7 @@ function doBatch() {
   align-items: center;
 }
 
-.bulk__btn {
+.bulk__btn {  @include tap-area;
   margin-left: $spacing-sm;
   padding: 8rpx 22rpx;
   border-radius: $radius-pill;
@@ -443,7 +443,7 @@ function doBatch() {
   color: $color-text-hint;
 }
 
-.warn-card__handle {
+.warn-card__handle {  @include tap-area;
   flex-shrink: 0;
   min-width: 120rpx;
   padding: 8rpx 0;
@@ -451,7 +451,6 @@ function doBatch() {
   background: var(--color-primary);
   color: #fff;
   font-size: $font-xs;
-  text-align: center;
 }
 
 /* ---------- 处理表单 ---------- */

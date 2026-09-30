@@ -51,7 +51,7 @@ defineEmits(['action'])
 .empty__action {
   margin-top: $spacing-xl;
   min-width: 220rpx;
-  height: 72rpx;
+  height: $tap-min;
   padding: 0 $spacing-2xl;
   border-radius: $radius-pill;
   background: var(--color-primary, #{$role-student});

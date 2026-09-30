@@ -105,9 +105,12 @@ function close() {
 }
 
 .sheet__close {
-  width: 64rpx;
-  height: 64rpx;
-  margin-right: -#{($tap-min - 64rpx) * 0.5};
+  width: $tap-min;
+  height: $tap-min;
+  /* 之前这里靠一个 -12rpx 的负外边距把 64rpx 的按钮视觉上顶到右边缘。
+     按钮尺寸提到 $tap-min 之后补偿量就是 0，负外边距要一起去掉 ——
+     只改尺寸不改这里，图标会从右边缘往里缩 12rpx。 */
+  margin-right: 0;
   @include flex-center;
 }
 

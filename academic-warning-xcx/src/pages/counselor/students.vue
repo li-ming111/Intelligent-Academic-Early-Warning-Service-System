@@ -60,7 +60,7 @@
             这里数的是**花名册上真的有人的班**（数据来自学生行）；
             「班级管理」页数的是 `classes.counselor_id` 指向本辅导员的所有班，
             含那些还没有学生档案的空班。两者标着同一个词但口径不同 ——
-            本页 1 个、那边 8 个，差额是 7 个空班，不是哪一边算错了。
+            本页 1 个、那边 6 个，差额是 5 个尚未招生的空班，不是哪一边算错了。
           </text>
         </view>
       </template>
@@ -724,6 +724,7 @@ function openFocusFromQuery() {
 }
 
 .tabs__item {
+  min-height: $tap-min;
   flex: 1;
   min-width: 0;
   padding: $spacing-sm 0;
@@ -831,7 +832,7 @@ function openFocusFromQuery() {
 }
 
 .trend__label {
-  font-size: 20rpx;
+  font-size: $font-xs;
   color: $color-text-hint;
 }
 
@@ -953,7 +954,7 @@ function openFocusFromQuery() {
   margin-top: $spacing-sm;
 }
 
-.chip {
+.chip {  @include tap-area;
   margin: 0 $spacing-sm $spacing-sm 0;
   padding: 8rpx 22rpx;
   border-radius: $radius-pill;

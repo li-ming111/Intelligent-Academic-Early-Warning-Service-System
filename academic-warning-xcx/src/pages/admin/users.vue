@@ -701,6 +701,8 @@ async function doDelete() {
 }
 
 .toolbar__add {
+  @include tap-area;
+
   display: flex;
   align-items: center;
   height: 64rpx;
@@ -887,7 +889,7 @@ async function doDelete() {
 }
 
 .opt {
-  height: 60rpx;
+  height: $tap-min;
   padding: 0 $spacing-lg;
   margin: 0 $spacing-sm $spacing-sm 0;
   border-radius: $radius-pill;
@@ -991,7 +993,7 @@ async function doDelete() {
 }
 
 .act {
-  height: 68rpx;
+  height: $tap-min;
   padding: 0 $spacing-lg;
   margin: 0 $spacing-sm $spacing-sm 0;
   border-radius: $radius-md;

@@ -553,7 +553,7 @@ async function submitHandle() {
 .act {
   display: flex;
   align-items: center;
-  height: 68rpx;
+  height: $tap-min;
   padding: 0 $spacing-lg;
   margin: 0 $spacing-sm $spacing-sm 0;
   border-radius: $radius-md;

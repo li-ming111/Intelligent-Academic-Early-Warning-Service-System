@@ -79,7 +79,7 @@
               <view class="class-row__main">
                 <text class="class-row__name">{{ c.name }}</text>
                 <!-- 有 0 人班级时给一句说明：不解释会被当成数据显示错了。
-                     这是当前库的真实状态 —— 该辅导员名下 8 个班，只有 1 个班有学生。 -->
+                     这是当前库的真实状态 —— 该辅导员名下 6 个班，只有 1 个班有学生。 -->
                 <text v-if="!numOr(c.studentCount)" class="class-row__note">该班暂无学生</text>
               </view>
               <text class="class-row__count">{{ numOr(c.studentCount) }} 人</text>
@@ -380,6 +380,7 @@ async function load() {
 
 /* ---------- 班级 ---------- */
 .class-row {
+  min-height: $tap-min;
   display: flex;
   align-items: center;
 }

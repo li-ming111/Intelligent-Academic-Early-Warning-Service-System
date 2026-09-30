@@ -32,6 +32,22 @@ export function themeOf(role) {
 }
 
 /**
+ * 取某角色的主色**字面量**，识别不出时用 fallback。
+ *
+ * 为什么需要它：`switch` 是原生组件，不解析 CSS 变量，`:color` 只能收字面量色值，
+ * 拿不到 `var(--color-primary)`。四个 profile / settings 页原先各自手抄了一份
+ * 五角色色表，与 ROLE_THEME 重复 —— 改色时要记得五处一起改，漏一处就是
+ * 「同一个角色在两个页面不同色」。这里改为从 ROLE_THEME 取，色值只有一份出处。
+ *
+ * 显式传 `role`、不从 storage 读，是为了少一个隐式的初始化顺序依赖。
+ * 入参形态交给 roleKey() 归一 —— `'1'`、`1`、`'student'`、`'college_admin'` 都认。
+ */
+export function primaryOf(role, fallback) {
+  const theme = themeOf(role)
+  return (theme && theme.primary) || fallback
+}
+
+/**
  * 生成可绑到根节点的 style 字符串。
  * 不传 role 时从 storage 读当前登录角色。
  */

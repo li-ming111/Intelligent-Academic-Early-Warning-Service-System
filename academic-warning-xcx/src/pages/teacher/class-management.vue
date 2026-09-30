@@ -451,7 +451,7 @@ function goStudents() {
 
 .act {
   flex: 1;
-  height: 76rpx;
+  height: $tap-min;
   margin-right: $spacing-sm;
   border-radius: $radius-md;
   background: $color-bg;

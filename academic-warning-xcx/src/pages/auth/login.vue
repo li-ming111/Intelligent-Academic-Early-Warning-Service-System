@@ -171,10 +171,13 @@ onMounted(() => {
 })
 </script>
 
-<style scoped>
+<style lang="scss" scoped>
+/* 本页是**未登录**页，不属于任何角色，所以不用 var(--color-primary)
+   （那个在 page 上默认是学生绿）。品牌蓝走 $brand-auth，与 PC 端
+   Login.vue 同一组值。 */
 .page {
   min-height: 100vh;
-  background: linear-gradient(160deg, #3b5ce8 0%, #5b7cf0 40%, #7b9cf8 100%);
+  background: linear-gradient(160deg, $brand-auth-deep 0%, $brand-auth 40%, $brand-auth-light 100%);
   display: flex;
   flex-direction: column;
 }
@@ -191,13 +194,13 @@ onMounted(() => {
 .logo-wrap {
   width: 160rpx;
   height: 160rpx;
-  background: #ffffff;
+  background: $color-card;
   border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 8rpx 32rpx rgba(0,0,0,0.15);
-  margin-bottom: 24rpx;
+  box-shadow: 0 8rpx 32rpx rgba(0, 0, 0, 0.15);
+  margin-bottom: $spacing-xl;
 }
 .logo {
   width: 130rpx;
@@ -205,160 +208,165 @@ onMounted(() => {
   border-radius: 50%;
 }
 .brand-title {
-  font-size: 32rpx;
+  font-size: $font-lg;
   font-weight: 700;
   color: #ffffff;
   letter-spacing: 2rpx;
 }
 .brand-sub {
-  font-size: 24rpx;
-  color: rgba(255,255,255,0.6);
-  margin-top: 8rpx;
+  font-size: $font-sm;
+  color: rgba(255, 255, 255, 0.6);
+  margin-top: $spacing-xs;
 }
 
 /* 卡片 */
 .card {
   flex: 1;
-  background: #ffffff;
-  border-radius: 32rpx 32rpx 0 0;
+  background: $color-card;
+  border-radius: $radius-xl $radius-xl 0 0;
   padding: 48rpx 40rpx 40rpx;
   position: relative;
   z-index: 1;
 }
 .card-title {
   display: block;
-  font-size: 40rpx;
+  font-size: $font-2xl;
   font-weight: 700;
-  color: #1d1d1f;
-  margin-bottom: 40rpx;
+  color: $color-text;
+  margin-bottom: $spacing-3xl;
 }
 
 /* 字段 */
 .field {
-  margin-bottom: 28rpx;
+  margin-bottom: $spacing-xl;
   position: relative;
 }
 .field-label {
   display: block;
-  font-size: 24rpx;
+  font-size: $font-sm;
   font-weight: 500;
-  color: #86868b;
+  color: $color-text-secondary;
   margin-bottom: 10rpx;
 }
 .input-wrap {
   position: relative;
   width: 100%;
-  height: 88rpx;
+  height: $tap-min;
 }
 .field-input {
   width: 100%;
-  height: 88rpx;
-  background: #f5f5f7;
-  border-radius: 12rpx;
-  padding: 0 24rpx;
-  font-size: 28rpx;
-  color: #1d1d1f;
+  height: $tap-min;
+  background: $color-bg;
+  border-radius: $radius-md;
+  padding: 0 $spacing-xl;
+  font-size: $font-md;
+  color: $color-text;
   box-sizing: border-box;
 }
 .ph {
-  color: #aeaeb2;
-  font-size: 28rpx;
+  color: $color-text-hint;
+  font-size: $font-md;
 }
+
+/* 眼睛按钮：点击区必须 ≥ $tap-min（88rpx）。原先只写 56rpx —— 28px，
+   是全工程最小的可点元素，而它又正好是"密码可见性"这个最容易点错的控件。 */
 .toggle-pwd {
   position: absolute;
-  right: 8rpx;
+  right: 0;
   top: 50%;
   transform: translateY(-50%);
-  width: 56rpx;
-  height: 56rpx;
+  width: $tap-min;
+  height: $tap-min;
   display: flex;
   align-items: center;
   justify-content: center;
   z-index: 2;
 }
 .eye-icon {
-  width: 36rpx;
-  height: 36rpx;
+  width: 40rpx;
+  height: 40rpx;
 }
 
 /* 验证码 */
 .captcha-row {
   display: flex;
-  gap: 16rpx;
+  gap: $spacing-md;
 }
 .captcha-input {
   flex: 1;
 }
 .captcha-box {
   width: 160rpx;
-  height: 88rpx;
-  background: #f5f5f7;
-  border-radius: 12rpx;
+  height: $tap-min;
+  background: $color-bg;
+  border-radius: $radius-md;
   display: flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
 }
 .captcha-code {
-  font-size: 32rpx;
+  font-size: $font-lg;
   font-weight: 800;
-  color: #3b5ce8;
+  color: $brand-auth;
   letter-spacing: 6rpx;
   font-style: italic;
 }
 
 /* 错误 */
 .error {
-  background: #fef2f2;
-  border-radius: 8rpx;
-  padding: 16rpx 20rpx;
-  margin-bottom: 20rpx;
+  background: $color-danger-weak;
+  border-radius: $radius-sm;
+  padding: $spacing-md $spacing-lg;
+  margin-bottom: $spacing-lg;
 }
 .error text {
-  color: #ef4444;
-  font-size: 24rpx;
+  color: $color-danger;
+  font-size: $font-sm;
 }
 
-/* 记住我 */
+/* 记住我：整行可点，所以行高本身就是点击区 */
 .remember {
   display: flex;
   align-items: center;
-  gap: 12rpx;
-  margin-bottom: 32rpx;
+  gap: $spacing-sm;
+  min-height: $tap-min;
+  margin-bottom: $spacing-md;
 }
 .check {
-  width: 32rpx;
-  height: 32rpx;
-  border-radius: 6rpx;
-  border: 2rpx solid #d4d4d8;
+  width: 40rpx;
+  height: 40rpx;
+  border-radius: $radius-sm;
+  border: 2rpx solid $color-border;
   display: flex;
   align-items: center;
   justify-content: center;
+  flex-shrink: 0;
 }
 .check.active {
-  background: #3b5ce8;
-  border-color: #3b5ce8;
+  background: $brand-auth;
+  border-color: $brand-auth;
 }
 .check-mark {
   color: #fff;
-  font-size: 20rpx;
+  font-size: $font-xs;
   font-weight: 700;
 }
 .remember-text {
-  font-size: 24rpx;
-  color: #86868b;
+  font-size: $font-sm;
+  color: $color-text-secondary;
 }
 
 /* 按钮 */
 .btn {
   width: 100%;
-  height: 88rpx;
-  line-height: 88rpx;
-  background: #3b5ce8;
+  height: $tap-min;
+  line-height: $tap-min;
+  background: $brand-auth;
   color: #ffffff;
-  font-size: 30rpx;
+  font-size: $font-lg;
   font-weight: 600;
-  border-radius: 12rpx;
+  border-radius: $radius-md;
   border: none;
   letter-spacing: 4rpx;
   margin: 0;
@@ -372,16 +380,16 @@ onMounted(() => {
   display: flex;
   justify-content: center;
   align-items: center;
-  gap: 8rpx;
-  margin-top: 32rpx;
+  gap: $spacing-xs;
+  margin-top: $spacing-2xl;
 }
 .reg-text {
-  font-size: 24rpx;
-  color: #86868b;
+  font-size: $font-sm;
+  color: $color-text-secondary;
 }
 .reg-link {
-  font-size: 24rpx;
-  color: #3b5ce8;
+  font-size: $font-sm;
+  color: $brand-auth;
   font-weight: 500;
 }
 
@@ -390,15 +398,15 @@ onMounted(() => {
   display: flex;
   justify-content: center;
   align-items: center;
-  gap: 16rpx;
-  padding: 32rpx 0;
+  gap: $spacing-md;
+  padding: $spacing-2xl 0;
 }
 .footer-link {
-  font-size: 22rpx;
-  color: #aeaeb2;
+  font-size: $font-xs;
+  color: $color-text-hint;
 }
 .footer-dot {
-  font-size: 22rpx;
-  color: #aeaeb2;
+  font-size: $font-xs;
+  color: $color-text-hint;
 }
 </style>

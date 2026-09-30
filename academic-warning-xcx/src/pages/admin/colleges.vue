@@ -498,6 +498,8 @@ async function deleteMajor() {
 }
 
 .toolbar__add {
+  @include tap-area;
+
   display: flex;
   align-items: center;
   height: 64rpx;
@@ -690,7 +692,7 @@ async function deleteMajor() {
 }
 
 .opt {
-  height: 60rpx;
+  height: $tap-min;
   padding: 0 $spacing-lg;
   margin: 0 $spacing-sm $spacing-sm 0;
   border-radius: $radius-pill;
@@ -732,7 +734,7 @@ async function deleteMajor() {
 }
 
 .act {
-  height: 68rpx;
+  height: $tap-min;
   padding: 0 $spacing-lg;
   margin: 0 $spacing-sm $spacing-sm 0;
   border-radius: $radius-md;

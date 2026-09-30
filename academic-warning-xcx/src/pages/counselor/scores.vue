@@ -376,7 +376,7 @@ async function loadClasses() {
       return []
     })
     classes.value = Array.isArray(list) ? list : []
-    // 默认选第一个**有学生**的班：库里 8 个班只有 1 个有学生，
+    // 默认选第一个**有学生**的班：库里 6 个班只有 1 个有学生，
     // 默认落在 0 人班上会让整页空着，看着像坏了
     const first = classes.value.find(c => numOr(c.studentCount) > 0) || classes.value[0]
     if (first) {
@@ -471,6 +471,7 @@ watch(tab, key => {
 }
 
 .tabs__item {
+  min-height: $tap-min;
   flex: 1;
   min-width: 0;
   padding: $spacing-sm 0;
@@ -628,7 +629,7 @@ watch(tab, key => {
 
 .dist-row__range {
   display: block;
-  font-size: 20rpx;
+  font-size: $font-xs;
   color: $color-text-hint;
   font-variant-numeric: tabular-nums;
 }

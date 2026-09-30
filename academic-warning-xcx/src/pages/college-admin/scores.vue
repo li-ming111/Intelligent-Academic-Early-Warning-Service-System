@@ -337,7 +337,7 @@ function loadMore() {
 .tab {
   flex: 1;
   min-width: 0;
-  height: 72rpx;
+  height: $tap-min;
   border-radius: $radius-md;
   font-size: $font-sm;
   color: $color-text-secondary;
@@ -554,7 +554,7 @@ function loadMore() {
 
 .num__k {
   margin-top: 4rpx;
-  font-size: 20rpx;
+  font-size: $font-xs;
   color: $color-text-hint;
 }
 

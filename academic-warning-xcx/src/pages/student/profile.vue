@@ -326,7 +326,7 @@ async function load() {
   border-radius: $radius-pill;
   background: $color-danger;
   color: #fff;
-  font-size: 20rpx;
+  font-size: $font-xs;
   line-height: 36rpx;
   text-align: center;
 }

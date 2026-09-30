@@ -303,6 +303,7 @@ async function load() {
 
 /* ---------- 班级 ---------- */
 .class-row {
+  min-height: $tap-min;
   display: flex;
   align-items: center;
 }

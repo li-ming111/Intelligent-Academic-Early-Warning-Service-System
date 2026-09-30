@@ -278,6 +278,8 @@ async function load() {
 }
 
 .head__action {
+  @include tap-area;
+
   flex-shrink: 0;
   height: 60rpx;
   padding: 0 $spacing-lg;
@@ -367,6 +369,12 @@ async function load() {
 }
 
 .notify-card__op {
+  @include tap-area;
+  /* tap-area 把高度撑到 44px，但「删除」只有两个字 = 22px 宽，横向仍然偏小。
+     两个 op 是 flex 兄弟、间距 $spacing-lg(10px)，所以撑宽不会互相压住：
+     各占 ≥$tap-min 的框，文字居中，视觉上只是这一组按钮疏了一点。 */
+  min-width: $tap-min;
+  text-align: center;
   margin-left: $spacing-lg;
   font-size: $font-xs;
   color: var(--color-primary);

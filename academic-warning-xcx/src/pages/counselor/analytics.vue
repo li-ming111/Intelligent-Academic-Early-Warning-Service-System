@@ -459,7 +459,7 @@ async function load() {
 }
 
 .trend__label {
-  font-size: 20rpx;
+  font-size: $font-xs;
   color: $color-text-hint;
 }
 

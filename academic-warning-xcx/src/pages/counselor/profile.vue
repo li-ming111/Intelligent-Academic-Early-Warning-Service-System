@@ -122,7 +122,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { apiClient, counselorAPI } from '@/services/api.js'
 import { useUser, logout } from '@/composables/useUser.js'
-import { roleThemeStyle } from '@/composables/useRoleTheme.js'
+import { roleThemeStyle, primaryOf } from '@/composables/useRoleTheme.js'
 import { normalizeWarnings, countWarnings } from '@/utils/warning.js'
 import { USER_STATUS_TEXT, dictText } from '@/constants/dict.js'
 
@@ -162,11 +162,8 @@ const toggles = [
 const pwd = ref({ oldPassword: '', newPassword: '', confirm: '' })
 const changing = ref(false)
 
-/** switch 是原生组件，不解析 CSS 变量，color 必须给字面量（与 ROLE_THEME 同源） */
-const switchColor = (() => {
-  const map = { 1: '#4caf50', 2: '#2196f3', 3: '#2563eb', 4: '#667eea', 5: '#0ea5e9' }
-  return map[Number(role)] || '#2563eb'
-})()
+/** switch 是原生组件，不解析 CSS 变量，color 必须给字面量（色值取 ROLE_THEME） */
+const switchColor = primaryOf(role, '#2563eb')
 
 const summary = computed(() => countWarnings(warnings.value))
 

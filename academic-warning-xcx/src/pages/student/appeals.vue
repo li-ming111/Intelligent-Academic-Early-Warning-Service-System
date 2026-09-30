@@ -429,7 +429,7 @@ async function load() {
   border-top: 1rpx solid $color-divider;
 }
 
-.appeal-card__withdraw {
+.appeal-card__withdraw {  @include tap-area;
   padding: $spacing-xs $spacing-lg;
   border: 1rpx solid $color-danger;
   border-radius: $radius-pill;
@@ -496,7 +496,7 @@ async function load() {
   flex-wrap: wrap;
 }
 
-.chip {
+.chip {  @include tap-area;
   margin: 0 $spacing-sm $spacing-sm 0;
   padding: $spacing-xs $spacing-lg;
   border: 1rpx solid $color-border;

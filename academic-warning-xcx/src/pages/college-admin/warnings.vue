@@ -401,7 +401,7 @@ function askDelete() {
 }
 
 .act {
-  height: 68rpx;
+  height: $tap-min;
   padding: 0 $spacing-lg;
   border-radius: $radius-md;
   background: $color-bg;

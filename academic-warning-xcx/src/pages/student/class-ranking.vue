@@ -301,7 +301,7 @@ async function load() {
 
 .list-head__tab {
   flex: 1;
-  height: 60rpx;
+  height: $tap-min;
   border-radius: $radius-pill;
   font-size: $font-sm;
   color: $color-text-secondary;
@@ -406,7 +406,7 @@ async function load() {
   border-radius: $radius-sm;
   background: var(--color-primary);
   color: #fff;
-  font-size: 18rpx;
+  font-size: $font-xs;
   line-height: 1.7;
 }
 

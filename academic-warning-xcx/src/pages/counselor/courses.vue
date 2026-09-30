@@ -354,7 +354,7 @@ async function load() {
 }
 
 .m__unit {
-  font-size: 20rpx;
+  font-size: $font-xs;
   font-weight: 400;
   color: $color-text-hint;
 }
@@ -474,7 +474,7 @@ async function load() {
 
 .dist-row__range {
   display: block;
-  font-size: 20rpx;
+  font-size: $font-xs;
   color: $color-text-hint;
   font-variant-numeric: tabular-nums;
 }

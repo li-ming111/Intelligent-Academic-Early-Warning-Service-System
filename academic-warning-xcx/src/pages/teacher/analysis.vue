@@ -503,10 +503,16 @@ async function runStudentAnalysis() {
 
 .chips__inner {
   display: inline-flex;
-  padding: 0 $page-padding;
+  /* 上下各 18rpx：chip 本体回到原高（实测 54rpx = 27px），而伪元素命中区
+     是 88rpx，多出来的 (88-54)/2 = 17rpx 必须落在 .chips__inner 的盒子里。
+     原因：.chips__inner 在 <scroll-view> 内，scroll-view 是 overflow:hidden，
+     超出行的部分会被裁掉 —— 实测不加这两句，有效高度就只有本体的 27px，
+     看着有命中区，点上去不生效。取 18rpx 而非 17rpx 是留 1rpx 余量。 */
+  padding: 18rpx $page-padding;
 }
 
 .chip {
+  @include tap-area;
   margin-right: $spacing-sm;
   padding: $spacing-xs $spacing-lg;
   border-radius: $radius-pill;

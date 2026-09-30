@@ -313,7 +313,7 @@ async function openDetail(t) {
 
 .num__k {
   margin-top: 4rpx;
-  font-size: 20rpx;
+  font-size: $font-xs;
   color: $color-text-hint;
 }
 

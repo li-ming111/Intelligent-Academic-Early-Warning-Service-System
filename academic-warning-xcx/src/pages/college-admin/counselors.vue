@@ -38,13 +38,13 @@
         </view>
 
         <text class="note">
-          「N 个班」与下面那串班名是**这位辅导员名下的全部班级**，不限于本学院 ——
-          库里司明一个人管着 8 个班，横跨软件学院与电子工程学院，所以在这里会看到
-          8 个班，比软件学院的班级总数（6）还多。这不是重复计数，是跨学院的任职。
+          「N 个班」与下面那串班名是**这位辅导员名下的全部班级**，按 `classes.counselor_id` 数。
+          司明管着软件学院的 6 个班，其中只有「计科2306班」已经招生 ——
+          另外 5 个是已建班但还没有学生档案的空班，所以这里 6 个班、而学生管理页只有 24 人。
         </text>
         <text class="note">
-          首页概览里那个 `counselorCount` **不是这个数**：它的实现是"本学院里被某个辅导员管着的班级数"，
-          电子工程学院的辅导员列表是空的，概览却给 1（因为它的两个班正是司明在管）。
+          首页概览里那个 `counselorCount` **不是这个数**：它量的是"本学院里已分配辅导员的班级数"，
+          是班级数、不是辅导员的任职数。一位辅导员管着本院的 6 个班，概览给 6，而这里只显示他 1 个人。
           两处口径不同，这里按各自的实际含义起名。
         </text>
       </template>
@@ -259,7 +259,7 @@ function openDetail(c) {
   flex-wrap: wrap;
 }
 
-.chip {
+.chip {  @include tap-area;
   padding: $spacing-xs $spacing-md;
   margin: 0 $spacing-sm $spacing-sm 0;
   border-radius: $radius-pill;
