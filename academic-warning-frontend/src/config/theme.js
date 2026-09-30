@@ -71,6 +71,22 @@ export const themes = {
     border: '#dce0ed',
   },
 
+  // 学院管理员端主题 - 天蓝色系
+  //
+  // 此前 5 号角色在两个 roleMap 里都缺席，一路兜底到 default / admin，
+  // 结果学院管理员和管理员完全是同一个紫色。小程序端给的是 #0EA5E9，
+  // 这里取同一组值，两端同色。
+  collegeAdmin: {
+    primary: '#0EA5E9',
+    primaryLight: '#38BDF8',
+    primaryDark: '#0284C7',
+    gradient: 'linear-gradient(135deg, #0EA5E9 0%, #38BDF8 100%)',
+    gradientHeader: 'linear-gradient(90deg, #0EA5E9 0%, #38BDF8 50%, #0EA5E9 100%)',
+    text: '#0369A1',
+    background: '#F0F9FF',
+    border: '#BAE6FD',
+  },
+
   // 默认主题
   default: {
     primary: '#667eea',
@@ -91,10 +107,15 @@ export const getTheme = (role) => {
     '2': 'teacher',
     '3': 'counselor',
     '4': 'admin',
+    '5': 'collegeAdmin',
     'student': 'student',
     'teacher': 'teacher',
     'counselor': 'counselor',
-    'admin': 'admin'
+    'admin': 'admin',
+    // 路由与后端用的都是 college_admin，这里一并收下，免得再有人踩同一个坑
+    'collegeAdmin': 'collegeAdmin',
+    'college_admin': 'collegeAdmin',
+    'college-admin': 'collegeAdmin'
   }
   const themeKey = roleMap[role] || 'default'
   return themes[themeKey] || themes.default
@@ -144,6 +165,15 @@ export const elementPlusTheme = {
     '--el-color-primary-light-9': '#eef0fd',
     '--el-color-primary-dark-2': '#5568d3',
   },
+  collegeAdmin: {
+    '--el-color-primary': '#0EA5E9',
+    '--el-color-primary-light-3': '#38BDF8',
+    '--el-color-primary-light-5': '#7DD3FC',
+    '--el-color-primary-light-7': '#BAE6FD',
+    '--el-color-primary-light-8': '#CFEFFE',
+    '--el-color-primary-light-9': '#F0F9FF',
+    '--el-color-primary-dark-2': '#0284C7',
+  },
 }
 
 // 获取当前角色的 Element Plus 主题变量
@@ -153,7 +183,10 @@ export const getElementPlusTheme = () => {
     '1': 'student',
     '2': 'teacher',
     '3': 'counselor',
-    '4': 'admin'
+    '4': 'admin',
+    '5': 'collegeAdmin',
+    'college_admin': 'collegeAdmin',
+    'collegeAdmin': 'collegeAdmin'
   }
   const themeKey = roleMap[role] || 'admin'
   return elementPlusTheme[themeKey] || elementPlusTheme.admin

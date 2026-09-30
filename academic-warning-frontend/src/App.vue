@@ -174,7 +174,9 @@ const updatePageTheme = () => {
   document.documentElement.style.setProperty('--theme-border', theme.border)
 
   // 更新 Element Plus 主题
-  const roleMap = { 1: 'student', 2: 'teacher', 3: 'counselor', 4: 'admin', 5: 'admin' }
+  // 5 = 学院管理员，必须是 collegeAdmin —— 早先写成 'admin'，
+  // 导致学院管理员端和管理员端同色（getElementPlusTheme 里也缺 '5'，两处一起兜到紫）。
+  const roleMap = { 1: 'student', 2: 'teacher', 3: 'counselor', 4: 'admin', 5: 'collegeAdmin' }
   const themeKey = roleMap[roleNum.value] || 'admin'
   const epTheme = elementPlusTheme[themeKey] || elementPlusTheme.admin
   for (const [key, value] of Object.entries(epTheme)) {
