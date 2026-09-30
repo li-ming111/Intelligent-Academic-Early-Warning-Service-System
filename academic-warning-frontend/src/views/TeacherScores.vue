@@ -169,14 +169,14 @@
               <div class="analysis-value">{{ studentAnalysisData.averageScore.toFixed(2) }}</div>
             </div>
             <div class="analysis-item">
-              <div class="analysis-label">成绩趋势</div>
-              <div class="analysis-value">{{ studentAnalysisData.trend }}</div>
+              <div class="analysis-label">成绩等级</div>
+              <div class="analysis-value">{{ studentAnalysisData.level }}</div>
             </div>
           </div>
           <div class="analysis-row">
             <div class="analysis-item">
-              <div class="analysis-label">预测成绩</div>
-              <div class="analysis-value">{{ studentAnalysisData.predictedScore.toFixed(2) }}</div>
+              <div class="analysis-label">本课程名次</div>
+              <div class="analysis-value">{{ studentAnalysisData.rank }} / {{ studentAnalysisData.totalStudents }}</div>
             </div>
             <div class="analysis-item">
               <div class="analysis-label">挂科次数</div>
