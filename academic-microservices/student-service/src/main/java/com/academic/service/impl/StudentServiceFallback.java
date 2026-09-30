@@ -49,6 +49,7 @@ public class StudentServiceFallback implements StudentService {
     @Override public Object getNotificationUnreadCount(Long userId) { return ApiResponse.error("获取未读通知数量服务暂时不可用"); }
     @Override public Object markNotificationsBatchRead(Long userId, List<Long> notificationIds) { return ApiResponse.error("标记通知已读服务暂时不可用"); }
     @Override public Object deleteNotification(Long notificationId) { return ApiResponse.error("删除通知服务暂时不可用"); }
+    @Override public Object markNotificationRead(Long notificationId) { return ApiResponse.error("标记通知已读服务暂时不可用"); }
     @Override public Object clearReadNotifications(Long userId) { return ApiResponse.error("清除已读通知服务暂时不可用"); }
     @Override public Object getUnreadNotifications(Long userId) { return ApiResponse.error("获取未读通知服务暂时不可用"); }
 
@@ -72,6 +73,7 @@ public class StudentServiceFallback implements StudentService {
     @Override public Object getSemesterBenchmark(Long studentId, String semester) { return ApiResponse.error("获取学期对标分析服务暂时不可用"); }
     @Override public Object getProgressReport(Long studentId) { return ApiResponse.error("获取进度报告服务暂时不可用"); }
     @Override public Object getStudentSettings(Long studentId) { return ApiResponse.error("获取学生设置服务暂时不可用"); }
+    @Override public Object updateStudentSettings(Long userId, java.util.Map<String, Object> body) { return ApiResponse.error("保存学生设置服务暂时不可用"); }
     @Override public Object getSecurityLogs(Long studentId, int page, int pageSize) { return ApiResponse.error("获取安全日志服务暂时不可用"); }
     @Override public Object getStudentMessages(Long studentId) { return ApiResponse.error("获取学生消息服务暂时不可用"); }
     @Override public Object getUnreadMessageCount(Long studentId) { return ApiResponse.error("获取未读消息数量服务暂时不可用"); }

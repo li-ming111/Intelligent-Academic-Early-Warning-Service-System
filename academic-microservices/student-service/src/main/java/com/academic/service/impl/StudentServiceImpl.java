@@ -4,6 +4,7 @@ import com.academic.common.constant.ScoreCaliber;
 import com.academic.common.entity.Score;
 import com.academic.common.entity.AcademicWarning;
 import com.academic.common.entity.AssistancePlan;
+import com.academic.common.entity.UserSettings;
 import com.academic.dto.StudentDashboardResponse;
 import com.academic.entity.*;
 import com.academic.mapper.*;
@@ -29,6 +30,7 @@ public class StudentServiceImpl implements StudentService {
     private final SubscriptionPreferenceMapper subscriptionPreferenceMapper;
     private final AssistanceEvaluationMapper assistanceEvaluationMapper;
     private final AssistancePlanMapper assistancePlanMapper;
+    private final UserSettingsMapper userSettingsMapper;
 
     public StudentServiceImpl(StudentProfileMapper studentProfileMapper,
                               ScoreMapper scoreMapper,
@@ -37,7 +39,8 @@ public class StudentServiceImpl implements StudentService {
                               NotificationMapper notificationMapper,
                               SubscriptionPreferenceMapper subscriptionPreferenceMapper,
                               AssistanceEvaluationMapper assistanceEvaluationMapper,
-                              AssistancePlanMapper assistancePlanMapper) {
+                              AssistancePlanMapper assistancePlanMapper,
+                              UserSettingsMapper userSettingsMapper) {
         this.studentProfileMapper = studentProfileMapper;
         this.scoreMapper = scoreMapper;
         this.academicWarningMapper = academicWarningMapper;
@@ -46,6 +49,7 @@ public class StudentServiceImpl implements StudentService {
         this.subscriptionPreferenceMapper = subscriptionPreferenceMapper;
         this.assistanceEvaluationMapper = assistanceEvaluationMapper;
         this.assistancePlanMapper = assistancePlanMapper;
+        this.userSettingsMapper = userSettingsMapper;
     }
 
     /**
@@ -975,6 +979,27 @@ public class StudentServiceImpl implements StudentService {
         return Map.of("success", rows > 0, "message", rows > 0 ? "删除成功" : "删除失败");
     }
 
+    /**
+     * 单条通知标记已读。
+     *
+     * <p>⚠️ 此前这个端点在 controller 里直接 `return Map.of("success", true, "message", "标记已读成功")`，
+     * 一行库都不写 —— 表现是"点了已读、退出再进还是未读"，且不报错。
+     * 而 {@code NotificationMapper.markAsRead} 早就写好了（`UPDATE ... SET is_read=1 WHERE id = #{id}`），
+     * 只是一直没人调用。现在真的调它，并把影响行数如实返回：
+     * id 不存在时 `affected=0` / `success=false`，不再假装成功。
+     *
+     * <p>与同族的 {@code deleteNotification}（走 `softDelete(id)`）一样，**不按 user_id 圈定**；
+     * 批量那条 {@code markNotificationsBatchRead} 反而是带 `user_id` 的。
+     * 单条这两条路径的越权面是既有状况，本次只把桩补成真实现，没有顺手改语义。
+     */
+    @Override
+    public Object markNotificationRead(Long notificationId) {
+        log.info("标记单条通知已读: notificationId={}", notificationId);
+        int rows = notificationMapper.markAsRead(notificationId);
+        return Map.of("success", rows > 0, "affected", rows,
+                "message", rows > 0 ? "标记已读成功" : "通知不存在");
+    }
+
     @Override
     public Object clearReadNotifications(Long userId) {
         log.info("清除已读通知: userId={}", userId);
@@ -1121,25 +1146,173 @@ public class StudentServiceImpl implements StudentService {
     @Override
     public Object updatePrivacyLevel(Long studentId, Integer privacyLevel) {
         log.info("更新隐私级别: studentId={}, privacyLevel={}", studentId, privacyLevel);
-        StudentProfile sp = studentProfileMapper.selectByStudentId(studentId.toString());
+        // ⚠️ 这里原来是 selectByStudentId(...)，那个方法查的是**学号列**
+        // （StudentProfileMapper:11 `WHERE student_id = #{studentId}`），而本参数是
+        // users.id —— 两者不相交，于是这个方法**永远**返回「学生不存在」，
+        // 从来没有任何一次隐私级别被写进去过。按 users.id 查要走 selectByUserId。
+        StudentProfile sp = studentProfileMapper.selectByUserId(studentId);
         if (sp == null) return Map.of("success", false, "message", "学生不存在");
         sp.setPrivacyLevel(privacyLevel);
         sp.setUpdatedAt(java.time.LocalDateTime.now());
         int rows = studentProfileMapper.updateById(sp);
-        return Map.of("success", rows > 0);
+        return Map.of("success", rows > 0, "privacyLevel", privacyLevel);
     }
 
+    /**
+     * 读取学生设置。
+     *
+     * <p>⚠️ 这里原来返回的是三个**写死的字面量**（`notificationSettings` /
+     * `privacySettings` / `displaySettings`），一个字段都不来自数据库 ——
+     * 唯一真实的是 `privacyLevel`，而它取的还是错键
+     * （`selectByStudentId` 查学号列、传的是 users.id），所以连那一项也永远不出现。
+     * 库里 `student_settings.theme` 明明有 'dark'（宋新鹏），接口却一律回 'light'。
+     *
+     * <p>现在读**真源**：`user_settings`（键 users.id，与 user-service 的
+     * `/users/{uid}/settings` 同一张表、同一个实体）+ `student_profile.privacy_level`。
+     * 无记录时不落库、返回与建表 DEFAULT 一致的默认值 —— 与 user-service 同口径
+     * （那边由 `defaultSettings` 负责，改表时两处要一起改）。
+     */
     @Override
     public Object getStudentSettings(Long studentId) {
         log.info("获取学生设置: studentId={}", studentId);
-        StudentProfile sp = studentProfileMapper.selectByStudentId(studentId.toString());
-        Map<String, Object> settings = new HashMap<>();
-        settings.put("studentId", studentId);
-        settings.put("notificationSettings", Map.of("emailNotifications", true, "smsNotifications", false, "appNotifications", true));
-        settings.put("privacySettings", Map.of("shareGrades", false, "shareAttendance", false, "shareProgress", true));
-        settings.put("displaySettings", Map.of("theme", "light", "language", "zh-CN", "timezone", "Asia/Shanghai"));
-        if (sp != null) settings.put("privacyLevel", sp.getPrivacyLevel() != null ? sp.getPrivacyLevel() : 2);
-        return settings;
+        UserSettings settings = userSettingsMapper.selectOne(
+                new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<UserSettings>()
+                        .eq("user_id", studentId));
+        boolean persisted = settings != null;
+        if (!persisted) {
+            settings = defaultUserSettings(studentId);
+        }
+        StudentProfile sp = studentProfileMapper.selectByUserId(studentId);
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("userId", settings.getUserId());
+        result.put("warningNotification", settings.getWarningNotification());
+        result.put("systemMessage", settings.getSystemMessage());
+        result.put("classNotification", settings.getClassNotification());
+        result.put("studentFeedback", settings.getStudentFeedback());
+        result.put("emailReminder", settings.getEmailReminder());
+        result.put("officeLocation", settings.getOfficeLocation());
+        result.put("officePhone", settings.getOfficePhone());
+        result.put("officeHours", settings.getOfficeHours());
+        result.put("privacyLevel", sp != null && sp.getPrivacyLevel() != null ? sp.getPrivacyLevel() : 2);
+        // 让调用方分得清"库里有这行"和"这是默认值"——两者的字段长得一模一样
+        result.put("persisted", persisted);
+        return result;
+    }
+
+    /** 与 `user_settings` 建表 DEFAULT 一致（同 user-service 的 defaultSettings），改表时三处要一起改。 */
+    private static UserSettings defaultUserSettings(Long userId) {
+        return new UserSettings()
+                .setUserId(userId)
+                .setWarningNotification(true)
+                .setSystemMessage(true)
+                .setClassNotification(true)
+                .setStudentFeedback(true)
+                .setEmailReminder(false);
+    }
+
+    /** 本接口认得的 key；不在其中的一律明确报错，不静默丢弃。 */
+    private static final java.util.Set<String> SETTINGS_KEYS = java.util.Set.of(
+            "warningNotification", "systemMessage", "classNotification", "studentFeedback", "emailReminder",
+            "officeLocation", "officePhone", "officeHours", "privacyLevel");
+
+    /**
+     * 保存学生设置，**部分更新**语义（只写请求体里出现的字段）。
+     *
+     * <p>此前是个桩：`return Map.of("success", true)`，一个字段都不落库 ——
+     * 页面提示保存成功、退出再进全变回去。
+     *
+     * <p>通知偏好写 `user_settings`（部分更新的实现依赖 MyBatis-Plus 的
+     * `FieldStrategy.NOT_NULL`，所以 `UserSettings` 的布尔字段是包装类型 `Boolean`，
+     * 分得清"没传"与"传了 false"）；`privacyLevel` 不在那张表里，写
+     * `student_profile.privacy_level`（键 student_profile.id，故先按 users.id 查档案）。
+     *
+     * <p>未识别的 key **返回错误**而不是忽略：这是一族反复出现的毛病
+     * （申诉的 `description`、评价的 `rating` 都是这么被吞掉的），
+     * 保存设置这种"用户以为存上了"的场景尤其不能静默吞。
+     */
+    @Override
+    public Object updateStudentSettings(Long userId, Map<String, Object> body) {
+        log.info("保存学生设置: userId={}, keys={}", userId, body == null ? null : body.keySet());
+        if (body == null || body.isEmpty()) {
+            return Map.of("success", false, "message", "请求体为空");
+        }
+        List<String> unknown = body.keySet().stream().filter(k -> !SETTINGS_KEYS.contains(k)).toList();
+        if (!unknown.isEmpty()) {
+            return Map.of("success", false,
+                    "message", "无法识别的设置项: " + String.join(", ", unknown)
+                            + "；可接受: " + String.join(", ", SETTINGS_KEYS));
+        }
+
+        Integer privacyLevel = null;
+        if (body.containsKey("privacyLevel")) {
+            privacyLevel = toInteger(body.get("privacyLevel"));
+            if (privacyLevel == null) {
+                return Map.of("success", false, "message", "privacyLevel 不是整数: " + body.get("privacyLevel"));
+            }
+        }
+
+        UserSettings patch = new UserSettings()
+                .setUserId(userId)
+                .setWarningNotification(toBoolean(body.get("warningNotification")))
+                .setSystemMessage(toBoolean(body.get("systemMessage")))
+                .setClassNotification(toBoolean(body.get("classNotification")))
+                .setStudentFeedback(toBoolean(body.get("studentFeedback")))
+                .setEmailReminder(toBoolean(body.get("emailReminder")))
+                .setOfficeLocation(toStringOrNull(body.get("officeLocation")))
+                .setOfficePhone(toStringOrNull(body.get("officePhone")))
+                .setOfficeHours(toStringOrNull(body.get("officeHours")));
+
+        UserSettings existing = userSettingsMapper.selectOne(
+                new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<UserSettings>()
+                        .eq("user_id", userId));
+        if (existing == null) {
+            // 新行：null 字段被 NOT_NULL 策略跳过，由建表 DEFAULT 兜底
+            userSettingsMapper.insert(patch);
+        } else {
+            patch.setId(existing.getId());
+            userSettingsMapper.updateById(patch);
+        }
+
+        boolean privacyApplied = false;
+        if (privacyLevel != null) {
+            StudentProfile sp = studentProfileMapper.selectByUserId(userId);
+            if (sp == null) {
+                // 如实说出来：通知偏好存了、隐私级别没存，别整单报成功
+                return Map.of("success", false, "message", "通知偏好已保存，但该用户没有学生档案，privacyLevel 未写入");
+            }
+            sp.setPrivacyLevel(privacyLevel);
+            sp.setUpdatedAt(java.time.LocalDateTime.now());
+            privacyApplied = studentProfileMapper.updateById(sp) > 0;
+        }
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("success", true);
+        result.put("privacyApplied", privacyApplied);
+        // 回读：返回的是库里的样子
+        result.putAll((Map<String, Object>) getStudentSettings(userId));
+        return result;
+    }
+
+    private static Boolean toBoolean(Object value) {
+        if (value == null) return null;
+        if (value instanceof Boolean b) return b;
+        String s = value.toString().trim();
+        if (s.isEmpty()) return null;
+        return "true".equalsIgnoreCase(s) || "1".equals(s);
+    }
+
+    private static Integer toInteger(Object value) {
+        if (value == null) return null;
+        if (value instanceof Number n) return n.intValue();
+        try {
+            return Integer.valueOf(value.toString().trim());
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    private static String toStringOrNull(Object value) {
+        return value == null ? null : value.toString();
     }
 
     @Override

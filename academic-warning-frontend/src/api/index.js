@@ -225,6 +225,11 @@ export const studentAPI = {
   getEvaluationStatistics: (studentId) => {
     return apiClient.get(`/students/evaluations/${studentId}/statistics`)
   },
+  // 下面 4 个是 `/students/settings/**`，**当前没有任何页面调用**（学生设置页走的是
+  // 第 58 行那个 `/users/${userId}/settings`）。后端 2026-09-30 之前这四个都不可信：
+  // GET 返回写死的字面量、PUT 直接 `return {success:true}` 一个字段都不写。
+  // 现已补成同一张 `user_settings` 表的别名（键 users.id），两条路由读写同一行，
+  // 所以留着也不会踩坑；但新代码请直接用 `/users/{uid}/settings`。
   getUserSettings: (userId) => {
     return apiClient.get(`/students/settings/${userId}`)
   },

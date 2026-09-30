@@ -431,11 +431,19 @@ public class StudentController {
         }
     }
 
+    /**
+     * 单条通知标记已读。
+     *
+     * <p>原来这里直接返回 {@code Map.of("success", true, "message", "标记已读成功")} ——
+     * 一行库都不写。现在真写（见 {@code StudentServiceImpl.markNotificationRead}），
+     * 并如实返回影响行数：id 不存在时 {@code success=false}，不再假装成功。
+     * 批量那条 {@code mark-batch-read} 一直是真实现，两条现在口径一致了。
+     */
     @PostMapping("/notification-center/{notificationId}/mark-read")
     public ApiResponse<Object> markSingleNotificationRead(@PathVariable Long notificationId) {
         try {
             log.info("Mark single notification read: notificationId={}", notificationId);
-            return ApiResponse.success(Map.of("success", true, "message", "标记已读成功"));
+            return ApiResponse.success(studentService.markNotificationRead(notificationId));
         } catch (Exception e) {
             log.error("Mark single notification read failed: {}", e.getMessage());
             return ApiResponse.error(e.getMessage());
@@ -622,11 +630,24 @@ public class StudentController {
         }
     }
 
+    /**
+     * 保存学生设置。
+     *
+     * <p>⚠️ 原来 {@code return Map.of("success", true)} —— 一个字段都不落库，
+     * 表现是"改完提示成功、退出再进全变回去"。现在真写
+     * {@code user_settings}（键 {@code users.id}，与 user-service 的
+     * {@code /users/{uid}/settings} 同一张表）+ {@code student_profile.privacy_level}。
+     *
+     * <p>{@code studentId} 路径参数是 {@code users.id} —— 与
+     * {@code /users/{uid}/settings} 的键一致，所以这条路由是那个入口的学生侧别名，
+     * 不是第二套设置。未识别的 key 会**报错**而不是静默丢弃。
+     */
     @PutMapping("/settings/{studentId}")
-    public ApiResponse<Object> updateStudentSettings(@PathVariable String studentId, @RequestBody Object request) {
+    public ApiResponse<Object> updateStudentSettings(@PathVariable String studentId,
+                                                    @RequestBody(required = false) Map<String, Object> request) {
         try {
             log.info("Update student settings: {}", studentId);
-            return ApiResponse.success(Map.of("success", true));
+            return ApiResponse.success(studentService.updateStudentSettings(Long.parseLong(studentId), request));
         } catch (Exception e) {
             log.error("Update student settings failed: {}", e.getMessage());
             return ApiResponse.error(e.getMessage());

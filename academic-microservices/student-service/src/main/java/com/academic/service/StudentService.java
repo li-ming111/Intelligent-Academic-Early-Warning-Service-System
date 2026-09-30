@@ -68,6 +68,8 @@ public interface StudentService {
     Object markNotificationsBatchRead(Long userId, java.util.List<Long> notificationIds);
     /** 删除通知 */
     Object deleteNotification(Long notificationId);
+    /** 单条通知标记已读（键 notifications.id） */
+    Object markNotificationRead(Long notificationId);
     /** 清除已读通知 */
     Object clearReadNotifications(Long userId);
     /** 获取未读通知列表 */
@@ -104,8 +106,10 @@ public interface StudentService {
     Object getSemesterBenchmark(Long studentId, String semester);
     /** 获取进度报告 */
     Object getProgressReport(Long studentId);
-    /** 获取学生设置 */
+    /** 获取学生设置（键 users.id；真实来源 user_settings + student_profile.privacy_level） */
     Object getStudentSettings(Long studentId);
+    /** 保存学生设置（部分更新；未识别的 key 会明确报错而不是静默丢弃） */
+    Object updateStudentSettings(Long userId, java.util.Map<String, Object> body);
     /** 获取安全日志 */
     Object getSecurityLogs(Long studentId, int page, int pageSize);
     /** 获取学生消息 */

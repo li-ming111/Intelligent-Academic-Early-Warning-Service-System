@@ -113,10 +113,11 @@ class ApiClient {
     //   { planId, counselorId, score, content }
     // 评分叫 `score` 不叫 rating；**没有** studentId —— 学生身份靠 planId 反查关联。
     submitEvaluation: (data) => this._post('/students/evaluations/submit', data),
-    // 设置：**必须走 /users/{uid}/settings**。
-    // `/students/settings/{uid}` 是纯桩 —— PUT 直接 `return {success:true}` 一个字段都不写库，
-    // GET 返回的 displaySettings/privacySettings 与 student_settings 表列名也对不上。
-    // 用它会表现成"改完提示成功、退出再进全变回去"。
+    // 设置：走 /users/{uid}/settings。
+    // `/students/settings/{uid}` 2026-09-30 之前是纯桩（PUT 直接 `return {success:true}`
+    // 不写库、GET 返回写死的字面量），已补成**同一张表 user_settings 的别名**
+    // —— 两条路由现在读写同一行、实体同一个，用哪条都不会"改完退出再进变回去"。
+    // 这里仍用规范入口，因为教师/辅导员端也走它，路径统一好记。
     getSettings: (userId) => this._get(`/users/${userId}/settings`),
     updateSettings: (userId, data) => this._put(`/users/${userId}/settings`, data),
     /** 账号本身的信息（username/name/email/phone/role/status/createdAt）。
