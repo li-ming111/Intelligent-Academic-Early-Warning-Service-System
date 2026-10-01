@@ -991,6 +991,12 @@ public class AdminController {
                 item.put("studentCount", getStudentCount(college.getId()));
                 item.put("teacherCount", getTeacherCount(college.getId()));
                 item.put("counselorCount", getCounselorCount(college.getId()));
+                // 2026-10-01 第十九轮: AdminStatistics「学院数据明细」的"班级数"列原来恒 '--' —— 这里从前只给三个
+                // 计数, 页面读的 classCount 根本没这个 key。补上(classes.college_id 是真实关联)。
+                // 注意: **"课程数"没补, 因为 courses 表没有任何到学院的链路**(含 college_id 的表只有
+                // classes/majors/student_profile/teacher_profile/counselor_profiles/college_admin_profile),
+                // 按"本学院教师任教"间接算会得到 学院1=10/其余=0 的退化结果 ⇒ 该列已从页面删除。
+                item.put("classCount", getClassCount(college.getId()));
                 resultList.add(item);
             }
             
@@ -1036,6 +1042,20 @@ public class AdminController {
             return count;
         } catch (Exception e) {
             log.warn("Failed to get counselor count for college {}: {}", collegeId, e.getMessage());
+        }
+        return 0L;
+    }
+
+    /** 该学院下的班级数(classes.college_id)。2026-10-01 第十九轮随 AdminStatistics 的两列补上。 */
+    private Long getClassCount(Long collegeId) {
+        try {
+            QueryWrapper<Classes> query = new QueryWrapper<>();
+            query.eq("college_id", collegeId);
+            long count = classesMapper.selectCount(query);
+            log.info("Class count for college {}: {}", collegeId, count);
+            return count;
+        } catch (Exception e) {
+            log.warn("Failed to get class count for college {}: {}", collegeId, e.getMessage());
         }
         return 0L;
     }
@@ -1131,8 +1151,50 @@ public class AdminController {
     }
 
     @GetMapping("/majors")
-    public ApiResponse<List<Major>> getAllMajors() {
-        return ApiResponse.success(majorService.list());
+    public ApiResponse<List<Map<String, Object>>> getAllMajors() {
+        // 2026-10-01 第十九轮: 原先是 `return majorService.list()`(直接序列化 Major 实体),
+        // 而实体上**没有** collegeName / studentCount ⇒ AdminStatistics「专业数据明细」的
+        // "所属学院"和"学生数"两列恒为 '--'。改成 Map 并在原字段之外补这两个 key。
+        // ⚠️ 所有原字段一个不少地带上 —— 调用方(PC AdminMajors/AdminColleges、小程序 admin/colleges、
+        // admin/courses)全都按 key 读, 形状从实体换成 Map 对它们透明。
+        List<Major> majors = majorService.list();
+
+        Map<Long, String> collegeNames = new HashMap<>();
+        for (College c : collegeService.list()) {
+            collegeNames.put(c.getId(), c.getName());
+        }
+
+        List<Map<String, Object>> result = new ArrayList<>();
+        for (Major m : majors) {
+            Map<String, Object> item = new HashMap<>();
+            item.put("id", m.getId());
+            item.put("collegeId", m.getCollegeId());
+            item.put("name", m.getName());
+            item.put("code", m.getCode());
+            item.put("shortName", m.getShortName());
+            item.put("description", m.getDescription());
+            item.put("status", m.getStatus());
+            item.put("createdAt", m.getCreatedAt());
+            item.put("updatedAt", m.getUpdatedAt());
+            item.put("collegeName", collegeNames.get(m.getCollegeId()));
+            item.put("studentCount", getMajorStudentCount(m.getId()));
+            result.add(item);
+        }
+        return ApiResponse.success(result);
+    }
+
+    /** 该专业下的学生数(student_profile.major_id)。 */
+    private Long getMajorStudentCount(Long majorId) {
+        try {
+            QueryWrapper<StudentProfile> query = new QueryWrapper<>();
+            query.eq("major_id", majorId);
+            long count = studentProfileMapper.selectCount(query);
+            log.info("Student count for major {}: {}", majorId, count);
+            return count;
+        } catch (Exception e) {
+            log.warn("Failed to get student count for major {}: {}", majorId, e.getMessage());
+        }
+        return 0L;
     }
 
     @GetMapping("/majors/{id}")

@@ -53,7 +53,8 @@
           <el-table-column prop="name" label="学院" min-width="140" />
           <el-table-column prop="studentCount" label="学生数" width="100" align="center" />
           <el-table-column prop="teacherCount" label="教师数" width="100" align="center" />
-          <el-table-column prop="courseCount" label="课程数" width="100" align="center" />
+          <!-- 「课程数」这一列已删(2026-10-01 第十九轮): courses 表没有任何到学院的链路,
+               按"本学院教师任教"间接算会得到 学院1=10/其余=0 的退化结果, 与其编一个数不如不显示。 -->
           <el-table-column prop="classCount" label="班级数" width="100" align="center" />
         </el-table>
       </div>
@@ -127,7 +128,6 @@ async function loadData() {
       name: c.name || c.collegeName || '学院' + i,
       studentCount: c.studentCount || '--',
       teacherCount: c.teacherCount || '--',
-      courseCount: c.courseCount || '--',
       classCount: c.classCount || '--'
     }))
   } catch (e) {}
