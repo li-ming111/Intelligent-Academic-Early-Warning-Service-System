@@ -42,10 +42,12 @@ public class IntelligentWarningServiceImpl implements IntelligentWarningService 
     /**
      * 预警等级 → 标题。
      *
-     * <p>⚠️ 这三个词在 {@code message-service/WarningNotificationServiceImpl}
-     * （{@code LEVEL_DESCRIPTION_MAP}）里有一份**一模一样**的。没有抽到 academic-common，
-     * 是因为那是 3 个常量的显示名，而跨模块抽一个"枚举"要动两个服务的依赖 ——
-     * 代价大于收益。改这里时请一起看那边。
+     * <p>2026-10-01 第二十三轮：这里原先有一段"这三个词在
+     * {@code message-service/WarningNotificationServiceImpl}（{@code LEVEL_DESCRIPTION_MAP}）
+     * 里有一份一模一样的，改这里请一起看那边"。那份副本随
+     * {@code WarningNotification* } 三件套一起删除了（那条路径零调用方、且一旦调用必因
+     * {@code messages.sender_id} 外键失败），所以现在<b>全仓只有这一份</b>。
+     * 口径未变，仍是与活库 {@code warning_rules.name} 一致的"低级/中级/高级预警"。
      */
     private static final Map<Integer, String> LEVEL_TITLES =
             Map.of(1, "低级预警", 2, "中级预警", 3, "高级预警");

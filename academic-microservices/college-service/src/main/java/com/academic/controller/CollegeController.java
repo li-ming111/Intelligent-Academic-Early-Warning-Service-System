@@ -3,10 +3,10 @@ package com.academic.controller;
 import com.academic.common.dto.ApiResponse;
 import com.academic.common.entity.College;
 import com.academic.service.CollegeService;
-import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
-import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.web.bind.annotation.*;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -35,6 +35,21 @@ import java.util.Map;
  * <p>这三个计数本来就<b>零读者</b>：四个消费方（PC 三个注册页 + 小程序注册页）只取
  * {@code id/name/code}。带计数的学院管理页走的是 admin-service 的 {@code /admin/colleges}，
  * 那边是直接查库（{@code AdminController} 的 {@code studentProfileMapper.selectCount}）。
+ *
+ * <p><b>2026-10-01 第二十三轮：又把 7 个零调用方端点删掉了，本控制器现在只剩
+ * {@link #getAllColleges()} 一个。</b>删掉的是 {@code /list}（分页）、{@code /info/{id}}、
+ * {@code /add}、{@code /update/{id}}、{@code /delete/{id}}、{@code /by-code/{code}}、
+ * {@code /count} —— 网关 {@code Path=/api/colleges/**} + {@code StripPrefix=1} 确实能把它们
+ * 送到这里（实测带 token 打 {@code /api/colleges/list} 是 200，**不是**不可达，是没人调），
+ * 但全仓零调用方：PC/小程序打的都是 {@code /admin/colleges/**}，而那条走 admin-service
+ * 直接查库；学院的增删改查因此是本模块的**重复实现**。真正活的只有 {@code /colleges/all}，
+ * 由白名单那两条路（{@code /api/auth/colleges} 经 RewritePath、{@code /api/colleges/all}）
+ * 给四个注册页供学院下拉。
+ *
+ * <p>为什么保留 {@code /all} 而不整个删掉本控制器：{@code /colleges/all} 在网关
+ * {@code WHITE_LIST} 和本服务 {@code SecurityConfig.PUBLIC_DIRECTORY} 两处都挂了名，
+ * 注册页（登录之前）依赖它。删了会让教师/辅导员注册页的学院下拉变空、表单提交不了
+ * —— 这正是 2026-09-30 那次 403 事故的形态。
  */
 @Slf4j
 @RestController
@@ -48,144 +63,16 @@ public class CollegeController {
     }
 
     /**
-     * 获取学院列表
-     */
-    @GetMapping("/list")
-    public ApiResponse<Map<String, Object>> getColleges(
-            @RequestParam(defaultValue = "1") Integer page,
-            @RequestParam(defaultValue = "10") Integer size) {
-        try {
-            log.info("Get colleges request: page={}, size={}", page, size);
-            QueryWrapper<College> queryWrapper = new QueryWrapper<>();
-            queryWrapper.orderByDesc("created_at");
-            
-            Page<College> collegePage = new Page<>(page, size);
-            collegePage = collegeService.page(collegePage, queryWrapper);
-            
-            Map<String, Object> responseData = Map.of(
-                    "data", collegePage.getRecords(),
-                    "total", collegePage.getTotal(),
-                    "page", page,
-                    "size", size,
-                    "pages", collegePage.getPages()
-            );
-            return ApiResponse.success(responseData);
-        } catch (Exception e) {
-            log.error("Get colleges failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
-        }
-    }
-
-    /**
-     * 获取学院详情
-     */
-    @GetMapping("/info/{collegeId}")
-    public ApiResponse<Map<String, Object>> getCollegeInfo(@PathVariable Long collegeId) {
-        try {
-            log.info("Get college info request: {}", collegeId);
-            College college = collegeService.getById(collegeId);
-            if (college == null) {
-                return ApiResponse.error(404, "学院不存在");
-            }
-            
-            Map<String, Object> result = new HashMap<>();
-            result.put("id", college.getId());
-            result.put("name", college.getName());
-            result.put("code", college.getCode());
-            result.put("description", college.getDescription());
-
-            return ApiResponse.success(result);
-        } catch (Exception e) {
-            log.error("Get college info failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
-        }
-    }
-
-    /**
-     * 创建学院
-     */
-    @PostMapping("/add")
-    public ApiResponse<Long> addCollege(@RequestBody College college) {
-        try {
-            log.info("Add college request: {}", college.getName());
-            boolean saved = collegeService.save(college);
-            if (saved) {
-                return ApiResponse.success(college.getId());
-            } else {
-                return ApiResponse.error("创建学院失败");
-            }
-        } catch (Exception e) {
-            log.error("Add college failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
-        }
-    }
-
-    /**
-     * 更新学院
-     */
-    @PutMapping("/update/{collegeId}")
-    public ApiResponse<String> updateCollege(@PathVariable Long collegeId, @RequestBody College college) {
-        try {
-            log.info("Update college request: {}", collegeId);
-            college.setId(collegeId);
-            boolean updated = collegeService.updateById(college);
-            if (updated) {
-                return ApiResponse.success("学院已更新");
-            } else {
-                return ApiResponse.error("更新学院失败");
-            }
-        } catch (Exception e) {
-            log.error("Update college failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
-        }
-    }
-
-    /**
-     * 删除学院
-     */
-    @DeleteMapping("/delete/{collegeId}")
-    public ApiResponse<String> deleteCollege(@PathVariable Long collegeId) {
-        try {
-            log.info("Delete college request: {}", collegeId);
-            boolean deleted = collegeService.removeById(collegeId);
-            if (deleted) {
-                return ApiResponse.success("学院已删除");
-            } else {
-                return ApiResponse.error("删除学院失败");
-            }
-        } catch (Exception e) {
-            log.error("Delete college failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
-        }
-    }
-
-    /**
-     * 根据代码获取学院信息
-     */
-    @GetMapping("/by-code/{code}")
-    public ApiResponse<College> getCollegeByCode(@PathVariable String code) {
-        try {
-            log.info("Get college by code request: {}", code);
-            College college = collegeService.getByCode(code);
-            if (college == null) {
-                return ApiResponse.error(404, "学院不存在");
-            }
-            return ApiResponse.success(college);
-        } catch (Exception e) {
-            log.error("Get college by code failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
-        }
-    }
-
-    /**
-     * 获取所有学院列表（不分页，包含统计数据）
+     * 获取所有学院列表（不分页）。
+     *
+     * <p>只回 {@code id/name/code/description} 四个字段 —— 正好是四个注册页真正在用的东西。
      */
     @GetMapping("/all")
     public ApiResponse<List<Map<String, Object>>> getAllColleges() {
         try {
             log.info("Get all colleges request");
-            List<College> colleges = collegeService.list(new QueryWrapper<>());
-            
+            List<College> colleges = collegeService.listAll();
+
             List<Map<String, Object>> resultList = new ArrayList<>();
             for (College college : colleges) {
                 Map<String, Object> item = new HashMap<>();
@@ -195,25 +82,10 @@ public class CollegeController {
                 item.put("description", college.getDescription());
                 resultList.add(item);
             }
-            
+
             return ApiResponse.success(resultList);
         } catch (Exception e) {
             log.error("Get all colleges failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
-        }
-    }
-
-    /**
-     * 获取学院总数
-     */
-    @GetMapping("/count")
-    public ApiResponse<Long> getCollegeCount() {
-        try {
-            log.info("Get college count request");
-            long count = collegeService.count();
-            return ApiResponse.success(count);
-        } catch (Exception e) {
-            log.error("Get college count failed: {}", e.getMessage());
             return ApiResponse.error(e.getMessage());
         }
     }

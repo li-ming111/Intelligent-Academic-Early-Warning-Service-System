@@ -100,12 +100,21 @@ spring:
             - Path=/api/roles/**,/api/permissions/**,/api/role-permissions/**
           filters:
             - StripPrefix=1
-        - id: message-service
-          uri: lb://message-service
-          predicates:
-            - Path=/api/messages/**
-          filters:
-            - StripPrefix=1
+        # 2026-10-01 第二十三轮：原来这里有一条 `message-service`（Path=/api/messages/**
+        # + StripPrefix=1），已删。两个理由：
+        #  ① 它**本来就是坏的**：StripPrefix=1 会把 /api 剥掉转发成 /messages/**，而
+        #     MessageController 的映射是 {"/api/messages","/students/messages",
+        #     "/teachers/messages"}（message-service 没有 context-path）⇒ 永远对不上，
+        #     实测过网关回 500 `No static resource messages`、直连 8077 同请求 200。
+        #     改法是去掉 StripPrefix=1（与上面 user-service 那条同型），但见 ②。
+        #  ② 全仓**没有任何调用方**走它：PC 端打 /students/messages/**（走下面 student-service
+        #     路由）、/teachers/messages/**（teacher-service）、/admin/messages/**（admin-service），
+        #     小程序零处。message-service 唯一消费者是 admin-service 的 MessageServiceClient
+        #     —— 那是 Feign 直连 lb://，不过网关。
+        #  ⇒ 与其修好一条没人走的路（修好等于把该控制器 13 个映射里 8 个不做归属校验的
+        #     端点新暴露到网关），不如删掉。**别再加回来。**
+        # 注意下面 message-service-ws（/ws/**）是另一条、没带 StripPrefix，与 /ws 控制器
+        # 正好对上，是好的，不要跟着删。
         - id: student-service
           uri: lb://student-service
           predicates:
