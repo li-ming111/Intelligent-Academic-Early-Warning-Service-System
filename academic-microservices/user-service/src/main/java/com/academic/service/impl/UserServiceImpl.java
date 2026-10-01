@@ -260,10 +260,12 @@ public class UserServiceImpl implements UserService {
      * <ol>
      *   <li>{@code users} —— 账号 + 手机号 + 邮箱；</li>
      *   <li>角色资料行：{@code student_profile} / {@code teacher_profile} / {@code counselor_profiles}；</li>
-     *   <li>{@code user_settings} —— **只在注册表单填了办公信息时**（辅导员有，学生没有）；</li>
-     *   <li>{@code colleges.student_count|teacher_count} —— 冗余计数列，见
-     *       {@link RegistrationMapper#increaseCollegeStudentCount}。</li>
+     *   <li>{@code user_settings} —— **只在注册表单填了办公信息时**（辅导员有，学生没有）。</li>
      * </ol>
+     * <p>⚠️ 2026-10-01 变更：这里原来还会 {@code colleges.student_count|teacher_count + 1}。
+     * 那两列已从库里删掉 —— 它们全仓没有读者（{@code College} 上那两个字段本就是
+     * {@code @TableField(exist = false)}，展示时现算），却只被注册这一条路径维护，
+     * 管理员建号/删号/导入都不动 ⇒ 必然漂移。现在"学院有多少人"一律 {@code COUNT(*)} 现算。
      * <p>任何一步失败都整体回滚：宁可"注册失败"，也不要留一个只有账号没有资料的半截账号
      * （那正是这次要修的缺陷）。
      *
@@ -398,9 +400,6 @@ public class UserServiceImpl implements UserService {
 
         registrationMapper.insertStudentProfile(user.getId(), studentId,
                 user.getName(), str(reqMap, "gender"), collegeId, majorId, classId, className);
-        if (collegeId != null) {
-            registrationMapper.increaseCollegeStudentCount(collegeId);
-        }
         log.info("Student profile created: userId={}, studentId={}, classId={}", user.getId(), studentId, classId);
     }
 
@@ -425,7 +424,6 @@ public class UserServiceImpl implements UserService {
         profile.setCollegeId(collegeId);
         profile.setTitle(str(reqMap, "title"));
         registrationMapper.insertTeacherProfile(profile);
-        registrationMapper.increaseCollegeTeacherCount(collegeId);
         log.info("Teacher profile created: userId={}, collegeId={}", user.getId(), collegeId);
     }
 

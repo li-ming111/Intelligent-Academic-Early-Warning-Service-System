@@ -6,7 +6,6 @@ import com.academic.common.entity.UserSettings;
 import org.apache.ibatis.annotations.Insert;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
-import org.apache.ibatis.annotations.Update;
 
 import java.util.Map;
 
@@ -127,21 +126,20 @@ public interface RegistrationMapper {
             + "VALUES (#{userId}, #{officeLocation}, #{officePhone})")
     int insertUserSettings(UserSettings settings);
 
-    // ==================== 写：学院冗余计数列 ====================
-
-    /**
-     * 学院档案数 +1。
-     *
-     * <p>{@code colleges.student_count} / {@code teacher_count} 是**冗余列**：
-     * 全仓没有 Java 读者（{@code College.studentCount} 是 {@code @TableField(exist = false)}，
-     * 展示时现算），但 {@code verify_invariants.py} 的 B 组要求它等于实际档案数。
-     * 冗余列必须由写路径维护 —— 新注册的学生有学院却不加这个数，账实立刻不符。
-     * {@code COALESCE} 是防它将来变成 NULL。
-     */
-    @Update("UPDATE colleges SET student_count = COALESCE(student_count, 0) + 1 WHERE id = #{collegeId}")
-    int increaseCollegeStudentCount(@Param("collegeId") Long collegeId);
-
-    /** 同上，教师侧。*/
-    @Update("UPDATE colleges SET teacher_count = COALESCE(teacher_count, 0) + 1 WHERE id = #{collegeId}")
-    int increaseCollegeTeacherCount(@Param("collegeId") Long collegeId);
+    // ==================== 学院冗余计数列：已删（2026-10-01） ====================
+    //
+    // 这里原有 `increaseCollegeStudentCount` / `increaseCollegeTeacherCount` 两条
+    // `UPDATE colleges SET xxx_count = xxx_count + 1`。删掉的依据：
+    //
+    //   - `College.studentCount/teacherCount` **本来就是 `@TableField(exist = false)`**
+    //     （只算不存），`counselor_count` 连列都不存在 —— 也就是说 Java 侧从来没人读这两列；
+    //   - 唯一维护它们的就是这两条 `+1`。于是它们必然漂移：管理员建号、删号、
+    //     批量导入、改学生的学院……**没有任何一条路径会动它们**，
+    //     删一个学生这两列就永久偏大；
+    //   - `verify_invariants.py` 的 B 组原本拿这两列做校验（40 项里的 2 项），
+    //     等于在守一个只被注册路径碰过的列。
+    //
+    // 处理：**列本身也从库里删掉**（`db_backups/colleges_drop_redundant_counts_20261001_*.sql`），
+    // B 组那两项随之移除（40 → 38 项）。展示用的"学生数/教师数"一律走现算
+    // （`AdminController.getStudentCount(id)` 这类 `COUNT(*)`），不落库。
 }

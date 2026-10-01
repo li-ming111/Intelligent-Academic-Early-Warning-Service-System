@@ -225,7 +225,6 @@ class UserServiceImplTest {
 
         verify(registrationMapper).insertStudentProfile(
                 89L, "2023020702", "小甲", "男", 1L, 5L, null, null);
-        verify(registrationMapper).increaseCollegeStudentCount(1L);
     }
 
     /**
@@ -343,10 +342,9 @@ class UserServiceImplTest {
                 () -> userService.register(body("username", "10086", "password", "123456", "name", "王老师"), 2));
         assertEquals("教师注册必须选择所属学院", e.getMessage());
         verify(registrationMapper, never()).insertTeacherProfile(any());
-        verify(registrationMapper, never()).increaseCollegeTeacherCount(any());
     }
 
-    /** 教师：建档案 + 学院教师数 +1，且**状态是待审批**。 */
+    /** 教师：建档案，且**状态是待审批**。 */
     @Test
     void testRegister_teacherCreatesProfilePendingApproval() {
         stubFreshRegistration();
@@ -362,7 +360,6 @@ class UserServiceImplTest {
         assertEquals(98L, cap.getValue().getUserId());
         assertEquals("王老师", cap.getValue().getName());
         assertEquals(1L, cap.getValue().getCollegeId());
-        verify(registrationMapper).increaseCollegeTeacherCount(1L);
     }
 
     /**

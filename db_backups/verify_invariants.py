@@ -71,13 +71,17 @@ c(g, '两表都不许有 NULL 学期/学年',
   '+ (SELECT SUM(semester IS NULL)+SUM(year IS NULL) FROM score_record)')
 
 # ---------- B. 冗余计数列必须等于实际（fix10 A13/A14 立的标准） ----------
+# ⚠️ 2026-10-01：`colleges.student_count` / `colleges.teacher_count` 两项**已移除**（40 → 38）。
+#    那两列已从库里删掉。移除的理由不是"校验太严"，而是**那两列本身没有存在理由**：
+#      - Java 侧从来没有读者 —— `College.studentCount/teacherCount` 本就是
+#        `@TableField(exist = false)`（只算不存），展示用的数字一律 `COUNT(*)` 现算；
+#      - 唯一的写入方是自助注册路径的 `+1`。管理员建号、删号、批量导入、
+#        改学生学院……**没有一条会动它** ⇒ 删一个学生这两列就永久偏大。
+#    也就是说，这两项校验守的是一个"只被一条路径碰过、随时会漂移"的列 ——
+#    与其补全所有写路径，不如把列删掉，让"账实相符"由"根本没有冗余列"来保证。
+#    注意：`<>` 对 NULL 是不成立的（NULL <> 24 结果是 NULL 不是 TRUE），
+#    所以若那两列哪天变成 NULL，这两项会**空转通过** —— 这也是当初该警觉的信号。
 g = 'B. 账实相符（冗余计数列 vs 实际档案）'
-c(g, 'colleges.student_count == 该学院学生档案数',
-  'SELECT COUNT(*) FROM colleges c WHERE c.student_count <> '
-  '(SELECT COUNT(*) FROM student_profile sp WHERE sp.college_id=c.id)')
-c(g, 'colleges.teacher_count == 该学院教师档案数',
-  'SELECT COUNT(*) FROM colleges c WHERE c.teacher_count <> '
-  '(SELECT COUNT(*) FROM teacher_profile t WHERE t.college_id=c.id)')
 c(g, 'counselor_profiles.class_count == classes 里挂在他名下的班数',
   'SELECT COUNT(*) FROM counselor_profiles cp WHERE cp.class_count <> '
   '(SELECT COUNT(*) FROM classes c WHERE c.counselor_id=cp.user_id)')
