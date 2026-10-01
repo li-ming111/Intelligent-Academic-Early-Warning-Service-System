@@ -167,13 +167,26 @@ public class MajorController {
     }
 
     /**
-     * 获取所有专业列表（不分页）
+     * 获取所有专业列表（不分页）。
+     *
+     * <p>{@code collegeId} 是 2026-09-30 补的：这条接口是注册页（小程序
+     * {@code api.js} 的 {@code getMajorsByCollege(collegeId)} → {@code /auth/majors?collegeId=}）
+     * 用来看"某学院有哪些专业"的，但从前的实现**根本不看这个参数**，一律返回全部 12 条。
+     * 后果是小程序注册页选了 A 学院，专业下拉里仍能选到 B 学院的专业；学生这么选下去，
+     * 档案要么被后端把学院静默改成专业所属的那个（页面显示的学院就成了一句空话），
+     * 要么在班级与专业对不上时直接报错。同模块的 {@code /majors/list} 与 {@code /majors/count}
+     * 一直支持这个参数，唯独 {@code /all} 漏了 —— 这里补齐，口径与那两条一致：
+     * 不传 = 全部。
      */
     @GetMapping("/all")
-    public ApiResponse<java.util.List<Major>> getAllMajors() {
+    public ApiResponse<java.util.List<Major>> getAllMajors(@RequestParam(required = false) Long collegeId) {
         try {
-            log.info("Get all majors request");
-            java.util.List<Major> majors = majorService.list(new QueryWrapper<>());
+            log.info("Get all majors request: collegeId={}", collegeId);
+            QueryWrapper<Major> queryWrapper = new QueryWrapper<>();
+            if (collegeId != null) {
+                queryWrapper.eq("college_id", collegeId);
+            }
+            java.util.List<Major> majors = majorService.list(queryWrapper);
             return ApiResponse.success(majors);
         } catch (Exception e) {
             log.error("Get all majors failed: {}", e.getMessage());
