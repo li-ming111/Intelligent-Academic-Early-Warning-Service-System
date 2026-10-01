@@ -128,17 +128,41 @@
           </view>
         </view>
 
-        <!-- 系统动态：/admin/activities 实测恒为空数组。
-             这一块留着并如实说明，比放一个假的"最近操作"列表要好 ——
-             没有写入方的表就是没有数据，页面上不该替它编。 -->
+        <!-- 系统动态：2026-10-01 第二十四轮接上。
+             此前这里是一个**写死的空态**（注释写着"/admin/activities 实测恒为空数组"），
+             因为后端那个方法当时就是 `return ApiResponse.success(new ArrayList<>())` —— 一个桩。
+             现在后端改成从 login_logs / academic_warning / export_history 三张**真有写入方**
+             的表里取最近发生的事（不编时间、不编人名），这里就按真实数据渲染；
+             一条都取不到时才回落到空态。 -->
         <view class="section section--last">
-          <section-title title="系统动态" extra="暂无记录" />
+          <section-title
+            title="系统动态"
+            :extra="activities.length ? activities.length + ' 条' : '暂无记录'"
+          />
           <empty-state
+            v-if="!activities.length"
             text="暂无系统动态"
-            hint="动态记录表当前为空，尚无服务写入"
+            hint="没有可展示的登录 / 预警 / 导出记录"
             icon="clock"
             :top="40"
           />
+          <view v-else class="card">
+            <view
+              v-for="(a, i) in activities"
+              :key="a.type + '-' + i"
+              class="warn-row"
+              :class="{ 'warn-row--divided': i > 0 }"
+            >
+              <view class="warn-row__main">
+                <view class="warn-row__top">
+                  <text class="warn-row__name">{{ a.title }}</text>
+                  <text class="warn-row__title">{{ activityTypeLabel(a.type) }}</text>
+                </view>
+                <text class="warn-row__desc">{{ a.description || '暂无说明' }}</text>
+                <text class="warn-row__time">{{ formatDate(a.createdAt, true) }}</text>
+              </view>
+            </view>
+          </view>
         </view>
       </template>
     </view>
@@ -163,6 +187,12 @@ const loading = ref(true)
 const dash = ref({})
 const stats = ref({})
 const pending = ref({})
+const activities = ref([])
+
+/** 系统动态的类型标签。与后端 activity() 里写的 type 一一对应。*/
+function activityTypeLabel(type) {
+  return { login: '登录', warning: '预警', export: '导出' }[type] || ''
+}
 
 /** 姓名只认登录时写进 storage 的真实姓名（useUser 已挡掉"纯数字=学号"的情况）。
     管理员没有独立的资料接口，概览/统计接口里也都不带姓名，所以不另外请求。 */
@@ -251,14 +281,17 @@ async function load() {
   loading.value = true
   try {
     if (!userId) return
-    const [d, s, p] = await Promise.all([
+    const [d, s, p, a] = await Promise.all([
       adminAPI.getDashboard().catch(e => { console.error('[admin dashboard] 概览失败:', e); return null }),
       adminAPI.getStatistics().catch(e => { console.error('[admin dashboard] 统计失败:', e); return null }),
-      adminAPI.getPendingRequests().catch(e => { console.error('[admin dashboard] 待办失败:', e); return null })
+      adminAPI.getPendingRequests().catch(e => { console.error('[admin dashboard] 待办失败:', e); return null }),
+      adminAPI.getActivities().catch(e => { console.error('[admin dashboard] 动态失败:', e); return null })
     ])
     dash.value = d && typeof d === 'object' ? d : {}
     stats.value = s && typeof s === 'object' ? s : {}
     pending.value = p && typeof p === 'object' ? p : {}
+    // 动态是一个**数组**（不是对象），单独判 Array；取不到就保持空数组 → 回落空态。
+    activities.value = Array.isArray(a) ? a : (Array.isArray(a?.data) ? a.data : [])
   } finally {
     loading.value = false
   }

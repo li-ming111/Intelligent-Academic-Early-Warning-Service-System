@@ -255,17 +255,16 @@ export const studentAPI = {
     return apiClient.get(`/students/notification-center/${userId}/unread`)
   },
   // ========== 消息管理API ==========
-  getMessages: (userId) => {
-    return apiClient.get(`/students/messages/${userId}`)
-  },
+  // 2026-10-01 第二十四轮：删掉 `getMessages` / `sendMessage` / `markMessageAsRead` 三个封装。
+  // 它们原先只被 `views/Messages.vue` 用，而那个页面已随「收敛成一个通知页」一起删除：
+  //   · `POST /students/messages`              → student-service 无此 handler（实测 403）
+  //   · `POST /students/messages/{id}/mark-read` → 同上（实测 403），
+  //     真正存在的是 `studentAPI.markNotificationRead` → `/students/notification-center/{id}/mark-read`
+  //   · `GET  /students/messages/{uid}`        → 这个是真的，但唯一调用方就是那个页面
+  // 下面这个 `getUnreadCount` **保留**：`StudentLayout.vue` 顶栏那个铃铛角标读的就是它，
+  // 后端 `/students/messages/{uid}/unread-count` 确实存在且返回 `{unreadCount}`。
   getUnreadCount: (userId) => {
     return apiClient.get(`/students/messages/${userId}/unread-count`)
-  },
-  sendMessage: (data) => {
-    return apiClient.post(`/students/messages`, data)
-  },
-  markMessageAsRead: (messageId) => {
-    return apiClient.post(`/students/messages/${messageId}/mark-read`)
   },
   // 导出个人数据
   exportScoresExcel: (userId) => {
@@ -860,6 +859,20 @@ export const adminAPI = {
   getUserPermissions: (userId) => {
     return apiClient.get(`/admin/permissions/user/${userId}`)
   },
+  // 角色 CRUD（2026-10-01 第二十四轮补）：这三个端点此前**后端不存在**，
+  // 前端「创建新角色」是 `ElMessage.success('角色已创建')` 然后什么都不做（假成功），
+  // 编辑/删除是 `ElMessage.info('…开发中')`。现在后端在 AdminController 的权限管理段实现了。
+  createRole: (data) => {
+    return apiClient.post(`/admin/permissions/roles`, data)
+  },
+  updateRole: (roleId, data) => {
+    return apiClient.put(`/admin/permissions/roles/${roleId}`, data)
+  },
+  deleteRole: (roleId) => {
+    return apiClient.delete(`/admin/permissions/roles/${roleId}`)
+  },
+  // ⚠️ 契约是 {userId, role}（数值），不是 {user_id, role_id}。
+  // 原来的唯一调用方发的就是后者 ⇒ 后端 NPE 被吞成 body code 500 ⇒ 这一格从来没保存成功过。
   assignRole: (data) => {
     return apiClient.post(`/admin/permissions/assign-role`, data)
   },
@@ -1002,7 +1015,12 @@ export const collegeAdminAPI = {
   getAssistance: (userId) => apiClient.get(`/college-admin/assistance/${userId}`),
   getTeacherDetail: (userId, teacherId) => apiClient.get(`/college-admin/teacher-detail/${userId}/${teacherId}`),
   processWarning: (data) => apiClient.post('/college-admin/process-warning', data),
-  deleteWarning: (warningId) => apiClient.del(`/college-admin/delete-warning/${warningId}`),
+  // 2026-10-01 第二十四轮：原来写的是 apiClient.del，而 axios 实例上**没有 del 这个方法**
+  // （只有 get/post/put/patch/delete/head/options/request）⇒ 一点「删除预警」就抛
+  // TypeError: apiClient.del is not a function，请求根本发不出去，页面只会弹「删除失败」。
+  // 后端 DELETE /college-admin/delete-warning/{id} 一直是好的（CollegeAdminController），
+  // 纯粹是这里少写一个 e。
+  deleteWarning: (warningId) => apiClient.delete(`/college-admin/delete-warning/${warningId}`),
   getClassStudents: (userId, classId) => apiClient.get(`/college-admin/class-students/${userId}/${classId}`),
   exportData: (userId, type) => apiClient.get(`/college-admin/export/${userId}?type=${type||'scores'}`),
   scoreQuery: (userId, params) => apiClient.get(`/college-admin/score-query/${userId}`, { params }),

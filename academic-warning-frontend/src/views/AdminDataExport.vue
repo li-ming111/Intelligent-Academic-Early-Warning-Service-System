@@ -805,7 +805,11 @@ const uploadTemplate = async () => {
       formData.append('description', templateForm.value.description)
     }
 
-    const response = await apiClient.post('/admin/export/reports/templates/upload', formData, {
+    // 2026-10-01 第二十四轮：原路径多了一段 export（/admin/**export**/reports/templates/upload），
+    // 而后端映射是 AdminController 的 @PostMapping("/reports/templates/upload") ⇒ 真实地址
+    // /admin/reports/templates/upload。实测两条路对照：带 export 那条回
+    // 404「请求路径不存在」，去掉后能碰到 handler ⇒ 模板上传此前必然失败。
+    const response = await apiClient.post('/admin/reports/templates/upload', formData, {
       headers: {
         'Authorization': 'Bearer ' + token,
         'Content-Type': 'multipart/form-data'

@@ -83,6 +83,28 @@ public class AuthenticationFilter implements GlobalFilter, Ordered {
     /** 账号前缀。非管理员只放"本人的资料/设置"，其余一律管理员（见 hasPermission 里的那一块）。 */
     private static final String PREFIX_USERS = "/api/users";
 
+    /**
+     * 账号与权限管理面（auth-service 的三组控制器）。2026-10-01 第二十四轮新增闸门。
+     *
+     * <p>这三条前缀此前**不被任何前缀检查命中**，于是 role 1/2/3 一路落到
+     * {@link #hasPermission} 末尾的 {@code return true}（RBAC 那段是死的，见其注释）。
+     * 用学生账号（{@code 2023020616}）的真实 JWT 走网关实测：
+     * <pre>
+     *   GET  /api/roles/count                                    → 200（返回 4 条角色）
+     *   PUT  /api/roles/update/99999                             → 200（写方法也通，只因 id 不存在才没落库）
+     *   GET  /api/admin/statistics（同一时刻的对照）              → 403
+     * </pre>
+     * ⇒ 一个学生登录后本可以 {@code POST /api/roles/add} 建角色、{@code DELETE /api/roles/delete/{id}} 删角色，
+     * 与 2026-09-30 修掉的 {@code /api/users/**} 是同一族缺陷。
+     *
+     * <p>加闸不会影响任何现有功能：这三条前缀在**全仓零调用方**（前端所有角色/权限调用打的都是
+     * {@code /api/admin/permissions/*}，落在 admin-service，不经过这里），
+     * 网关自己的 {@code RolePermissionCache} 取 RBAC 是**直连 auth-service**、也不过网关。
+     */
+    private static final String PREFIX_ROLES = "/api/roles";
+    private static final String PREFIX_PERMISSIONS = "/api/permissions";
+    private static final String PREFIX_ROLE_PERMISSIONS = "/api/role-permissions";
+
     // ==================== 学院管理员的自助账号路径 ====================
     //
     // 背景：学院管理员（role=5）原先被一律挡在 `/api/college-admin` + `/api/admin`
@@ -304,6 +326,17 @@ public class AuthenticationFilter implements GlobalFilter, Ordered {
                 }
             }
             log.warn("拒绝非管理员访问 /api/users 管理端点: role={}, path={}", role, path);
+            return false;
+        }
+
+        // ==================== /api/roles|permissions|role-permissions 的角色门禁 ====================
+        // 见上面 PREFIX_ROLES 的注释：这三条前缀此前没有任何检查命中，学生 token 实测能读到
+        // 角色表、也能走通写方法。角色 4（管理员）在上面 `role == ROLE_ADMIN` 处已 return true；
+        // 角色 5（学院管理员）管的是本院事务，不该管全局角色 ⇒ 一并拒绝。
+        if (path.startsWith(PREFIX_ROLES)
+                || path.startsWith(PREFIX_PERMISSIONS)
+                || path.startsWith(PREFIX_ROLE_PERMISSIONS)) {
+            log.warn("拒绝非管理员访问账号/权限管理端点: role={}, path={}", role, path);
             return false;
         }
 

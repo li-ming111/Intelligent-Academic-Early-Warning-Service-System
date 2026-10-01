@@ -197,6 +197,29 @@ c(g, '每行 fail_count 都落在它 warning_level 对应的档里',
   'OR (warning_level=2 AND fail_count BETWEEN 3 AND 5) '
   'OR (warning_level=3 AND fail_count > 5))')
 
+# ---------- I. 角色词表：roles 与 users.role 必须对得上（2026-10-01 第二十四轮立的） ----------
+#
+# 背景：`users.role` 是**固定枚举 1..5**（网关 GatewayAuthFilter.roleMapping 只认这五个，
+# 其余一律落到 ROLE_USER；前端各处 roleMap 也只认这五个），而 `roles` 表是这套枚举的
+# "展示/绑定副本"。两者一旦对不上，症状是**静默的**：
+#   · 2026-10-01 实测：活库 `roles` 只有 1–4 行，`users.role=5` 却有 2 个真实账号
+#     （collegeadmin1/2）⇒ 学院管理员的角色名、权限在页面上全查不到，
+#     而仓库根的种子 academic_warning_system.sql:1432-1437 明明写了 5 行。
+#   这一条就是"照种子重建 == 现在的活库"的那一半，也是唯一能自动发现该漂移的地方。
+g = 'I. 角色词表（roles 表必须覆盖 users.role 用到的每个取值）'
+c(g, '没有账号指向一个 roles 里不存在的角色（悬空的 users.role）',
+  'SELECT COUNT(*) FROM (SELECT DISTINCT role FROM users WHERE role IS NOT NULL) u '
+  'LEFT JOIN roles r ON r.id = u.role WHERE r.id IS NULL')
+c(g, '五个内置角色 1–5 必须都在（缺一个就说明 roles 与 users.role 的词表不对齐了）',
+  'SELECT 5 - COUNT(*) FROM roles WHERE id BETWEEN 1 AND 5')
+# 为什么第 3 条必要：上面两条只看「roles 这一侧」，一个绑定都没有的角色照样能过。
+# 而 2026-10-01 之前活了很久的状态正是 "roles 1–4 全在、但第 5 个角色根本不存在于 roles"，
+# 也顺带说明这套绑定是可以整片缺失而无人报错的 —— 页面上表现为「权限数 0」，
+# 与"这个角色确实没有权限"长得一模一样。所以这条守的是"别静默变空"。
+c(g, '五个内置角色每个都至少绑了一条权限（绑定整片缺失时页面显示的「权限数 0」和真的一样）',
+  'SELECT COUNT(*) FROM roles r WHERE r.id BETWEEN 1 AND 5 '
+  'AND NOT EXISTS (SELECT 1 FROM role_permissions rp WHERE rp.role_id = r.id)')
+
 
 def q(sql):
     r = subprocess.run(['mysql', '-uroot', '-proot', '--default-character-set=utf8mb4',

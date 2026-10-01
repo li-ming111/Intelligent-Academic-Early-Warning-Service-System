@@ -162,6 +162,30 @@ public interface ScoreStatMapper {
     List<Map<String, Object>> selectCourseStats(@Param("collegeId") Long collegeId);
 
     /**
+     * 按课程汇总（**全库**，不限学院）。列名与 {@link #selectCourseStats} 逐字相同。
+     *
+     * <p>2026-10-01 第二十四轮新增：管理员端的「成绩分析报表」（{@code AdminController}
+     * 的报表模板 2）是全校口径，没有 {@code collegeId} 可用。它与上面那个方法的差别
+     * <b>只有</b>一层学院过滤 —— 学院版要把学生限定在
+     * {@code sp.class_id IN (本学院班级)}，所以必须 JOIN {@code student_profile}；
+     * 全校版不需要，因此这里连 JOIN 都省掉。
+     *
+     * <p>口径一律走 {@link ScoreCaliber#LATEST_VALID_SCORE}（每门课每名学生取最新一次
+     * 且期末已录入的成绩）：这套报表此前整块是写死的假数据（张三/李四/王五、
+     * 高等数学 50 人 42 及格），替换时必须和预警引擎、学院端统计读同一个源，
+     * 不能再手写一套及格率算法。
+     */
+    @Select("SELECT v.course_id AS course_id, c.name AS course_name, "
+          + "       COUNT(*) AS record_count, AVG(v.score_total) AS avg_score, "
+          + "       SUM(CASE WHEN v.score_total >= " + ScoreCaliber.PASS_LINE
+          + "                THEN 1 ELSE 0 END) AS pass_count "
+          + "  FROM " + ScoreCaliber.LATEST_VALID_SCORE + " v "
+          + "  LEFT JOIN courses c ON c.id = v.course_id "
+          + " GROUP BY v.course_id, c.name "
+          + " ORDER BY avg_score DESC")
+    List<Map<String, Object>> selectCourseStatsAll();
+
+    /**
      * 班级成绩对比。列：{@code class_id} / {@code class_name} / {@code student_count} /
      * {@code record_count} / {@code avg_score} / {@code pass_count}。
      *

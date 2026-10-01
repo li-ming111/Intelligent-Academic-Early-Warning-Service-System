@@ -32,7 +32,9 @@ import com.academic.mapper.CounselorProfileMapper;
 import com.academic.mapper.CollegeAdminProfileMapper;
 import com.academic.mapper.ScoreRecordMapper;
 import com.academic.mapper.AcademicWarningMapper;
+import com.academic.mapper.ScoreStatMapper;
 import com.academic.mapper.UserMapper;
+import com.academic.exception.ResourceNotFoundException;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
@@ -149,6 +151,11 @@ public class AdminController {
     @Autowired
     private com.academic.mapper.ScoreMapper scoreMapper;
 
+    /** 成绩聚合统计（按课程/按班级）。与 {@code CollegeAdminController} 共用同一个 mapper，
+     *  报表路径也从这里取数，避免出现第二套及格率/平均分算法。*/
+    @Autowired
+    private ScoreStatMapper scoreStatMapper;
+
     @Autowired
     private ScoreRecordService scoreRecordService;
 
@@ -223,10 +230,96 @@ public class AdminController {
     private volatile long warningServiceLastFailedTime = 0;
     private static final long SERVICE_RETRY_INTERVAL = 60000; // 1 minute
 
+    /**
+     * 系统动态（管理端首页「系统动态」块）。
+     *
+     * <p>2026-10-01 第二十四轮：这个方法此前直接 {@code return ApiResponse.success(new ArrayList<>())}
+     * —— 一个**永远返回空数组**的桩。小程序 {@code pages/admin/dashboard.vue} 那块「系统动态」
+     * 因此一直挂着一个写死的空态，旁边还留了一句"实测恒为空数组、没有写入方"的注解。
+     *
+     * <p>这次改成从**三张真有写入方的表**里取最近发生的事，按时间倒序合并：
+     * <ul>
+     *   <li>{@code login_logs}（41 行，auth-service 每次登录写一条）→「X 登录系统」</li>
+     *   <li>{@code academic_warning}（预警引擎/定时任务写）→「系统生成学业预警」</li>
+     *   <li>{@code export_history}（本类各导出方法写）→「导出 X 数据」</li>
+     * </ul>
+     * 刻意**不**用 {@code audit_logs}/{@code security_logs}：这两张表当前都是 0 行、
+     * 全仓也没有任何 Java 写入方，接上去只会再造一个"恒空"。
+     *
+     * <p>时间一律取各表自己的时间列，不掺 {@code LocalDateTime.now()} —— 否则每条动态
+     * 都会显示成"刚刚"，看起来热闹，实际是在编时间。
+     */
     @GetMapping("/activities")
     public ApiResponse<List<Map<String, Object>>> getActivities() {
-        List<Map<String, Object>> activities = new ArrayList<>();
-        return ApiResponse.success(activities);
+        try {
+            List<Map<String, Object>> activities = new ArrayList<>();
+
+            for (LoginLog l : loginLogMapper.selectList(
+                    new QueryWrapper<LoginLog>().orderByDesc("login_time").last("LIMIT 20"))) {
+                activities.add(activity("login",
+                        nz(l.getUsername()) + " 登录系统",
+                        nz(l.getLocation()).isEmpty() ? nz(l.getDevice()) : nz(l.getLocation()),
+                        l.getUsername(), l.getLoginTime()));
+            }
+
+            for (AcademicWarning w : academicWarningMapper.selectList(
+                    new QueryWrapper<AcademicWarning>().orderByDesc("created_at").last("LIMIT 20"))) {
+                activities.add(activity("warning",
+                        "系统生成学业预警",
+                        nz(w.getStudentName()) + " " + warningLevelText(w.getWarningLevel()),
+                        null, w.getCreatedAt()));
+            }
+
+            for (ExportHistory e : exportHistoryMapper.selectList(
+                    new QueryWrapper<ExportHistory>().orderByDesc("created_at").last("LIMIT 20"))) {
+                activities.add(activity("export",
+                        "导出" + exportTypeText(e.getDataType()) + "数据",
+                        nz(e.getFileName()) + "（" + (e.getRecordCount() == null ? 0 : e.getRecordCount()) + " 条）",
+                        null, e.getCreatedAt()));
+            }
+
+            activities.sort(Comparator.comparing(
+                    (Map<String, Object> a) -> (LocalDateTime) a.get("createdAt"),
+                    Comparator.nullsLast(Comparator.reverseOrder())));
+            List<Map<String, Object>> top = activities.size() > 20
+                    ? new ArrayList<>(activities.subList(0, 20))
+                    : activities;
+            return ApiResponse.success(top);
+        } catch (Exception e) {
+            log.error("Get activities failed: {}", e.getMessage());
+            return ApiResponse.error(e.getMessage());
+        }
+    }
+
+    /** 系统动态的一行。{@code createdAt} 保持时间类型，由序列化层统一成 ISO 串。*/
+    private static Map<String, Object> activity(String type, String title, String description,
+                                                String userName, LocalDateTime createdAt) {
+        Map<String, Object> a = new HashMap<>();
+        a.put("type", type);
+        a.put("title", title);
+        a.put("description", description == null ? "" : description);
+        // 预警/导出这两类没有"操作人"（系统行为），留空串而不是编一个用户名。
+        a.put("userName", userName == null ? "" : userName);
+        a.put("createdAt", createdAt);
+        return a;
+    }
+
+    /** {@code export_history.data_type} → 中文。库里实测只有 users/warnings/students/colleges。*/
+    private static String exportTypeText(String dataType) {
+        if (dataType == null) {
+            return "";
+        }
+        return switch (dataType) {
+            case "users" -> "用户";
+            case "warnings" -> "预警";
+            case "students" -> "学生";
+            case "colleges" -> "学院";
+            case "scores" -> "成绩";
+            case "courses" -> "课程";
+            case "teachers" -> "教师";
+            case "counselors" -> "辅导员";
+            default -> dataType;
+        };
     }
 
     @GetMapping("/statistics")
@@ -293,22 +386,19 @@ public class AdminController {
                 statistics.put("processedWarnings", 0);
             }
 
-            Map<String, Object> todayStats = new HashMap<>();
-            todayStats.put("newWarnings", 0);
-            todayStats.put("processedWarnings", 0);
-            todayStats.put("pendingTasks", 0);
-            todayStats.put("unreadMessages", 0);
-            todayStats.put("onlineTeachers", 0);
-            todayStats.put("onlineStudents", 0);
-            statistics.put("todayStats", todayStats);
-
-            Map<String, Object> changeRates = new HashMap<>();
-            changeRates.put("studentChangeRate", 0);
-            changeRates.put("courseChangeRate", 0);
-            changeRates.put("userChangeRate", 0);
-            changeRates.put("warningChangeRate", 0);
-            statistics.put("changeRates", changeRates);
-
+            // 2026-10-01 第二十四轮：这里原本有两组**恒为字面量 0** 的字段，已删。
+            //
+            //  · todayStats{newWarnings, processedWarnings, pendingTasks, unreadMessages,
+            //    onlineTeachers, onlineStudents} —— 后两项在库里**没有任何在线状态来源**
+            //    （没有会话表、没有心跳表），前四项则要从没被任何人读过：PC 端
+            //    AdminDashboard/AdminStatistics 只取上面那 12 个 key，小程序 api.js 的注释
+            //    里也写明"todayStats.* 全是 0 —— 没有写入方"。
+            //  · changeRates{student,course,user,warning}ChangeRate —— 环比要**历史快照**，
+            //    库里没有这张表，四个 0 永远算不出来。小程序注释早有警示：
+            //    "界面上不能画成'较上月 +0%'，那是在把'没数据'讲成'没有变化'"。
+            //
+            // 零读者 + 无数据源 ⇒ 删，不留一个看着像真值其实是常量的字段让后来人接。
+            // 如果哪天要"今日统计"，正确的做法是**先建快照表**再算，而不是把 0 换个数。
             return ApiResponse.success(statistics);
         } catch (Exception e) {
             log.error("Get statistics failed: {}", e.getMessage());
@@ -3134,6 +3224,10 @@ public class AdminController {
     }
 
     // ============= 报表管理接口 =============
+
+    /** 四张内置报表的模板 ID。与 {@code getReportHeaders}/{@code getReportData} 的 switch 分支一一对应。*/
+    private static final Set<String> REPORT_TEMPLATE_IDS = Set.of("1", "2", "3", "4");
+
     @GetMapping("/reports/templates")
     public ApiResponse<List<Map<String, Object>>> getReportTemplates() {
         try {
@@ -3141,8 +3235,12 @@ public class AdminController {
             
             Map<String, Object> template1 = new HashMap<>();
             template1.put("id", "1");
-            template1.put("name", "学生统计报表");
-            template1.put("description", "包含学生人数、专业分布、预警情况等统计信息");
+            template1.put("name", "学生预警明细报表");
+            // 说明改成与 getReportHeaders("1") 真正产出的列一致。原标题写的是
+            // "学生人数、专业分布、预警情况"，而报表实际输出的是**逐条预警明细**
+            // （学号/姓名/专业/预警等级/预警时间），没有"人数"也没有"专业分布" ——
+            // 描述与产物不符，点下载的人会以为拿到的是一张汇总表。
+            template1.put("description", "逐条列出学生预警记录：学号、姓名、专业、预警等级、预警时间");
             template1.put("category", "student");
             templates.add(template1);
             
@@ -3182,7 +3280,13 @@ public class AdminController {
             String endDate = (String) reportData.get("end_date");
             
             log.info("Generate report request: templateId={}, startDate={}, endDate={}", templateId, startDate, endDate);
-            
+
+            if (!REPORT_TEMPLATE_IDS.contains(templateId)) {
+                // 走 400 而不是让 generateReportFile 抛出去翻成 500：前端拦截器只认
+                // code===200，这里给的是一句能读懂的话，不是"服务器内部错误"。
+                return ApiResponse.error(400, "不支持的报表模板: " + templateId);
+            }
+
             // 日期校验
             LocalDate today = LocalDate.now();
             
@@ -3229,21 +3333,36 @@ public class AdminController {
     }
     
     private String generateReportFile(String templateId, String startDate, String endDate) throws Exception {
+        if (!REPORT_TEMPLATE_IDS.contains(templateId)) {
+            // 原来是 default 分支：表头写成"序号/数据1/数据2/数据3"、数据行空，
+            // 然后照样回 success + 一个可下载的 xlsx。调用方拿到一份全是占位列的文件，
+            // 却以为报表生成成功了。缺参数就是缺参数。
+            throw new IllegalArgumentException("不支持的报表模板: " + templateId);
+        }
         String fileName = "report_" + templateId + "_" + LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss")) + ".xlsx";
-        String filePath = "exports/" + fileName;
-        
+        // 2026-10-01 第二十四轮：原先是写死的 "exports/" 且**从不 mkdirs**，
+        // 而同一个类里其余 9 个导出方法全都是 `exportDir + mkdirs()`。后果：
+        //  - 首次点「生成报表」必然 500 `exports\report_1_....xlsx (系统找不到指定的路径。)`；
+        //  - 即使目录恰好存在，下载端 downloadReport 也读的是另一处写死的 "exports/"，
+        //    一旦 export.dir 配成别的目录，生成与下载就会各写各的。
+        // 两处（这里 + downloadReport）必须一起改成同一个 exportDir。
+        String filePath = exportDir + "/" + fileName;
+        File exportDirFile = new File(exportDir);
+        if (!exportDirFile.exists()) {
+            exportDirFile.mkdirs();
+        }
+
         // 创建工作簿
         Workbook workbook = new XSSFWorkbook();
         Sheet sheet = workbook.createSheet("报表数据");
-        
+
         // 根据模板ID设置表头
         String[] headers = getReportHeaders(templateId);
         Row headerRow = sheet.createRow(0);
         for (int i = 0; i < headers.length; i++) {
             headerRow.createCell(i).setCellValue(headers[i]);
         }
-        
-        // 添加示例数据
+
         List<List<String>> data = getReportData(templateId);
         for (int i = 0; i < data.size(); i++) {
             Row row = sheet.createRow(i + 1);
@@ -3252,68 +3371,227 @@ public class AdminController {
                 row.createCell(j).setCellValue(rowData.get(j));
             }
         }
-        
+
         // 自动调整列宽
         for (int i = 0; i < headers.length; i++) {
             sheet.autoSizeColumn(i);
         }
-        
+
         // 保存文件
-        FileOutputStream outputStream = new FileOutputStream(filePath);
-        workbook.write(outputStream);
-        outputStream.close();
+        try (FileOutputStream outputStream = new FileOutputStream(filePath)) {
+            workbook.write(outputStream);
+        }
         workbook.close();
-        
-        log.info("Report generated: {}", fileName);
+
+        if (data.isEmpty()) {
+            // 数据源为空（例如库里还没有成绩/预警）时输出的是"只有表头"的报表。
+            // 这是真实状态，不是错误 —— 但不能静默，留一条日志便于追问。
+            log.warn("Report generated with NO data rows: {} (模板 {})", fileName, templateId);
+        }
+        log.info("Report generated: {} ({} rows)", fileName, data.size());
         return fileName;
     }
-    
+
+    /**
+     * 四张内置报表的表头。**这里是列名契约**：{@link #generateReportFile} 按它写 xlsx 表头，
+     * 自定义模板路径（{@link #generateReportWithCustomTemplate}）也按它做列名匹配取数，
+     * 所以改列名要连着看 {@link #getReportData}。
+     */
     private String[] getReportHeaders(String templateId) {
         return switch (templateId) {
-            case "1" -> new String[]{"学生ID", "姓名", "专业", "预警等级", "预警时间"};
+            // 「学生ID」改成「学号」：这一列给的是 student_profile.student_id（学号字符串），
+            // 不是 student_profile.id（主键）。两个 id 空间在本工程里已经踩过三次，
+            // 表头写错一个词就会让人按主键去查，永远查不到。
+            case "1" -> new String[]{"学号", "姓名", "专业", "预警等级", "预警时间"};
             case "2" -> new String[]{"课程名称", "总人数", "及格人数", "不及格率", "平均分"};
-            case "3" -> new String[]{"预警等级", "数量", "处理状态", "处理时间"};
+            // 原表头是「预警等级 / 数量 / 处理状态 / 处理时间」，一行一个"等级×状态"的
+            // 组合，但数据却是手写的三行假话，且"处理时间"对一个聚合行没有意义。
+            // 改成交叉表：一级一行，待处理/已处理/合计三列 —— 这正好是 academic_warning
+            // 真实能算出来的形状（活库 4 行：中级 3、低级 1，status 全 0）。
+            case "3" -> new String[]{"预警等级", "待处理", "已处理", "合计"};
             case "4" -> new String[]{"学院名称", "学生人数", "教师人数", "辅导员人数"};
             default -> new String[]{"序号", "数据1", "数据2", "数据3"};
         };
     }
-    
+
+    /**
+     * 按模板取数。
+     *
+     * <p>2026-10-01 第二十四轮：这里整块原来是**写死的假数据** —— 张三/李四/王五、
+     * 「高等数学 50 人 42 及格 16% 78.5」、「计算机学院 1200 人 85 教师」，
+     * 学院的数字还是页面里根本没出现过的编造学院名。它不会报错、会稳定产出 xlsx，
+     * 所以从症状上看不出来。演示数据是自编的合成数据，标准是"自洽、经得起追问"，
+     * 「代码绕开了所以没事」在这里不成立 —— 报表必须对着活库真算。
+     *
+     * <p>现在的数据源：
+     * <ul>
+     *   <li>模板1 学生预警明细 → {@code academic_warning} + {@code student_profile} + {@code majors}</li>
+     *   <li>模板2 课程成绩分析 → {@link ScoreStatMapper#selectCourseStatsAll()}（走 ScoreCaliber）</li>
+     *   <li>模板3 预警等级统计 → {@code academic_warning} 按 等级×状态 现算</li>
+     *   <li>模板4 学院对比 → {@code colleges} + 三个既有 count 助手（与 {@code exportColleges} 同源）</li>
+     * </ul>
+     */
     private List<List<String>> getReportData(String templateId) {
-        List<List<String>> data = new ArrayList<>();
         return switch (templateId) {
-            case "1" -> {
-                data.add(List.of("S001", "张三", "计算机科学", "黄色预警", "2026-05-01"));
-                data.add(List.of("S002", "李四", "软件工程", "红色预警", "2026-05-15"));
-                data.add(List.of("S003", "王五", "人工智能", "蓝色预警", "2026-05-20"));
-                yield data;
-            }
-            case "2" -> {
-                data.add(List.of("高等数学", "50", "42", "16%", "78.5"));
-                data.add(List.of("数据结构", "45", "38", "15.6%", "82.3"));
-                data.add(List.of("计算机网络", "48", "45", "6.25%", "88.0"));
-                yield data;
-            }
-            case "3" -> {
-                data.add(List.of("红色预警", "5", "已处理", "2026-05-25"));
-                data.add(List.of("黄色预警", "12", "处理中", "2026-05-26"));
-                data.add(List.of("蓝色预警", "8", "待处理", "-"));
-                yield data;
-            }
-            case "4" -> {
-                data.add(List.of("计算机学院", "1200", "85", "12"));
-                data.add(List.of("电子工程学院", "980", "72", "10"));
-                data.add(List.of("管理学院", "850", "65", "8"));
-                yield data;
-            }
-            default -> data;
+            case "1" -> buildStudentWarningRows();
+            case "2" -> buildCourseScoreRows();
+            case "3" -> buildWarningStatRows();
+            case "4" -> buildCollegeCompareRows();
+            default -> new ArrayList<>();
         };
+    }
+
+    /** 模板1：学生预警明细（学号 / 姓名 / 专业 / 预警等级 / 预警时间）。*/
+    private List<List<String>> buildStudentWarningRows() {
+        List<List<String>> rows = new ArrayList<>();
+        List<AcademicWarning> warnings = academicWarningMapper.selectList(null);
+        if (warnings.isEmpty()) {
+            return rows;
+        }
+        // 批量取学生档案与专业，不做逐行查询。
+        //
+        // ⚠️ academic_warning.student_id 是 bigint，存的是 student_profile.**id**（主键），
+        // 不是学号字符串。这里按主键批量查；输出那一列才换成 studentId（学号）。
+        // 两个 id 空间是同一个坑（本工程已踩过三次）。
+        Set<Long> profileIds = warnings.stream()
+                .map(AcademicWarning::getStudentId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        Map<Long, StudentProfile> profileById = profileIds.isEmpty()
+                ? Collections.emptyMap()
+                : studentProfileMapper.selectBatchIds(profileIds).stream()
+                        .collect(Collectors.toMap(StudentProfile::getId, p -> p, (a, b) -> a));
+        Map<Long, String> majorNameById = majorService.list().stream()
+                .filter(m -> m.getId() != null)
+                .collect(Collectors.toMap(Major::getId, m -> nz(m.getName()), (a, b) -> a));
+
+        // 时间倒序，与预警列表页口径一致。
+        warnings.sort(Comparator.comparing(AcademicWarning::getCreatedAt,
+                Comparator.nullsLast(Comparator.reverseOrder())));
+
+        for (AcademicWarning w : warnings) {
+            StudentProfile p = w.getStudentId() == null ? null : profileById.get(w.getStudentId());
+            String studentNo = (p != null && p.getStudentId() != null)
+                    ? p.getStudentId()
+                    : (w.getStudentId() == null ? "" : String.valueOf(w.getStudentId()));
+            String name = (p != null && p.getName() != null) ? p.getName() : nz(w.getStudentName());
+            String majorName = (p != null && p.getMajorId() != null)
+                    ? majorNameById.getOrDefault(p.getMajorId(), "")
+                    : "";
+            rows.add(List.of(
+                    studentNo,
+                    name,
+                    majorName,
+                    warningLevelText(w.getWarningLevel()),
+                    w.getCreatedAt() == null ? "" : w.getCreatedAt().toLocalDate().toString()));
+        }
+        return rows;
+    }
+
+    /** 模板2：课程成绩分析（课程名称 / 总人数 / 及格人数 / 不及格率 / 平均分）。*/
+    private List<List<String>> buildCourseScoreRows() {
+        List<List<String>> rows = new ArrayList<>();
+        for (Map<String, Object> c : scoreStatMapper.selectCourseStatsAll()) {
+            long total = asLong(c.get("record_count"));
+            long pass = asLong(c.get("pass_count"));
+            // 及格线口径来自 ScoreCaliber.PASS_LINE（mapper 里做的判断），这里只算比例。
+            // 显式 Locale.ROOT：String.format 会跟 JVM 默认区域走，德/法区域下
+            // "%.2f" 的小数点是逗号，报表里的数字会在别人的机器上变成 78,50。
+            String failRate = total == 0
+                    ? "0.00%"
+                    : String.format(Locale.ROOT, "%.2f%%", (total - pass) * 100.0 / total);
+            String avg = c.get("avg_score") == null
+                    ? ""
+                    : String.format(Locale.ROOT, "%.2f", asDouble(c.get("avg_score")));
+            rows.add(List.of(
+                    nz(asString(c.get("course_name"))),
+                    String.valueOf(total),
+                    String.valueOf(pass),
+                    failRate,
+                    avg));
+        }
+        return rows;
+    }
+
+    /** 模板3：预警等级统计（等级 / 待处理 / 已处理 / 合计）。*/
+    private List<List<String>> buildWarningStatRows() {
+        List<List<String>> rows = new ArrayList<>();
+        // 固定 1/2/3 三档，保证"某一档一条都没有"时也留一行 0（否则报表会缺档，
+        // 看起来像漏了数据）。等级口径与 warning_rules.name 一致：低级/中级/高级预警。
+        Map<Integer, long[]> byLevel = new LinkedHashMap<>();
+        byLevel.put(1, new long[2]);
+        byLevel.put(2, new long[2]);
+        byLevel.put(3, new long[2]);
+        for (AcademicWarning w : academicWarningMapper.selectList(null)) {
+            Integer level = w.getWarningLevel();
+            if (level == null || !byLevel.containsKey(level)) {
+                // 不在 1/2/3 之内的等级（历史脏数据）不归入任何一行，也不新增行，
+                // 与前端 buildWarningTrend「未识别等级不归入任何一条」同一口径。
+                continue;
+            }
+            long[] slot = byLevel.get(level);
+            slot[(w.getStatus() != null && w.getStatus() == 1) ? 1 : 0]++;
+        }
+        for (Map.Entry<Integer, long[]> e : byLevel.entrySet()) {
+            long[] s = e.getValue();
+            rows.add(List.of(
+                    warningLevelText(e.getKey()),
+                    String.valueOf(s[0]),
+                    String.valueOf(s[1]),
+                    String.valueOf(s[0] + s[1])));
+        }
+        return rows;
+    }
+
+    /** 模板4：学院对比（学院名称 / 学生人数 / 教师人数 / 辅导员人数）。*/
+    private List<List<String>> buildCollegeCompareRows() {
+        List<List<String>> rows = new ArrayList<>();
+        for (College college : collegeService.list()) {
+            rows.add(List.of(
+                    nz(college.getName()),
+                    String.valueOf(getStudentCount(college.getId())),
+                    String.valueOf(getTeacherCount(college.getId())),
+                    String.valueOf(getCounselorCount(college.getId()))));
+        }
+        return rows;
+    }
+
+    /** 预警等级 → 中文。口径与 {@code warning_rules.name}、前端 warningLevelColor 一致。*/
+    private static String warningLevelText(Integer level) {
+        if (level == null) {
+            return "";
+        }
+        return switch (level) {
+            case 1 -> "低级预警";
+            case 2 -> "中级预警";
+            case 3 -> "高级预警";
+            default -> "未知等级";
+        };
+    }
+
+    private static String nz(String s) {
+        return s == null ? "" : s;
+    }
+
+    private static String asString(Object o) {
+        return o == null ? null : o.toString();
+    }
+
+    private static long asLong(Object o) {
+        return o instanceof Number n ? n.longValue() : 0L;
+    }
+
+    private static double asDouble(Object o) {
+        return o instanceof Number n ? n.doubleValue() : 0.0;
     }
 
     // ============= 报表下载接口 =============
     @GetMapping("/export/reports/{fileName}")
     public void downloadReport(@PathVariable String fileName, HttpServletResponse response) throws IOException {
         try {
-            String filePath = "exports/" + fileName;
+            // 必须与 generateReportFile 用同一个 exportDir：两边都写死 "exports/" 时
+            // 一旦 export.dir 被配成别的目录，生成写 A、下载读 B，表现为"生成成功但下载 404"。
+            String filePath = exportDir + "/" + fileName;
             File file = new File(filePath);
             
             if (!file.exists()) {
@@ -3543,20 +3821,334 @@ public class AdminController {
     @Autowired
     private com.academic.mapper.RolePermissionMapper rolePermissionMapper;
 
+    /**
+     * 角色列表（含每个角色已绑定的权限码）。
+     *
+     * <p>2026-10-01 第二十四轮：原来直接回 {@code roleMapper.selectList(null)}，
+     * 而 {@code Role} 实体上**没有 permissions 字段** ⇒ 前端「权限数」「权限列表」两列
+     * 恒为空（模板里用 {@code row.permissions || []} 兜着，所以显示的是 0，不报错，
+     * 但活库 {@code role_permissions} 明明有 21 行绑定）。现在按角色把权限码一并查出来。
+     *
+     * <p>字段只增不减：{@code id/name/code/description/status/createdAt/updatedAt} 原样保留，
+     * 新增 {@code permissions}（权限码数组）与 {@code permissionIds}。
+     */
     @GetMapping("/permissions/roles")
-    public ApiResponse<List<com.academic.entity.Role>> getRoles() {
+    public ApiResponse<List<Map<String, Object>>> getRoles() {
         try {
-            return ApiResponse.success(roleMapper.selectList(null));
+            List<com.academic.entity.Role> roles = roleMapper.selectList(null);
+            Map<Long, List<Permission>> permsByRole = permissionsByRole();
+            List<Map<String, Object>> result = new ArrayList<>();
+            for (com.academic.entity.Role role : roles) {
+                Map<String, Object> item = new HashMap<>();
+                item.put("id", role.getId());
+                item.put("name", role.getName());
+                item.put("code", role.getCode());
+                item.put("description", role.getDescription());
+                item.put("status", role.getStatus());
+                item.put("createdAt", role.getCreatedAt());
+                item.put("updatedAt", role.getUpdatedAt());
+                List<Permission> perms = permsByRole.getOrDefault(role.getId(), List.of());
+                item.put("permissions", perms.stream().map(Permission::getCode).toList());
+                item.put("permissionIds", perms.stream().map(Permission::getId).toList());
+                result.add(item);
+            }
+            return ApiResponse.success(result);
         } catch (Exception e) {
             log.error("Get roles failed: {}", e.getMessage());
             return ApiResponse.error(e.getMessage());
         }
     }
 
+    /**
+     * 每个角色绑定了哪些权限。
+     *
+     * <p>两次查询在内存里拼，不做 N+1：{@code role_permissions} 全表（21 行）+
+     * {@code permissions} 全表（9 行），按 id 建映射即可。角色/权限都是小表且不随时间增长。
+     */
+    private Map<Long, List<Permission>> permissionsByRole() {
+        Map<Long, Permission> permById = permissionMapper.selectList(null).stream()
+                .filter(p -> p.getId() != null)
+                .collect(Collectors.toMap(Permission::getId, p -> p, (a, b) -> a));
+        Map<Long, List<Permission>> byRole = new HashMap<>();
+        for (RolePermission rp : rolePermissionMapper.selectList(null)) {
+            Permission p = permById.get(rp.getPermissionId());
+            if (p != null) {
+                byRole.computeIfAbsent(rp.getRoleId(), k -> new ArrayList<>()).add(p);
+            }
+        }
+        return byRole;
+    }
+
+    /**
+     * {@code users.role} 的数值 → 中文角色名。
+     *
+     * <p>这是**系统里唯一权威的那套角色词表**（`users.role` 是固定枚举 1..5，
+     * 见 {@code GatewayAuthFilter.roleMapping} 与前端各处的 roleMap）。
+     * {@code roles} 表只是它的"展示副本"，两者不要互相推导。
+     */
+    private static String getRoleNameText(Integer role) {
+        if (role == null) {
+            return "未知";
+        }
+        return switch (role) {
+            case 1 -> "学生";
+            case 2 -> "教师";
+            case 3 -> "辅导员";
+            case 4 -> "管理员";
+            case 5 -> "学院管理员";
+            default -> "未知";
+        };
+    }
+
+    /**
+     * 内置角色：这 5 个 code 是系统里**固定的一套角色词表**，删了会断。
+     *
+     * <p>1–4 的 code 被 {@code PermissionMapper.selectByRoleCode} 按名认人；
+     * 5（{@code ROLE_COLLEGE_ADMIN}）与人数的对应关系见 {@code GatewayAuthFilter.roleMapping}
+     * 的 {@code case "5"}。**`roles` 表的行数与 `users.role` 的取值集合必须相等** ——
+     * 2026-10-01 第二十四轮发现活库少了 5（活库 4 行、种子 5 行），已按种子补回。
+     */
+    private static final Set<String> BUILTIN_ROLE_CODES =
+            Set.of("ROLE_STUDENT", "ROLE_TEACHER", "ROLE_COUNSELOR", "ROLE_ADMIN", "ROLE_COLLEGE_ADMIN");
+
+    /**
+     * 新建角色。
+     *
+     * <p>2026-10-01 第二十四轮：前端 {@code AdminPermissions.vue} 的「创建」此前是
+     * {@code ElMessage.success('角色已创建')} 然后**什么都不做** —— 一个假成功，
+     * 弹窗关了、列表刷新了，库里一行没多。这里补上真写入。
+     *
+     * <p>请求体：{@code {name, description?, code?, permissions?: [权限码...]}}。
+     * {@code code} 不给就按 name 生成（纯中文名会退化成 {@code ROLE_CUSTOM_<时间戳>}）；
+     * {@code roles.code} 是 UNIQUE NOT NULL，所以生成后还要去重。
+     *
+     * <p>权限码里有一个查不到就**报错**，不静默丢掉 —— 静默丢字段正是本工程在扫的缺陷类型。
+     *
+     * <p>{@code @Transactional}：写 {@code roles} + {@code role_permissions} 两张表，
+     * 必须同一事务；方法体内**不 catch**（catch 了就成了假事务）。
+     */
+    @PostMapping("/permissions/roles")
+    @Transactional(rollbackFor = Exception.class)
+    public ApiResponse<Map<String, Object>> createRole(@RequestBody Map<String, Object> data) {
+        String name = bodyText(data, "name");
+        if (name == null) {
+            throw new IllegalArgumentException("角色名称不能为空");
+        }
+        if (roleMapper.selectCount(new QueryWrapper<Role>().eq("name", name)) > 0) {
+            throw new IllegalArgumentException("角色名称已存在: " + name);
+        }
+        String code = bodyText(data, "code");
+        code = code == null ? generateRoleCode(name) : code.toUpperCase(Locale.ROOT);
+        if (roleMapper.selectCount(new QueryWrapper<Role>().eq("code", code)) > 0) {
+            throw new IllegalArgumentException("角色编码已存在: " + code);
+        }
+        List<Permission> perms = resolvePermissions(data.get("permissions"));
+
+        Role role = new Role();
+        role.setName(name);
+        role.setCode(code);
+        role.setDescription(bodyText(data, "description"));
+        role.setStatus(1);
+        role.setCreatedAt(LocalDateTime.now());
+        role.setUpdatedAt(LocalDateTime.now());
+        roleMapper.insert(role);
+
+        bindPermissions(role.getId(), perms);
+
+        Map<String, Object> result = new HashMap<>();
+        result.put("id", role.getId());
+        result.put("name", role.getName());
+        result.put("code", role.getCode());
+        result.put("permissionCount", perms.size());
+        result.put("message", "角色已创建");
+        return ApiResponse.success(result);
+    }
+
+    /**
+     * 修改角色（名称 / 描述 / 权限绑定）。
+     *
+     * <p>请求体里**带了哪个字段就改哪个**：{@code permissions} 带空数组表示"清空该角色的权限"，
+     * 不带则不动绑定 —— 与"带空串 = 清空输入框"是同一套口径。
+     */
+    @PutMapping("/permissions/roles/{roleId}")
+    @Transactional(rollbackFor = Exception.class)
+    public ApiResponse<Map<String, Object>> updateRole(@PathVariable Long roleId,
+                                                       @RequestBody Map<String, Object> data) {
+        Role role = roleMapper.selectById(roleId);
+        if (role == null) {
+            throw new ResourceNotFoundException("角色不存在: " + roleId);
+        }
+        String name = bodyText(data, "name");
+        if (name != null && !name.equals(role.getName())) {
+            if (roleMapper.selectCount(new QueryWrapper<Role>().eq("name", name).ne("id", roleId)) > 0) {
+                throw new IllegalArgumentException("角色名称已存在: " + name);
+            }
+            role.setName(name);
+        }
+        if (data != null && data.containsKey("description")) {
+            role.setDescription(bodyText(data, "description"));
+        }
+        role.setUpdatedAt(LocalDateTime.now());
+        roleMapper.updateById(role);
+
+        int permCount = -1;
+        if (data != null && data.containsKey("permissions")) {
+            List<Permission> perms = resolvePermissions(data.get("permissions"));
+            rolePermissionMapper.delete(new QueryWrapper<RolePermission>().eq("role_id", roleId));
+            bindPermissions(roleId, perms);
+            permCount = perms.size();
+        }
+        // 内置角色的 code 不允许改：RoleMapper/PermissionMapper.selectByRoleCode 是按 code 认人的，
+        // 改了 code 等于把该角色从权限体系里摘出去（users.role 还指着它）。请求体里带 code 一律忽略。
+
+        Map<String, Object> result = new HashMap<>();
+        result.put("id", roleId);
+        result.put("name", role.getName());
+        result.put("permissionCount", permCount);
+        result.put("message", "角色已更新");
+        return ApiResponse.success(result);
+    }
+
+    /**
+     * 删除角色。
+     *
+     * <p>两条拒绝理由，都是**真校验**而不是走过场：
+     * <ol>
+     *   <li>内置角色（ROLE_STUDENT/TEACHER/COUNSELOR/ADMIN）不可删 —— 它们是权限体系按 code 认人的锚点；</li>
+     *   <li>{@code users.role} 还指着这个 id 时不可删 —— 否则那些账号会指向一个不存在的角色。
+     *       顺带说明：活库 {@code users.role=5}（学院管理员）在 {@code roles} 表里<b>本来就没有对应行</b>，
+     *       所以这个外键关系本来就是"弱"的；这里只保证**不再新增**悬空。</li>
+     * </ol>
+     */
+    @DeleteMapping("/permissions/roles/{roleId}")
+    @Transactional(rollbackFor = Exception.class)
+    public ApiResponse<String> deleteRole(@PathVariable Long roleId) {
+        Role role = roleMapper.selectById(roleId);
+        if (role == null) {
+            throw new ResourceNotFoundException("角色不存在: " + roleId);
+        }
+        if (BUILTIN_ROLE_CODES.contains(role.getCode())) {
+            throw new IllegalArgumentException("内置角色不可删除: " + role.getCode());
+        }
+        long inUse = userService.count(new QueryWrapper<User>().eq("role", roleId));
+        if (inUse > 0) {
+            throw new IllegalArgumentException("仍有 " + inUse + " 个账号使用该角色，不能删除");
+        }
+        rolePermissionMapper.delete(new QueryWrapper<RolePermission>().eq("role_id", roleId));
+        roleMapper.deleteById(roleId);
+        return ApiResponse.success("角色删除成功");
+    }
+
+    /** 请求体里的字符串：null / 全空白都算没填。*/
+    private static String bodyText(Map<String, Object> body, String key) {
+        Object v = body == null ? null : body.get(key);
+        if (v == null) {
+            return null;
+        }
+        String s = v.toString().trim();
+        return s.isEmpty() ? null : s;
+    }
+
+    /**
+     * 权限码数组 → {@code Permission} 列表。
+     *
+     * <p>空/缺省 ⇒ 返回空列表（允许建一个暂时没有权限的角色）。
+     * 有任何一个码在 {@code permissions} 表里查不到 ⇒ 抛 {@code IllegalArgumentException}（400），
+     * 而不是把那一个悄悄丢掉。
+     */
+    private List<Permission> resolvePermissions(Object raw) {
+        if (raw == null) {
+            return List.of();
+        }
+        if (!(raw instanceof List<?> list)) {
+            throw new IllegalArgumentException("permissions 必须是权限码数组");
+        }
+        List<String> codes = new ArrayList<>();
+        for (Object o : list) {
+            if (o == null) {
+                continue;
+            }
+            String c = o.toString().trim();
+            if (!c.isEmpty() && !codes.contains(c)) {
+                codes.add(c);
+            }
+        }
+        if (codes.isEmpty()) {
+            return List.of();
+        }
+        List<Permission> found = permissionMapper.selectList(new QueryWrapper<Permission>().in("code", codes));
+        Set<String> foundCodes = found.stream().map(Permission::getCode).collect(Collectors.toSet());
+        for (String c : codes) {
+            if (!foundCodes.contains(c)) {
+                throw new IllegalArgumentException("权限不存在: " + c);
+            }
+        }
+        return found;
+    }
+
+    /** 绑定角色与权限（只插 {@code role_permissions}，不删旧行；调用方负责先清）。*/
+    private void bindPermissions(Long roleId, List<Permission> perms) {
+        for (Permission p : perms) {
+            RolePermission rp = new RolePermission();
+            rp.setRoleId(roleId);
+            rp.setPermissionId(p.getId());
+            rp.setCreatedAt(LocalDateTime.now());
+            rp.setUpdatedAt(LocalDateTime.now());
+            rolePermissionMapper.insert(rp);
+        }
+    }
+
+    /** 由角色名生成一个 UNIQUE 的 {@code roles.code}。名字里没有 ASCII 字母数字时退化成带时间戳的兜底码。*/
+    private String generateRoleCode(String name) {
+        StringBuilder sb = new StringBuilder();
+        for (char ch : name.toUpperCase(Locale.ROOT).toCharArray()) {
+            sb.append((ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') ? ch : '_');
+        }
+        String slug = sb.toString().replaceAll("_+", "_").replaceAll("^_+|_+$", "");
+        String base = "ROLE_" + (slug.isEmpty() ? "CUSTOM_" + System.currentTimeMillis() : slug);
+        String code = base;
+        int n = 2;
+        while (roleMapper.selectCount(new QueryWrapper<Role>().eq("code", code)) > 0) {
+            code = base + "_" + n++;
+        }
+        return code;
+    }
+
+    /**
+     * 权限列表（含每个权限被哪些角色持有）。
+     *
+     * <p>2026-10-01 第二十四轮：前端那一列「适用角色」本来读的是一个**写死的映射表**
+     * （键是 {@code view_scores / manage_students / manage_all …}），而活库 {@code permissions}
+     * 的 9 个码全是 {@code PERM_*} 前缀 ⇒ 两边**一个都对不上**，那一列 9 行全是空的。
+     * 现在改成从 {@code role_permissions} 真查：{@code roleCodes} = 持有该权限的角色码。
+     *
+     * <p>字段只增不减：{@code id/code/name/description} 原样保留。
+     */
     @GetMapping("/permissions/list")
-    public ApiResponse<List<com.academic.entity.Permission>> getPermissions() {
+    public ApiResponse<List<Map<String, Object>>> getPermissions() {
         try {
-            return ApiResponse.success(permissionMapper.selectList(null));
+            Map<Long, String> roleCodeById = roleMapper.selectList(null).stream()
+                    .filter(r -> r.getId() != null)
+                    .collect(Collectors.toMap(com.academic.entity.Role::getId,
+                            com.academic.entity.Role::getCode, (a, b) -> a));
+            Map<Long, List<String>> roleCodesByPerm = new HashMap<>();
+            for (RolePermission rp : rolePermissionMapper.selectList(null)) {
+                String roleCode = roleCodeById.get(rp.getRoleId());
+                if (roleCode != null) {
+                    roleCodesByPerm.computeIfAbsent(rp.getPermissionId(), k -> new ArrayList<>()).add(roleCode);
+                }
+            }
+            List<Map<String, Object>> result = new ArrayList<>();
+            for (com.academic.entity.Permission p : permissionMapper.selectList(null)) {
+                Map<String, Object> item = new HashMap<>();
+                item.put("id", p.getId());
+                item.put("code", p.getCode());
+                item.put("name", p.getName());
+                item.put("description", p.getDescription());
+                item.put("roleCodes", roleCodesByPerm.getOrDefault(p.getId(), List.of()));
+                result.add(item);
+            }
+            return ApiResponse.success(result);
         } catch (Exception e) {
             log.error("Get permissions failed: {}", e.getMessage());
             return ApiResponse.error(e.getMessage());
@@ -3567,41 +4159,105 @@ public class AdminController {
     public ApiResponse<Map<String, Object>> getUserPermissions(@PathVariable Long userId) {
         try {
             User user = userService.getById(userId);
+            if (user == null) {
+                // 原来是 `if (user != null) {...}` 然后照样 `success(空 Map)` ——
+                // 账号不存在时回的是 **HTTP 200 + body code 200 + data:{}**，
+                // 前端 `if (response)` 判空对象为真 ⇒ 照样弹出「用户权限详情」，
+                // 里面每个字段都是空的。改为明确的 404。
+                throw new ResourceNotFoundException("用户不存在: " + userId);
+            }
             Map<String, Object> result = new HashMap<>();
-            if (user != null) {
+            {
                 result.put("userId", userId);
                 result.put("username", user.getUsername());
                 // 通过角色获取权限
+                //
+                // ⚠️ 2026-10-01 第二十四轮：这里原来把角色码拼成 "STUDENT"/"ADMIN"，
+                //    而 `role_permissions` 的 JOIN 条件是 `r.code = #{roleCode}`，
+                //    活库 `roles.code` 存的是 **`ROLE_STUDENT`/`ROLE_ADMIN`**（带 ROLE_ 前缀）
+                //    ⇒ 两边一个字都对不上，`selectByRoleCode` 恒返回空表。
+                //    实测：`/admin/permissions/user/27`（role=1）→ permissions=[]，
+                //    `/admin/permissions/user/1`（role=4，库里 9 条绑定）→ permissions=[]。
+                //    也就是说权限管理页的「查看权限」弹窗里「拥有权限」**永远是空的**。
+                //    这是与网关那段死 RBAC 同源的缺陷（库 ROLE_* vs 代码 *）。
                 Integer roleCode = user.getRole();
                 String roleCodeStr = switch (roleCode != null ? roleCode : 0) {
-                    case 1 -> "STUDENT";
-                    case 2 -> "TEACHER";
-                    case 3 -> "COUNSELOR";
-                    case 4 -> "ADMIN";
+                    case 1 -> "ROLE_STUDENT";
+                    case 2 -> "ROLE_TEACHER";
+                    case 3 -> "ROLE_COUNSELOR";
+                    case 4 -> "ROLE_ADMIN";
+                    // 5 = 学院管理员。种子 academic_warning_system.sql:1437 里**没有**给
+                    // ROLE_COLLEGE_ADMIN 绑任何权限（role_permissions 只有角色 1–4 的 21 行），
+                    // 所以这条查出来仍是空表 —— 那是数据本身的实情，不是查询写错。
+                    case 5 -> "ROLE_COLLEGE_ADMIN";
                     default -> "UNKNOWN";
                 };
                 List<com.academic.entity.Permission> permissions = permissionMapper.selectByRoleCode(roleCodeStr);
                 result.put("role", roleCode);
-                result.put("roleName", roleCodeStr);
-                result.put("permissions", permissions);
+                // roleName 是**给弹窗直接显示**的（弹窗用的是 getRoleName(selectedUser.role)，
+                // 但这里也不该回 "ROLE_STUDENT" 这种英文码）—— 改成中文名。
+                result.put("roleName", getRoleNameText(roleCode));
+                result.put("roleCode", roleCodeStr);
+                // 前端「拥有权限」渲染的是 `perm` 本身（`v-for="perm in selectedUser.permissions"`），
+                // 而 Permission 是对象 ⇒ 原来即使查到了也会显示成 [object Object]。
+                // 回**权限码字符串数组**，并另存一份完整对象给以后要用字段的地方。
+                result.put("permissions", permissions.stream().map(com.academic.entity.Permission::getCode).toList());
+                result.put("permissionDetails", permissions);
             }
             return ApiResponse.success(result);
+        } catch (ResourceNotFoundException e) {
+            // 别被下面那个 catch 压成 body code 500，交给 GlobalExceptionHandler 翻成真 404。
+            throw e;
         } catch (Exception e) {
             log.error("Get user permissions failed: {}", e.getMessage());
             return ApiResponse.error(e.getMessage());
         }
     }
 
+    /**
+     * 给账号改角色。请求体：{@code {userId, role}}（{@code role} 是 {@code users.role} 的数值）。
+     *
+     * <p>2026-10-01 第二十四轮：**契约本来是 {@code userId/role}，而唯一的调用方
+     * {@code AdminPermissions.vue} 一直发的是 {@code {user_id, role_id}}** ⇒
+     * {@code data.get("userId")} 是 null，`.toString()` 抛 NPE，被下面的 catch 吞成
+     * {@code ApiResponse.error(...)}（HTTP 200 + body code 500）。前端拦截器认
+     * body.code！=200 就 reject，所以那一格「当前角色」下拉**从来就没保存成功过**，
+     * 用户看到的是「更新角色失败」。
+     *
+     * <p>修的是调用方（改发 {@code userId/role}），契约保持单一；这里顺带把"缺字段"
+     * 变成明确的 400 而不是把 NPE 的原话抛给前端。
+     */
     @PostMapping("/permissions/assign-role")
     public ApiResponse<String> assignRole(@RequestBody Map<String, Object> data) {
         try {
-            Long userId = Long.valueOf(data.get("userId").toString());
-            Integer role = Integer.valueOf(data.get("role").toString());
+            Object rawUserId = data == null ? null : data.get("userId");
+            Object rawRole = data == null ? null : data.get("role");
+            if (rawUserId == null) {
+                throw new IllegalArgumentException("缺少 userId");
+            }
+            if (rawRole == null) {
+                throw new IllegalArgumentException("缺少 role");
+            }
+            Long userId = Long.valueOf(rawUserId.toString());
+            Integer role = Integer.valueOf(rawRole.toString());
+            if (role < 1 || role > 5) {
+                throw new IllegalArgumentException("非法的角色值: " + role);
+            }
             User user = userService.getById(userId);
-            if (user == null) return ApiResponse.notFound("用户不存在");
+            if (user == null) {
+                // 原来是 `return ApiResponse.notFound("用户不存在")` —— 它回的是
+                // **HTTP 200 + body code 404**（`ApiResponse.notFound` 只是设了 body 里的 code）。
+                // 同一个方法里"参数错"已经走 400 了，"找不到"却给 200，两套口径。
+                // 抛出去由 GlobalExceptionHandler 翻成真正的 404（HTTP + body 都是 404）。
+                throw new ResourceNotFoundException("用户不存在: " + userId);
+            }
             user.setRole(role);
             userService.updateById(user);
             return ApiResponse.success("角色分配成功");
+        } catch (IllegalArgumentException | ResourceNotFoundException e) {
+            // 参数错 / 找不到，都不该被下面那个 catch 压成 body code 500：
+            // 抛出去由 GlobalExceptionHandler 翻成 HTTP 400 / 404（body 的 code 也对得上）。
+            throw e;
         } catch (Exception e) {
             log.error("Assign role failed: {}", e.getMessage());
             return ApiResponse.error(e.getMessage());
@@ -3657,22 +4313,42 @@ public class AdminController {
         }
 
         String fileName = "report_custom_" + templateId + "_" + LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss")) + ".xlsx";
-        String filePath = "exports/" + fileName;
+        // 同 generateReportFile：原先是写死的 "exports/" 且从不 mkdirs（首次必 500）。
+        String filePath = exportDir + "/" + fileName;
+        File exportDirFile = new File(exportDir);
+        if (!exportDirFile.exists()) {
+            exportDirFile.mkdirs();
+        }
 
         File templateFile = new File(template.getFilePath());
         if (!templateFile.exists()) {
             throw new RuntimeException("模板文件不存在");
         }
 
+        int writtenRows;
         try (Workbook workbook = WorkbookFactory.create(templateFile)) {
             Sheet sheet = workbook.getSheetAt(0);
-            
-            Row headerRow = sheet.getRow(0);
-            if (headerRow != null) {
-                Row dataRow = sheet.createRow(sheet.getLastRowNum() + 1);
-                dataRow.createCell(0).setCellValue("数据行1");
-                dataRow.createCell(1).setCellValue("数据行2");
-                dataRow.createCell(2).setCellValue("数据行3");
+
+            // 2026-10-01 第二十四轮：这里原先把三格字面量 "数据行1"/"数据行2"/"数据行3"
+            // 追加到用户上传的模板后面 —— 就是把假数据写进一份看起来像真报表的文件里，
+            // 与模板 1-4 那套硬编假数据是同一个病。现在改成按**表头列名**匹配内置报表取数：
+            // 表头与某张内置报表逐字一致时填真实行，认不出来就只输出表头（模板原样），
+            // 绝不编行。用户上传的是一份"表格样式"，本系统没有任何"任意模板 → 数据源"
+            // 的绑定关系，凭空造行只会让下载下来的人以为那是查询结果。
+            List<String> templateHeaders = readHeaderRow(sheet.getRow(0));
+            List<List<String>> data = matchBuiltinReportRows(templateHeaders);
+            int startRow = sheet.getLastRowNum() + 1;
+            for (int i = 0; i < data.size(); i++) {
+                Row row = sheet.createRow(startRow + i);
+                List<String> rowData = data.get(i);
+                for (int j = 0; j < rowData.size(); j++) {
+                    row.createCell(j).setCellValue(rowData.get(j));
+                }
+            }
+            writtenRows = data.size();
+            if (writtenRows == 0) {
+                log.warn("Custom report template {} headers matched no built-in report, output headers only: {}",
+                        templateId, templateHeaders);
             }
 
             try (FileOutputStream fos = new FileOutputStream(filePath)) {
@@ -3680,7 +4356,39 @@ public class AdminController {
             }
         }
 
-        log.info("Report generated with custom template: {}", fileName);
+        log.info("Report generated with custom template: {} ({} rows)", fileName, writtenRows);
         return fileName;
+    }
+
+    /** 取一行里的字符串单元格，用于自定义模板的表头匹配。null 单元格按空串处理。*/
+    private static List<String> readHeaderRow(Row headerRow) {
+        List<String> cells = new ArrayList<>();
+        if (headerRow == null) {
+            return cells;
+        }
+        for (int i = 0; i < headerRow.getLastCellNum(); i++) {
+            Cell cell = headerRow.getCell(i);
+            cells.add(cell == null ? "" : new DataFormatter().formatCellValue(cell).trim());
+        }
+        return cells;
+    }
+
+    /**
+     * 自定义模板的表头若能**逐字**匹配上某张内置报表的表头，就返回那张报表的真实数据行；
+     * 匹配不上返回空（调用方只写表头）。
+     *
+     * <p>刻意用"完全相等"而不是"列名包含"：宽松匹配会把「学号」和「学生ID」这类
+     * 语义不同的列凑到一张表里，产出一份列义对不上的报表 —— 那比不给数据更糟。
+     */
+    private List<List<String>> matchBuiltinReportRows(List<String> templateHeaders) {
+        if (templateHeaders.isEmpty()) {
+            return new ArrayList<>();
+        }
+        for (String templateId : new String[]{"1", "2", "3", "4"}) {
+            if (Arrays.asList(getReportHeaders(templateId)).equals(templateHeaders)) {
+                return getReportData(templateId);
+            }
+        }
+        return new ArrayList<>();
     }
 }

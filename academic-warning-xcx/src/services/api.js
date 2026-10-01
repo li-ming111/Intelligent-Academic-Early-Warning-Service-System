@@ -627,12 +627,15 @@ class ApiClient {
     getDashboard: () => this._get('/admin/dashboard'),
     /**
      * 统计页：在概览之上多了 `totalTeachers, totalCounselors, ruleCount,
-     * redWarnings/yellowWarnings/lowWarnings`，以及两组**恒为 0** 的字段：
-     *   · `changeRates.{user,student,course,warning}ChangeRate` 全是 0
-     *     —— 没有历史快照表，算不出环比。界面上**不能**画成"较上月 +0%"，
-     *     那是在把"没数据"讲成"没有变化"。
-     *   · `todayStats.*` 全是 0 —— 没有写入方（在线人数、今日新增预警都无人统计）。
-     * 这两个卡片的正确呈现是"暂无环比数据 / 今日暂无记录"，或干脆不展示。
+     * redWarnings/yellowWarnings/lowWarnings`。
+     *
+     * ✅ 2026-10-01 第二十四轮更正：这里原本还列着两组**恒为 0** 的字段
+     *   （`changeRates.*ChangeRate` 与 `todayStats.*`），并写着"界面不能画成'较上月 +0%'"。
+     *   那两句描述当时是对的，但**字段现在已经不存在了** —— 后端把这两组整个删掉了：
+     *   `changeRates` 要历史快照表，库里没有；`todayStats` 的 `onlineTeachers/onlineStudents`
+     *   库里没有任何在线状态来源，同时两组字段**全仓零读者**（PC 端只取上面那 12 个 key）。
+     *   零读者 + 无数据源 ⇒ 删，而不是把 0 换个来源继续摆着。
+     *   ⇒ 谁再读 `todayStats`/`changeRates` 会拿到 `undefined`，这是**有意**的。
      */
     getStatistics: () => this._get('/admin/statistics'),
     /**
@@ -649,7 +652,18 @@ class ApiClient {
      *    含义不同，别混用。
      */
     getPendingRequests: () => this._get('/admin/pending-requests'),
-    /** 系统动态。⚠️ **实测恒为 `[]`** —— 没有任何服务往这张表写，页面上如实展示为空。 */
+    /**
+     * 系统动态：最近发生的事，按时间倒序，最多 20 条。
+     * 行形如 `{type, title, description, userName, createdAt}`；
+     * `type` 取 `login | warning | export`。
+     *
+     * ✅ 2026-10-01 第二十四轮更正：此处原写着"**实测恒为 `[]`** —— 没有任何服务往这张表写"。
+     *   那句当时没错（后端那个方法就是 `return success(new ArrayList<>())`），但现在**不再是空的了**：
+     *   改成从 `login_logs`（auth-service 每次登录写一条，41 行）、`academic_warning`、
+     *   `export_history` 三张真有写入方的表里取。`createdAt` 一律是**各表自己的时间列**，
+     *   没有一处用"当前时间"顶替 —— 所以刚打开页面看到的可能是几个月前的登录记录，那是实情。
+     *   刻意不接 `audit_logs`/`security_logs`：这两张都是 0 行且全仓无写入方，接上去只会再造一个恒空。
+     */
     getActivities: () => this._get('/admin/activities'),
 
     // —— 用户 ——

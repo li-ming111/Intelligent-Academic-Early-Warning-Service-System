@@ -312,7 +312,21 @@ public class TeacherController {
             dashboard.put("totalClasses", myClasses.size());
             dashboard.put("pendingRequests", myRequests.size());
             dashboard.put("totalStudents", totalStudents);
-            dashboard.put("pendingFeedbacks", 0);
+            // 2026-10-01 第二十四轮：这里原先是写死的 0，而**同一个文件**的 /todos（下方
+            // pendingFeedbacks 那段）早就有真实统计了 —— 真实现和桩并存，被首页读的是桩，
+            // 于是教师首页「待回复反馈」永远是 0。现在改用同一口径真算：
+            // status==0 即待回复（与 /todos 的判断逐字一致，避免两处口径漂移）。
+            long pendingFeedbacks = 0L;
+            try {
+                List<Feedback> feedbacks = feedbackService.getFeedbacks(teacherId, null);
+                pendingFeedbacks = feedbacks.stream()
+                        .filter(f -> f.getStatus() != null && f.getStatus() == 0)
+                        .count();
+            } catch (Exception e) {
+                // 与上面两段同样的降级口径：取不到就保持 0，但留日志，不静默。
+                log.warn("获取待回复反馈数失败(降级): {}", e.getMessage());
+            }
+            dashboard.put("pendingFeedbacks", pendingFeedbacks);
             dashboard.put("totalCourses", totalCourses);
             dashboard.put("teacherName", teacherName);
             

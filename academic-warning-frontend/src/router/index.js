@@ -6,7 +6,6 @@ import Scores from '../views/Scores.vue'
 import Warnings from '../views/Warnings.vue'
 import Assistance from '../views/Assistance.vue'
 import Appeals from '../views/Appeals.vue'
-import Messages from '../views/Messages.vue'
 import Settings from '../views/Settings.vue'
 import Statistics from '../views/Statistics.vue'
 import NotificationCenter from '../views/student/NotificationCenter.vue'
@@ -111,13 +110,20 @@ const routes = [
         component: Appeals,
         meta: { requiresAuth: true }
       },
+      // 2026-10-01 第二十四轮：这里原来是 `Messages.vue`（一个坏掉的重复页）。
+      // 学生端有**两个**通知页，同一个数据源（notifications 表）：
+      //   · `Messages.vue`        —— 菜单里的「消息中心」，但三种功能两死一空（见下）
+      //   · `student/NotificationCenter.vue` —— 功能完整，却是**孤儿页**（全仓没有任何
+      //     链接指过来，只有本文件这行路由），而学生「订阅偏好」的设置只在这页上
+      //   ⇒ 收敛成一个：菜单的「消息中心」直接渲染功能完整的那个。
+      // 实测过的坏处（`testsprite/local-check/student-messages-probe.mjs`）：
+      //   ① 点开消息不发任何请求、未读数 2 → 2（`viewDetail` 判 `m.status === 0`，
+      //      而后端返回的键是 `isRead`，判据恒假 ⇒ 标记已读从来没被调用过）
+      //   ② 就算调到了，它打的 `POST /students/messages/{id}/mark-read` 无 handler（403）
+      //   ③ 「发送消息」三重全断：教师下拉 `GET /api/teachers/list` 学生 403（网关前缀鉴权）、
+      //      `POST /students/messages` 无 handler、且全仓没有任何"学生写的消息"的收件方
       {
         path: 'messages',
-        component: Messages,
-        meta: { requiresAuth: true }
-      },
-      {
-        path: 'notification-center',
         component: NotificationCenter,
         meta: { requiresAuth: true }
       },

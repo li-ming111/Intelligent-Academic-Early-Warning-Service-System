@@ -21,16 +21,21 @@
             <div v-if="roles.length === 0" style="padding: 20px; text-align: center; color: #999;">
               暂无角色数据
             </div>
-            <el-table v-else :data="roles" stripe>
+            <!-- 2026-10-01 第二十四轮：补 @selection-change。
+                 此前三张表都摆了 selection 列却**没有一个把选中项写回 ref**
+                 ⇒ selectedRoles 恒为 []，下面「已选择 N 项 / 批量删除」那块**永远不渲染**，
+                 batchDeleteRoles 里那句"请先选择要删除的角色"永远不可能被触发。 -->
+            <el-table v-else :data="roles" stripe @selection-change="selectedRoles = $event">
               <el-table-column type="selection" width="55" />
               <el-table-column prop="id" label="角色ID" width="100" sortable></el-table-column>
               <el-table-column prop="name" label="角色名称" width="120"></el-table-column>
               <el-table-column prop="description" label="角色描述" min-width="200" show-overflow-tooltip></el-table-column>
               <el-table-column label="权限数" width="100">
                 <template #default="{ row }">
-                  <!-- 必须兜底：/admin/permissions/roles 返回的角色对象是
-                       {id,name,code,description,status,createdAt,updatedAt}，**没有 permissions 字段**，
-                       直接 .length 会抛 TypeError 把整页渲染打断（下面用户表那处本来就有 v-if 守卫，这里漏了）。 -->
+                  <!-- `|| []` 保留兜底：后端 2026-10-01 起确实会回 permissions（角色绑定权限码），
+                       但接口拿不到或报了错时 row.permissions 会是 undefined，直接 .length 会抛
+                       TypeError 把整页渲染打断。兜底留着，注释改成与新契约一致。 -->
+
                   <el-tag type="success">{{ (row.permissions || []).length }}</el-tag>
                 </template>
               </el-table-column>
@@ -63,7 +68,7 @@
             </div>
           </el-card>
 
-          <el-button type="primary" @click="showCreateRoleDialog = true">
+          <el-button type="primary" @click="openCreateRoleDialog">
             <el-icon><Plus /></el-icon> 创建新角色
           </el-button>
         </div>
@@ -103,11 +108,14 @@
               <el-table-column prop="name" label="姓名" width="120"></el-table-column>
               <el-table-column label="当前角色" width="150">
                 <template #default="{ row }">
+                  <!-- 5 = 学院管理员（活库 users.role 真有 5 的账号）。原来只有 1-4，
+                       这些账号的下拉会显示不出当前值。 -->
                   <el-select v-model="row.role" size="small" @change="updateUserRole(row)">
                     <el-option :value="1" label="学生"></el-option>
                     <el-option :value="2" label="教师"></el-option>
                     <el-option :value="3" label="辅导员"></el-option>
                     <el-option :value="4" label="管理员"></el-option>
+                    <el-option :value="5" label="学院管理员"></el-option>
                   </el-select>
                 </template>
               </el-table-column>
@@ -174,14 +182,18 @@
               <el-table-column prop="name" label="权限名称" min-width="150"></el-table-column>
               <el-table-column label="适用角色" min-width="250">
                 <template #default="{ row }">
+                  <!-- 2026-10-01 第二十四轮：原来调 getApplicableRoles(row.code)，
+                       那张映射表的键是 view_scores / manage_students / manage_all…
+                       而活库 permissions 的 9 个码全是 PERM_* ⇒ 两边一个都对不上，
+                       这一列 9 行全空。现在读后端从 role_permissions 真查出来的 roleCodes。 -->
                   <div>
                     <el-tag
-                      v-for="role in getApplicableRoles(row.code)"
-                      :key="role"
+                      v-for="rc in (row.roleCodes || [])"
+                      :key="rc"
                       size="small"
                       style="margin: 2px;"
                     >
-                      {{ role }}
+                      {{ roleCodeName(rc) }}
                     </el-tag>
                   </div>
                 </template>
@@ -225,8 +237,12 @@
       </div>
     </el-dialog>
 
-    <!-- 创建角色对话框 -->
-    <el-dialog v-model="showCreateRoleDialog" title="创建新角色" width="600px">
+    <!-- 创建 / 编辑角色对话框。编辑复用同一个弹窗，靠 editingRoleId 区分。 -->
+    <el-dialog
+      v-model="showCreateRoleDialog"
+      :title="editingRoleId ? '编辑角色' : '创建新角色'"
+      width="600px"
+    >
       <el-form :model="newRole" label-width="100px">
         <el-form-item label="角色名称" prop="name">
           <el-input v-model="newRole.name" placeholder="输入角色名称"></el-input>
@@ -243,8 +259,10 @@
         </el-form-item>
       </el-form>
       <template #footer>
-        <el-button @click="showCreateRoleDialog = false">取消</el-button>
-        <el-button type="primary" @click="createRole">创建</el-button>
+        <el-button @click="closeRoleDialog">取消</el-button>
+        <el-button type="primary" :loading="roleSaving" @click="createRole">
+          {{ editingRoleId ? '保存' : '创建' }}
+        </el-button>
       </template>
     </el-dialog>
 
@@ -283,7 +301,6 @@ const selectedUsers = ref([])
 const selectedPermissions = ref([])
 const deleteDialogVisible = ref(false)
 const deleteLoading = ref(false)
-const deleteCount = ref(0)
 
 const permissionDetailVisible = ref(false)
 const selectedUser = ref(null)
@@ -294,6 +311,13 @@ const newRole = ref({
   description: '',
   permissions: []
 })
+/** 非空 = 弹窗处于编辑模式（值是角色 id）；null = 新建模式。 */
+const editingRoleId = ref(null)
+const roleSaving = ref(false)
+/** 待删除的角色 id 列表（单个删除 = 长度 1，批量删除 = 勾选的那几个）。 */
+const pendingDeleteIds = ref([])
+/** 删除弹窗里显示的"选中 N 项"。**算出来的**，不是另存一份（存两份必然漂移）。 */
+const deleteCount = computed(() => pendingDeleteIds.value.length)
 
 const availablePermissions = ref([])
 
@@ -378,13 +402,18 @@ const searchUsers = () => {
 // 更新用户角色
 const updateUserRole = async (user) => {
   try {
+    // ⚠️ 契约是 {userId, role}。这里原来发的是 {user_id, role_id}，后端
+    //    `data.get("userId").toString()` 直接 NPE，被 catch 吞成 body code 500
+    //    ⇒ 这一格下拉从来就没保存成功过（用户看到"更新角色失败"）。
     await adminAPI.assignRole({
-      user_id: user.id,
-      role_id: user.role
+      userId: user.id,
+      role: user.role
     })
     ElMessage.success('角色已更新')
   } catch (error) {
-    ElMessage.error('更新角色失败')
+    ElMessage.error(error?.message || '更新角色失败')
+    // 回滚本地显示：下拉已经改成新值了，但后端没收下，界面不能比库里"新"。
+    await loadUsers()
   }
 }
 
@@ -412,40 +441,60 @@ const viewUserPermissions = async (user) => {
   }
 }
 
-// 获取角色名称
+// 获取角色名称（users.role 是数值：1学生 2教师 3辅导员 4管理员 5学院管理员）
 const getRoleName = (roleId) => {
   const roleMap = {
     1: '学生',
     2: '教师',
     3: '辅导员',
-    4: '管理员'
+    4: '管理员',
+    5: '学院管理员'
   }
   return roleMap[roleId] || '未知'
 }
 
-// 获取权限适用的角色
-const getApplicableRoles = (permCode) => {
-  const mapping = {
-    'view_scores': ['学生', '教师'],
-    'view_warnings': ['学生', '教师', '辅导员'],
-    'submit_appeals': ['学生'],
-    'submit_feedback': ['学生', '教师'],
-    'manage_students': ['辅导员'],
-    'manage_warnings': ['辅导员'],
-    'view_analytics': ['教师', '辅导员'],
-    'manage_all': ['管理员']
+/** 角色码 → 中文名。角色码取自 /admin/permissions/roles 的 code（ROLE_*），
+    名字以**后端 roles.name 为准**，取不到才退回这张兜底表。 */
+const roleCodeName = (code) => {
+  const hit = roles.value.find(r => r.code === code)
+  if (hit && hit.name) return hit.name
+  const fallback = {
+    ROLE_STUDENT: '学生',
+    ROLE_TEACHER: '教师',
+    ROLE_COUNSELOR: '辅导员',
+    ROLE_ADMIN: '管理员'
   }
-  return mapping[permCode] || []
+  return fallback[code] || code
 }
 
-// 编辑角色
+// 打开「创建新角色」弹窗（清空上一次编辑留下的内容，回到新建模式）
+const openCreateRoleDialog = () => {
+  editingRoleId.value = null
+  newRole.value = { name: '', description: '', permissions: [] }
+  showCreateRoleDialog.value = true
+}
+
+const closeRoleDialog = () => {
+  showCreateRoleDialog.value = false
+  editingRoleId.value = null
+  newRole.value = { name: '', description: '', permissions: [] }
+}
+
+// 编辑角色：复用同一个弹窗，预填当前值后进入编辑模式
 const editRole = (role) => {
-  ElMessage.info('编辑功能开发中...')
+  editingRoleId.value = role.id
+  newRole.value = {
+    name: role.name || '',
+    description: role.description || '',
+    // row.permissions 是后端新补的权限码数组（没有时兜底空数组，否则 checkbox-group 会拿到 undefined）
+    permissions: Array.isArray(role.permissions) ? [...role.permissions] : []
+  }
+  showCreateRoleDialog.value = true
 }
 
-// 删除角色
+// 删除角色（单个）
 const deleteRole = (roleId) => {
-  deleteCount.value = 1
+  pendingDeleteIds.value = [roleId]
   deleteDialogVisible.value = true
 }
 
@@ -455,7 +504,7 @@ const batchDeleteRoles = () => {
     ElMessage.warning('请先选择要删除的角色')
     return
   }
-  deleteCount.value = selectedRoles.value.length
+  pendingDeleteIds.value = selectedRoles.value.map(r => r.id)
   deleteDialogVisible.value = true
 }
 
@@ -464,7 +513,11 @@ const editPermission = (permission) => {
   ElMessage.info('编辑功能开发中...')
 }
 
-// 创建角色
+// 创建 / 保存角色
+//
+// 2026-10-01 第二十四轮：此前这里只有一句 `ElMessage.success('角色已创建')` 就完事 ——
+// **没有任何 API 调用**，弹窗关了、列表刷新了，库里一行没多（假成功）。
+// 现在真打后端：新建 POST /admin/permissions/roles，编辑 PUT /admin/permissions/roles/{id}。
 const createRole = async () => {
   if (!newRole.value.name) {
     ElMessage.error('请输入角色名称')
@@ -475,22 +528,64 @@ const createRole = async () => {
     return
   }
 
-  ElMessage.success('角色已创建')
-  showCreateRoleDialog.value = false
-  newRole.value = { name: '', description: '', permissions: [] }
-  await loadRoles()
+  roleSaving.value = true
+  try {
+    const payload = {
+      name: newRole.value.name,
+      description: newRole.value.description,
+      permissions: newRole.value.permissions
+    }
+    if (editingRoleId.value) {
+      await adminAPI.updateRole(editingRoleId.value, payload)
+      ElMessage.success('角色已更新')
+    } else {
+      await adminAPI.createRole(payload)
+      ElMessage.success('角色已创建')
+    }
+    closeRoleDialog()
+    await loadRoles()
+  } catch (error) {
+    // 后端把"名称重复/权限码不存在"翻成 400，message 里就是原因，直接透出来
+    ElMessage.error(error?.message || (editingRoleId.value ? '更新角色失败' : '创建角色失败'))
+  } finally {
+    roleSaving.value = false
+  }
 }
 
 // 确认删除
+//
+// 原来这里是 `ElMessage.info('删除功能开发中...')` —— 一个明确的未实现桩。
+// 现在逐个调后端；**部分失败不假装全成功**：成功的算成功，失败的把后端原话报出来。
 const confirmDelete = async () => {
-  deleteLoading.value = true
-  try {
-    ElMessage.info('删除功能开发中...')
+  if (pendingDeleteIds.value.length === 0) {
     deleteDialogVisible.value = false
-  } catch (error) {
-    ElMessage.error('删除失败')
+    return
+  }
+  deleteLoading.value = true
+  const ids = [...pendingDeleteIds.value]
+  const failed = []
+  try {
+    for (const id of ids) {
+      try {
+        await adminAPI.deleteRole(id)
+      } catch (error) {
+        const name = roles.value.find(r => r.id === id)?.name || `#${id}`
+        failed.push(`${name}：${error?.message || '删除失败'}`)
+      }
+    }
+    if (failed.length === 0) {
+      ElMessage.success(`已删除 ${ids.length} 个角色`)
+    } else if (failed.length === ids.length) {
+      ElMessage.error(failed.join('；'))
+    } else {
+      ElMessage.warning(`删除 ${ids.length - failed.length} 个，失败 ${failed.length} 个 —— ${failed.join('；')}`)
+    }
+    deleteDialogVisible.value = false
+    selectedRoles.value = []
+    await loadRoles()
   } finally {
     deleteLoading.value = false
+    pendingDeleteIds.value = []
   }
 }
 

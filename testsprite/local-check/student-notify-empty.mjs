@@ -1,4 +1,7 @@
-// 学生「通知中心」到底是"没有通知"还是"拿到了却没渲染"—— 这条要能区分开。
+// 学生「消息中心」到底是"没有通知"还是"拿到了却没渲染"—— 这条要能区分开。
+//
+// ⚠️ 2026-10-01 第二十四轮：该页从 `/student/notification-center`(孤儿路由) 挪到了
+//   `/student/messages`(菜单里的「消息中心」)，下面导航的地址已跟着改。功能没变。
 //
 // 起因：读代码发现 `views/student/NotificationCenter.vue` 里 11 处判的是
 //   if (response.data?.code === 200) { this.xxx = response.data.data || [] }
@@ -118,7 +121,7 @@ const main = async () => {
   console.log(`已登录 ${USER} → ${path}\n`)
 
   api.length = 0
-  await send('Page.navigate', { url: `${APP}/student/notification-center` })
+  await send('Page.navigate', { url: `${APP}/student/messages` })
   await sleep(5000)
 
   // 读页面当前状态。判"空"不能靠 .el-empty —— Element 的表格空态是
@@ -176,6 +179,22 @@ const main = async () => {
   const unreadSummary = unreadListCall ? (bodies.get(unreadListCall.reqId) || '') : ''
   const unreadItems = Number((unreadSummary.match(/数组，(\d+) 条/) || [])[1] ?? NaN)
   const okStatus = notifyCalls.every((c) => c.status === 200)
+
+  // 可选：点一次「标记已读」，看这条链是不是真的写库（改前它的前身页 0 请求）。
+  // 会用掉一条未读，调用方自己复原。
+  if (process.argv[4] === 'read') {
+    console.log('===== 点「标记已读」=====')
+    api.length = 0
+    const clicked = await evaluate(`(() => {
+      const b = [...document.querySelectorAll('button')].find(e => e.textContent.trim() === '标记已读')
+      if (!b) return false
+      b.click(); return true
+    })()`)
+    await sleep(3500)
+    for (const c of api) console.log(`  [${c.status}] ${c.url}`)
+    const after = await readPage()
+    console.log(`  点击=${clicked}  点后未读标签=${after.unreadLabel} 共N条=${after.totalLabel}`)
+  }
 
   console.log('\n===== 判定 =====')
   console.log(`  接口状态        ${okStatus ? '全部 200' : '有非 200：' + notifyCalls.filter((c) => c.status !== 200).map((c) => c.status + ' ' + c.url).join(', ')}`)

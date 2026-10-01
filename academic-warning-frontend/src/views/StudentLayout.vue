@@ -187,7 +187,6 @@ const pageMap = {
   '/student/assistance': '帮扶信息',
   '/student/appeals': '成绩申诉',
   '/student/messages': '消息中心',
-  '/student/notification-center': '通知公告',
   '/student/benchmark-analysis': '对标分析',
   '/student/assistance-feedback': '帮扶反馈',
   '/student/class-members': '班级成员',

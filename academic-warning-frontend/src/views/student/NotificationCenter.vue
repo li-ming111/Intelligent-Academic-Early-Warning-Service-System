@@ -130,6 +130,15 @@
 <script>
 import { studentAPI } from '@/api'
 
+// 订阅设置的 9 个键，顺序与后端 `StudentServiceImpl.SUBSCRIPTION_KEYS` 一致。
+// 页面里一律用**布尔**（el-checkbox 只认 `modelValue === trueValue`），
+// 与后端交换时用 1/0（loadPreferences / savePreferences 各转一次）。
+const SUBSCRIPTION_KEYS = [
+  'subscribeWarnings', 'subscribeLow', 'subscribeMedium', 'subscribeHigh',
+  'subscribeAssistance', 'subscribeSystem',
+  'pushEmail', 'pushSms', 'pushApp'
+]
+
 export default {
   name: 'NotificationCenter',
   data() {
@@ -139,15 +148,15 @@ export default {
       unreadNotifications: [],
       allNotifications: [],
       preferences: {
-        subscribeWarnings: 1,
-        subscribeLow: 1,
-        subscribeMedium: 1,
-        subscribeHigh: 1,
-        subscribeAssistance: 1,
-        subscribeSystem: 1,
-        pushEmail: 1,
-        pushSms: 0,
-        pushApp: 1
+        subscribeWarnings: true,
+        subscribeLow: true,
+        subscribeMedium: true,
+        subscribeHigh: true,
+        subscribeAssistance: true,
+        subscribeSystem: true,
+        pushEmail: true,
+        pushSms: false,
+        pushApp: true
       },
       currentPage: 1,
       pageSize: 10,
@@ -221,7 +230,17 @@ export default {
           return
         }
         if (res && typeof res === 'object') {
-          Object.assign(this.preferences, res)
+          // ⚠️ 2026-10-01 第二十四轮：必须**转成布尔**再绑给 el-checkbox。
+          // 库和后端给的都是 1/0，而 `el-checkbox` 判的是 `modelValue === trueValue`
+          // （trueValue 默认就是 `true`），`1 === true` 是 false ⇒ **九个勾全部显示为未勾选**，
+          // 与库里的实际设置完全相反（实测司明：medium/high/assistance/system/pushApp/pushEmail
+          // 库里都是 1，页面上却一个都没勾）。这类"数据全对、只有控件状态错"用接口核不出来，
+          // 必须看渲染。下面 savePreferences 再转回 1/0，保持进出同一种表示。
+          for (const k of SUBSCRIPTION_KEYS) {
+            if (res[k] !== undefined && res[k] !== null) {
+              this.preferences[k] = Number(res[k]) === 1
+            }
+          }
         }
       } catch (error) {
         console.warn('加载订阅偏好失败', error)
@@ -254,10 +273,14 @@ export default {
           this.$message.error('未找到学生档案，无法保存订阅设置')
           return
         }
-        // el-checkbox 的 v-model 写出来的是**布尔**，而库里是 1/0 —— 后端两种都收
+        // el-checkbox 的 v-model 是**布尔**，库里是 1/0 —— 后端两种都收
         // （改前后端是 `(Integer) pref.get(...)` 硬转，收到 true 直接 ClassCastException，
         //   而页面又用死分支读响应，所以"保存设置"一直是个静默失败）。
-        const res = await studentAPI.updateSubscriptionPreferences(profileId, this.preferences)
+        // 这里显式转回 1/0：读回来的和写进去的用同一种表示，避免"存了 true、读回 1"
+        // 这种两边都对但看着像不一致的状态。
+        const payload = {}
+        for (const k of SUBSCRIPTION_KEYS) payload[k] = this.preferences[k] ? 1 : 0
+        const res = await studentAPI.updateSubscriptionPreferences(profileId, payload)
         if (res && res.success === false) {
           this.$message.error(res.message || '保存设置失败')
           return
@@ -357,10 +380,29 @@ export default {
       return date.toLocaleString('zh-CN')
     },
 
+    /**
+     * 通知类型文案。
+     *
+     * ⚠️ 2026-10-01 第二十四轮：这张表原来只有 `warning / plan_update / system_message`
+     * 三个键，而 **`notifications.type` 里真实出现过的值是 `warning` 和 `system`，
+     * 唯一的写入方 `counselor-service` 写的是 `warning / important / normal`**
+     * （见 `CounselorNotificationServiceImpl` 把 `category` 直接 `setType(category)`，
+     * 取值来自 `CounselorNotifications.vue` 的 typeOptions）。
+     * 于是学生页面上辅导员发的「重要通知」「普通通知」会原样显示成 `important` / `normal`，
+     * 一条 `system` 显示成 `system` —— 只有 `warning` 恰好命中。
+     * 现在按**写入方的词表**对齐，旧键保留作兼容别名。改这里的话，
+     * 那边的 typeOptions 也要一起看。
+     */
     getTypeLabel(type) {
       const labels = {
+        // 写入方（辅导员群发）的三个取值
         warning: '预警通知',
+        important: '重要通知',
+        normal: '普通通知',
+        // 其它实际存在的取值
+        system: '系统消息',
         plan_update: '帮扶更新',
+        // 兼容别名
         system_message: '系统消息'
       }
       return labels[type] || type
@@ -369,6 +411,9 @@ export default {
     getTypeTagType(type) {
       const types = {
         warning: 'danger',
+        important: 'warning',
+        normal: 'info',
+        system: 'info',
         plan_update: 'success',
         system_message: 'info'
       }

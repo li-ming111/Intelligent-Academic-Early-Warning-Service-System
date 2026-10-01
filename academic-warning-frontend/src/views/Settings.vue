@@ -61,29 +61,20 @@
         <el-card>
           <template #header><span class="ss-card-title">隐私设置</span></template>
           <el-form :model="privacy" label-width="140px">
+            <!-- 2026-10-01 第二十四轮：这一栏原来有 4 个控件，只有第 1 个真的会存下来。
+                 删掉的 3 个都是"点了、提示成功、什么都没发生"：
+                   · 个人信息可见范围 —— `privacy_level` 只有**一列**，没有第二个可见范围可存
+                   · 预警通知         —— 真正的开关在「消息中心 → 订阅偏好」（subscription_preferences）
+                   · 学业数据共享     —— 全仓没有任何列/接口接这个值
+                 保留的这一个是真写到 `student_profile.privacy_level` 的，但要说清它
+                 **只是存了个偏好**：全仓没有任何读它来做可见性判断的地方（grep 过）。 -->
             <el-form-item label="成绩可见范围">
               <el-radio-group v-model="privacy.scoreVis">
                 <el-radio-button value="0">公开</el-radio-button>
                 <el-radio-button value="1">仅教师</el-radio-button>
                 <el-radio-button value="2">私密</el-radio-button>
               </el-radio-group>
-              <div style="font-size:12px;color:#94a3b8;margin-top:4px">控制谁可以查看你的成绩数据</div>
-            </el-form-item>
-            <el-form-item label="个人信息可见范围">
-              <el-radio-group v-model="privacy.profileVis">
-                <el-radio-button value="0">公开</el-radio-button>
-                <el-radio-button value="1">学院内</el-radio-button>
-                <el-radio-button value="2">仅自己</el-radio-button>
-              </el-radio-group>
-              <div style="font-size:12px;color:#94a3b8;margin-top:4px">控制谁可以查看你的个人资料</div>
-            </el-form-item>
-            <el-form-item label="预警通知">
-              <el-switch v-model="privacy.warnNotify" />
-              <span style="margin-left:10px;font-size:12px;color:#94a3b8">允许通过邮件/短信接收预警通知</span>
-            </el-form-item>
-            <el-form-item label="学业数据共享">
-              <el-switch v-model="privacy.feedbackShare" />
-              <span style="margin-left:10px;font-size:12px;color:#94a3b8">允许系统分析你的学业数据</span>
+              <div style="font-size:12px;color:#94a3b8;margin-top:4px">保存到你的学生档案；预警订阅在「消息中心」里设置</div>
             </el-form-item>
             <el-form-item>
               <el-button type="primary" @click="savePrivacy">保存设置</el-button>
@@ -139,7 +130,7 @@ const userInfo = reactive({ studentId:'', name:'', className:'', email:'', phone
 const profileLoaded = ref(false)
 const entranceYear = computed(() => (userInfo.studentId || '').substring(0,4) || '--')
 const pw = reactive({ old:'', newPw:'', confirm:'' })
-const privacy = reactive({ scoreVis:'1', profileVis:'1', warnNotify:true, feedbackShare:true })
+const privacy = reactive({ scoreVis:'1' })
 const logs = ref([])
 
 onMounted(async () => { await loadInfo() })
