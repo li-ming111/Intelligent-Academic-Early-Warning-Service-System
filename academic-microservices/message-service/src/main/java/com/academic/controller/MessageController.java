@@ -112,15 +112,31 @@ public class MessageController {
         return ApiResponse.success("消息已删除");
     }
     
-    /**
-     * 删除用户相关的所有消息（供admin-service调用）
-     */
-    @DeleteMapping("/user/{userId}")
-    public ApiResponse<String> deleteMessagesByUserId(@PathVariable Long userId) {
-        log.info("Delete all messages for user: {}", userId);
-        messageService.deleteMessagesByUserId(userId);
-        return ApiResponse.success("用户消息已删除");
-    }
+    // ==================== 这里原来有 `DELETE /user/{userId}`（2026-10-01 删） ====================
+    //
+    // 它删掉的是 `messages` 里 `sender_id = ? OR receiver_id = ?` 命中该账号的行。
+    // 删它的理由有两层，任一层单独成立就够：
+    //
+    //   1) **零调用方。** 它当初的 javadoc 写着"供 admin-service 调用"，而那次调用
+    //      （admin-service `AdminController.deleteUser` 里清站内信）已于 2026-09-30 删除 ——
+    //      因为 `deleteUser` 现在先跑 `UserMapper.countReferences`，其中就有一项是
+    //      `messages` 的同一个谓词，有任何一行就直接拒绝删除。也就是说能走到那次 Feign 调用的
+    //      账号，messages 必然是 0 行，那个调用是空操作，只会在 message-service 没起时
+    //      白白阻塞到超时（实测 12.1 秒）。调用方一删，这个端点 + Feign 方法 + fallback 实现
+    //      就一起成了死代码。
+    //
+    //   2) **它是本控制器里少数不做归属校验的端点之一。** 本文件另外 5 个端点
+    //      （`GET /`、`GET /unread/count`、`PUT /read/all`、`GET /{userId}`、
+    //      `GET /{userId}/unread-count`）开头都是同一句"非管理员只能操作自己的 userId"，
+    //      而这个端点**路径里直接收一个 userId，一个校验都不做**就往下删。
+    //      网关那层也不拦：`/api/messages/**` 不匹配任何受限前缀，`hasPermission`
+    //      对 role 1/2/3 一路落到末尾 `return true`。
+    //      ⇒ 留着它，等于留一条"有 token 就能删别人全部消息"的写口，而它又没有任何调用方。
+    //
+    // 同批没有动的：本文件另外 8 个映射也没有归属校验（`GET /detail/{id}`、`POST /`、
+    // `PUT /{id}/read`、`DELETE /{id}`、`POST /send`、`POST /{id}/mark-read`、`POST /broadcast`
+    // 等），但它们与这条不同 —— 要么是 id 型（收的是消息 id 不是用户 id），
+    // 要么 admin-service 正在用。**没有调用方佐证意图的那几个，改之前要先决定这条面还留不留。**
 
     @GetMapping("/unread/count")
     public ApiResponse<Long> getUnreadCount(@RequestParam Long userId,

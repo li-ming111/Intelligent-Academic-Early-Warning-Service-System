@@ -263,12 +263,9 @@ public class MessageServiceImpl implements MessageService {
         }
     }
 
-    @Override
-    public void deleteMessagesByUserId(Long userId) {
-        log.info("Deleting all messages for user: {}", userId);
-        QueryWrapper<Message> queryWrapper = new QueryWrapper<>();
-        queryWrapper.eq("sender_id", userId).or().eq("receiver_id", userId);
-        messageMapper.delete(queryWrapper);
-        log.info("Deleted messages for user: {}", userId);
-    }
+    // deleteMessagesByUserId(Long) 已删（2026-10-01）：唯一调用方
+    // （`MessageController` 的 `DELETE /user/{userId}`）一并删了。
+    // ⚠️ 它当初的谓词 `sender_id = ? OR receiver_id = ?` 仍活在 admin-service
+    //    `UserMapper.countReferences` 里（那才是"删账号前先看被什么挡住"的判据），
+    //    所以这条 SQL 的语义没有丢，只是不再有"单独清某个用户全部消息"的入口。
 }

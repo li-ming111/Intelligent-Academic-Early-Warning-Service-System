@@ -39,11 +39,7 @@ public class MessageServiceFallback implements MessageServiceClient {
         return ApiResponse.error("消息服务不可用，无法发送消息");
     }
 
-    @Override
-    public ApiResponse<String> deleteMessagesByUserId(Long userId) {
-        log.warn("message-service is unavailable, cannot delete messages for user: {}", userId);
-        return ApiResponse.error("消息服务不可用，无法删除消息");
-    }
+    // deleteMessagesByUserId 的降级实现已随接口方法一起删除（2026-10-01）。
 
     @Override
     public ApiResponse<String> deleteMessageById(Long id) {

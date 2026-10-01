@@ -46,13 +46,12 @@ public interface MessageServiceClient {
             @RequestBody Map<String, Object> messageData
     );
 
-    /**
-     * 删除用户相关的所有消息
-     */
-    @DeleteMapping("/api/messages/user/{userId}")
-    ApiResponse<String> deleteMessagesByUserId(
-            @PathVariable Long userId
-    );
+    // 这里原来有 `deleteMessagesByUserId`（`DELETE /api/messages/user/{userId}`，2026-10-01 删）。
+    // 它的唯一调用方是 `AdminController.deleteUser` 里清站内信那一步，而那次调用已于 2026-09-30 删除
+    // （`deleteUser` 现在先跑 `countReferences`，其中就有同一个 `messages` 谓词，
+    //  有行就直接拒绝删除 ⇒ 能走到那一步时它必然是空操作，只会在 message-service
+    //  没起时阻塞到 Feign 超时）。调用方没了，方法就跟着删 —— 顺带消掉 message-service
+    //  那边一条不做归属校验的写端点（详见 `MessageController` 里的说明）。
 
     /**
      * 根据ID删除单条消息

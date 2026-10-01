@@ -33,5 +33,6 @@ public interface MessageService {
     List<Message> getUnreadMessages(Long userId);
     void markAllAsRead(Long userId);
     void sendMessage(Long userId, String content, String type);
-    void deleteMessagesByUserId(Long userId);
+    // deleteMessagesByUserId(Long userId) 已删（2026-10-01）：它的唯一调用方
+    // （`MessageController` 的 `DELETE /user/{userId}`）也一并删了，见那边的说明。
 }
