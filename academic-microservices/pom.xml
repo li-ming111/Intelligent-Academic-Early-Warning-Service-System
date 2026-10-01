@@ -147,7 +147,6 @@
         <module>warning-service</module>
         <module>gateway-service</module>
         <module>ai-service</module>
-        <module>resource-service</module>
         <module>user-service</module>
     </modules>
 

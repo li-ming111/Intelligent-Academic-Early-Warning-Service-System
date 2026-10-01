@@ -26,7 +26,6 @@
 | `/api/colleges/**` | college-service | 1 | |
 | `/api/messages/**` | message-service | 1 | ⚠️ 见 §5 |
 | `/api/warnings/**` | warning-service | 1 | |
-| `/api/resources/**` | resource-service | 1 | |
 | `/api/roles/**`、`/api/permissions/**`、`/api/role-permissions/**` | auth-service | 1 | |
 | `/api/ai/**` | ai-service | 1 | |
 | `/api/auth/colleges`、`/api/auth/majors` | college-service | 2 + Rewrite | 特例 |

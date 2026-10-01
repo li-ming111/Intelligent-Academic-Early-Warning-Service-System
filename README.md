@@ -196,7 +196,6 @@ ABS/
 │   ├── warning-service/          # 预警服务 (8093)
 │   ├── user-service/             # 用户服务 (8092)
 │   ├── message-service/          # 消息服务 (8077)
-│   ├── resource-service/         # 资源服务 (8078)
 │   ├── ai-service/               # AI服务 (8071)
 │   └── academic-common/          # 公共模块
 │

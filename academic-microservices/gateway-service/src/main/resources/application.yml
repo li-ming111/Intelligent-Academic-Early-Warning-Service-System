@@ -142,12 +142,6 @@ spring:
             - Path=/api/counselors/**
           filters:
             - StripPrefix=1
-        - id: resource-service
-          uri: lb://resource-service
-          predicates:
-            - Path=/api/resources/**
-          filters:
-            - StripPrefix=1
         - id: warning-service
           uri: lb://warning-service
           predicates:
