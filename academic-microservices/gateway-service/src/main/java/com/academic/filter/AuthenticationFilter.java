@@ -329,6 +329,16 @@ public class AuthenticationFilter implements GlobalFilter, Ordered {
         //    网关白名单只是"放进来"而已，不是"管住"。
 
         // RBAC 细粒度校验（有 RBAC 数据时才生效）
+        //
+        // ⚠️ 2026-10-01 第十六轮查证：`hasRbacData()` **恒为 false**
+        //    （RolePermissionCache 的拉取必 403，且失败后无重试、无刷新），
+        //    所以**下面这个块从来没有执行过** —— 网关实际生效的只有上面的路径前缀层。
+        //
+        // ⚠️ 别为了"让 RBAC 生效"去放开 /role-permissions/** 的匿名访问：
+        //    角色码（库 ROLE_STUDENT vs 代码 "student"）与权限码
+        //    （库 PERM_STUDENT_VIEW vs 代码 "student:read"）两处都不匹配，
+        //    RBAC 一旦真的加载进来，会反过来 403 掉 role 1/2/3 的**全部业务接口**。
+        //    详见 RolePermissionCache 类注释与手册 §6.16。
         if (rbacCache.hasRbacData()) {
             String permissionCode = buildPermissionCode(path, method);
             if (permissionCode != null) {
