@@ -3551,26 +3551,14 @@ public class AdminController {
     // 密码查看接口已移除（安全原因：不应暴露密码哈希）
     // 密码重置通过 /users/{id}/reset-password 接口，新密码仅通过安全渠道告知
 
-    // ==================== P0新增：管理员注册（转发到auth-service） ====================
-    @PostMapping("/register")
-    public ApiResponse<Map<String, Object>> registerAdmin(@RequestBody Map<String, Object> data) {
-        try {
-            User user = new User();
-            user.setUsername((String) data.get("username"));
-            user.setPassword(passwordEncoder.encode((String) data.get("password")));
-            user.setName((String) data.getOrDefault("name", data.get("username")));
-            user.setRole(4); // admin
-            user.setStatus(1);
-            userService.save(user);
-            Map<String, Object> result = new HashMap<>();
-            result.put("userId", user.getId());
-            result.put("message", "管理员注册成功");
-            return ApiResponse.success(result);
-        } catch (Exception e) {
-            log.error("Register admin failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
-        }
-    }
+    // ==================== 管理员建号 ====================
+    // ⚠️ 2026-10-01 删掉了 `POST /admin/register`。它当初的注释写着"转发到 auth-service",
+    //    实际是**自己 new 一个 User 存库**、`userService.save(user)` 直写 users 表:
+    //      - 全仓**零调用方**(前端 `adminAPI.register` 这个封装都没人用);
+    //      - 绕过了注册路径的重复名校验与事务;
+    //      - 和 `/users/add`、`/auth/register/admin` 构成"同一件事三种做法"。
+    //    管理员建号的唯一活路径是前端 AdminUsers.vue → `POST /users/add`
+    //    (user-service `UserController.addUser`, 已加管理员闸)。
 
     private String generateReportWithCustomTemplate(String templateId, String startDate, String endDate) throws Exception {
         ReportTemplate template = reportTemplateService.getTemplateById(Long.parseLong(templateId));

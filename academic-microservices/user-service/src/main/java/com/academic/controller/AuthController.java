@@ -5,8 +5,6 @@ import com.academic.service.UserService;
 import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.security.core.Authentication;
-import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.Map;
@@ -33,7 +31,6 @@ public class AuthController {
     private static final int ROLE_STUDENT = 1;
     private static final int ROLE_TEACHER = 2;
     private static final int ROLE_COUNSELOR = 3;
-    private static final int ROLE_ADMIN = 4;
 
     private final UserService userService;
 
@@ -149,53 +146,25 @@ public class AuthController {
         }
     }
 
-    /**
-     * 管理员注册
-     * <p>
-     * 处理管理员注册请求，验证并保存管理员信息
-     * </p>
-     * @param request 注册请求，包含管理员信息
-     * @return 注册结果
-     */
-    @PostMapping("/register/admin")
-    public ApiResponse<String> registerAdmin(@RequestBody Object request) {
-        try {
-            // 两道闸，缺一不可：
-            //  ① 网关（`AuthenticationFilter.hasPermission`）要求 role=4 才放行本端点；
-            //  ② 本方法再按 **已验签 token 里的角色**判一次。
-            //
-            // 为什么第 ② 道省不掉：**网关不是网络边界**。user-service 的 8082 在本机可直连，
-            // 而 `SecurityConfig` 只能保证"已认证"——任意角色的 token 都算数，匿名则更早被挡。
-            // 2026-09-30 实测：改前 `/auth/register/**` 是 permitAll，于是**不带任何 token
-            // 直连 :8082/api/auth/register/admin 就能走到业务逻辑**，而本端点建的是
-            // 系统管理员(role=4) —— 等于匿名直连就能提权。现在 SecurityConfig 已把它移出白名单，
-            // 这里再补一次角色判定，双保险。
-            if (!currentUserIsAdmin()) {
-                Authentication auth = SecurityContextHolder.getContext().getAuthentication();
-                log.warn("拒绝非管理员创建管理员账号: principal={}", auth != null ? auth.getName() : "anonymous");
-                return ApiResponse.forbidden("只有管理员能创建管理员账号");
-            }
-            log.info("Admin register request");
-            String result = userService.register(request, ROLE_ADMIN);
-            return ApiResponse.success(result);
-        } catch (Exception e) {
-            log.error("Admin register failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
-        }
-    }
+    // ==================== 管理员注册：已删（2026-10-01） ====================
+    //
+    // `POST /auth/register/admin` 连同它的角色闸 `currentUserIsAdmin()` 一起删掉了。理由：
+    //   - 唯一的调用方是前端 `AdminRegister.vue`，而那个页面**没有任何入口**
+    //     （路由在、只能手敲 URL），已一并删除 ⇒ 本端点变成零调用方；
+    //   - 它和 `/users/add`（AdminUsers.vue 在用的活路径）、admin-service 的
+    //     `/admin/register` 构成"同一件事三种做法"，三处都删到只剩一条；
+    //   - 删掉端点 = "匿名直连 8082 提权"这个洞**连同攻击面一起消失**，
+    //     比留着端点再加闸更彻底。
+    //
+    // 于是**管理员建号全仓只剩一条活路径**: AdminUsers.vue → `POST /api/users/add`
+    // → user-service `UserController.addUser`（那里有 `currentUserIsAdmin()` 闸）。
+    //
+    // ⚠️ 历史留档：这里原来有个真实漏洞 —— 2026-09-30 实测，改前 `/auth/register/**`
+    //    是 permitAll，**不带任何 token 直连 :8082/api/auth/register/admin 就能走到
+    //    业务逻辑**，而该端点建的是 role=4 系统管理员。当时是"收紧 SecurityConfig
+    //    白名单 + 端点内按已验签 token 的角色再判一次"两层修的；现在端点本身没了。
+    //    同理每个 register 端点的角色**由端点写死**、绝不从请求体读（见上面的常量注释）。
 
-    /**
-     * 当前请求者是否管理员。
-     *
-     * <p>依据是 {@code JwtAuthenticationFilter} 从**已验签的 JWT 声明**写进
-     * {@code SecurityContextHolder} 的 {@code ROLE_4} 权限 —— 它来自 token 内容而非请求头，
-     * 所以伪造 {@code X-Role} 改不了它。这是本服务里唯一可信的角色来源。
-     */
-    private boolean currentUserIsAdmin() {
-        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
-        return auth != null && auth.getAuthorities().stream()
-                .anyMatch(a -> ("ROLE_" + ROLE_ADMIN).equals(a.getAuthority()));
-    }
 
     /**
      * 获取用户信息

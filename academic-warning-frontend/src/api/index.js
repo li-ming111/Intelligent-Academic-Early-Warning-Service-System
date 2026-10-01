@@ -716,9 +716,9 @@ export const aiAPI = {
 }
 
 export const adminAPI = {
-  register: (data) => {
-    return apiClient.post(`/admin/register`, data)
-  },
+  // ⚠️ 2026-10-01 删掉了 `register`(POST /admin/register) —— 全仓零调用方,
+  //    且它自己直写 users 表、绕过重复名校验。建号的唯一活路径是下面这条 createUser。
+  //
   // 新增用户走 /users/add，不用 /auth/register/*：register 在"用户名已存在"这类
   // 业务失败时**返回错误字符串但仍包成 code:200 的成功响应**，前端会提示"添加成功"。
   // /users/add 重名直接抛异常，前端能正确显示失败。

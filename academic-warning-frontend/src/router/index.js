@@ -42,7 +42,6 @@ import CounselorScores from '../views/CounselorScores.vue'
 import CounselorAssistance from '../views/CounselorAssistance.vue'
 import CounselorAnalytics from '../views/CounselorAnalytics.vue'
 import CounselorCommunication from '../views/CounselorCommunication.vue'
-import AdminRegister from '../views/AdminRegister.vue'
 import AdminColleges from '../views/AdminColleges.vue'
 import AdminMajors from '../views/AdminMajors.vue'
 import AdminUsers from '../views/AdminUsers.vue'
@@ -166,12 +165,6 @@ const routes = [
     meta: { requiresAuth: false }
   },
 
-  {
-    path: '/admin-register',
-    name: 'AdminRegister',
-    component: AdminRegister,
-    meta: { requiresAuth: true, allowedRoles: [4, 'admin'] }
-  },
   {
     path: '/teacher-register',
     name: 'TeacherRegister',

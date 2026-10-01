@@ -2,17 +2,12 @@ package com.academic.controller;
 
 import com.academic.common.dto.ApiResponse;
 import com.academic.service.UserService;
-import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
-import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
-import org.springframework.security.core.authority.SimpleGrantedAuthority;
-import org.springframework.security.core.context.SecurityContextHolder;
 
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -32,63 +27,17 @@ class AuthControllerTest {
         MockitoAnnotations.openMocks(this);
     }
 
-    /** SecurityContextHolder 是 thread-local，用例之间会串，必须清。 */
-    @AfterEach
-    void tearDown() {
-        SecurityContextHolder.clearContext();
-    }
-
-    // ==================== /register/admin 的角色闸 ====================
+    // ==================== 这里原有 3 条 `/register/admin` 的角色闸用例 ====================
     //
-    // 该端点建的是**系统管理员(role=4)**。网关对它要求 role=4，但**网关不是网络边界** ——
-    // user-service 的 8082 在本机可直连，而 Spring Security 那层只保证"已认证"，
-    // 任意角色的 token 都算数。所以 AuthController 里再按**已验签 token 里的角色**判一次。
-    // 2026-09-30 实测确认过这个洞是真的：改前 `/auth/register/**` 是 permitAll，
-    // 不带任何 token 直连 `:8082/api/auth/register/admin` 能走到业务逻辑。下面三条钉住第二道闸。
+    // 2026-10-01 随端点一起删掉了。它们钉住的是 AuthController 里那道"按已验签 token 的
+    // 角色再判一次"的闸（匿名 / 学生 token / 管理员 token 三种）。那个端点建的是
+    // **系统管理员(role=4)**，2026-09-30 实测确认过洞是真的：改前 `/auth/register/**`
+    // 是 permitAll，不带任何 token 直连 `:8082/api/auth/register/admin` 能走到业务逻辑。
+    //
+    // 端点连同这道闸一起删了（零调用方 + 与 `/users/add` 重复）⇒ 攻击面随之消失，
+    // 用例没有对象可测。管理员建号现在只剩 `/users/add` 一条路径，
+    // 它的权限闸在 `UserControllerTest` 里钉着。
 
-    /** 匿名（SecurityContext 为空）→ 403，且**一次都不调** userService.register。 */
-    @Test
-    void testRegisterAdmin_anonymousRejected() {
-        ApiResponse<String> result = authController.registerAdmin(new HashMap<>());
-
-        assertFalse(result.isSuccess());
-        assertEquals(403, result.getCode());
-        verify(userService, never()).register(any(), any());
-    }
-
-    /** 学生 token（ROLE_1）→ 403 —— "直连 8082 拿学生 token 提权"的钉子。 */
-    @Test
-    void testRegisterAdmin_studentRejected() {
-        authenticateAs(1);
-
-        ApiResponse<String> result = authController.registerAdmin(new HashMap<>());
-
-        assertFalse(result.isSuccess());
-        assertEquals(403, result.getCode());
-        verify(userService, never()).register(any(), any());
-    }
-
-    /** 管理员 token（ROLE_4）→ 放行，传下去的角色是端点写死的 4。 */
-    @Test
-    void testRegisterAdmin_adminAllowed() {
-        authenticateAs(4);
-        Map<String, Object> body = new HashMap<>();
-        body.put("username", "adm002");
-        when(userService.register(body, 4)).thenReturn("Register successful");
-
-        ApiResponse<String> result = authController.registerAdmin(body);
-
-        assertTrue(result.isSuccess());
-        verify(userService, times(1)).register(body, 4);
-    }
-
-    /** 造一个"已验签 token 的 principal"，形状与 JwtAuthenticationFilter 写入的一致。 */
-    private void authenticateAs(int role) {
-        SecurityContextHolder.getContext().setAuthentication(
-                new UsernamePasswordAuthenticationToken("probe", null,
-                        Collections.singletonList(new SimpleGrantedAuthority("ROLE_" + role))));
-    }
-    
     @Test
     void testLogin_Success() {
         // 准备测试数据

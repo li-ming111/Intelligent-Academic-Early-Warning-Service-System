@@ -94,8 +94,9 @@ public class AuthenticationFilter implements GlobalFilter, Ordered {
     //   /api/users/list、/api/users/add、/api/users/delete/{id}、/api/users/count
     //   /api/users/by-username/{name}  ← 直接返回含密码哈希的原始 User 实体
     //   /api/users/update/{id}         ← ★ 请求体是完整 User 实体，改别人的 role/status 就是提权
-    // 同理 `/api/auth/**` 也不能整段放开：`/api/auth/register/admin` 能造系统管理员账号，
+    // 同理 `/api/auth/**` 也不能整段放开：`/api/auth/register` 能建账号（按最低权限建学生），
     // `/api/auth/info/{id}` 也会绕过下面的归属校验。
+    // （原话是 `/api/auth/register/admin` 能造系统管理员账号 —— 那个端点 2026-10-01 已删。）
 
     /** 改自己的密码。 */
     private static final String AUTH_CHANGE_PASSWORD = "/api/auth/change-password";
@@ -281,12 +282,17 @@ public class AuthenticationFilter implements GlobalFilter, Ordered {
         }
 
         // 注册端点：白名单只放过 /api/auth/register/{student,teacher,counselor} 三条**自助**路径，
-        // 它们匹配白名单后直接 return，走不到这里。能走到这一行的只剩
-        // /api/auth/register 与 /api/auth/register/admin —— 那是**管理员建账号**，必须 role=4。
+        // 它们匹配白名单后直接 return，走不到这里。能走到这一行的只剩裸的 /api/auth/register
+        // —— 它按**最低权限**建学生（控制器里写死 ROLE_STUDENT，请求体的 role 不生效）。
         // 把这一关放在网关，是因为下游 user-service 里没有 GatewayAuthFilter、拿不到调用者角色，
         // 它的 /auth 段对任何持 token 的人都通（见本文件末尾的 return true）。
-        // 2026-09-30：修掉"任何已登录角色（含学生）POST /api/auth/register/admin 带 role:4
-        // 就能造出系统管理员"。控制器那侧同时改成角色由端点写死，两边都不再信请求体。
+        //
+        // ⚠️ 2026-10-01 变更：`/api/auth/register/admin` **已连同端点一起删除**。
+        //    2026-09-30 那个洞是真的 —— 任何已登录角色（含学生）POST 它并带 role:4
+        //    就能造出系统管理员（当时是"网关要求 role=4 + 控制器按已验签 token 再判一次"
+        //    两层修的）。后来发现它零调用方、且与 `/users/add` 重复，就**删掉端点本身**
+        //    ⇒ 攻击面随之消失，比留着再加闸更彻底。管理员建号现在只剩
+        //    AdminUsers.vue → `POST /api/users/add` 一条活路径（上面 PREFIX_USERS 那段管着）。
         if (path.startsWith("/api/auth/register")) {
             boolean allowed = role == ROLE_ADMIN;
             if (!allowed) {
