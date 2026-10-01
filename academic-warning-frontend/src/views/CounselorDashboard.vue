@@ -140,11 +140,15 @@ import { ref, reactive, onMounted, nextTick } from 'vue'
 import * as echarts from 'echarts'
 import { counselorAPI } from '@/api/index'
 import { getUserId } from '@/utils/userUtils'
+import { buildWarningTrend, warningLevelColor } from '@/utils/score'
 
 const trendChart = ref(null)
 const stats = reactive({ studentCount: 0, warningCount: 0, redWarnings: 0, yellowWarnings: 0, blueWarnings: 0 })
 const classList = ref([])
 const recentWarnings = ref([])
+// 预警趋势的原始行（`[{month, warning_level, count}]`），由 renderChart 经
+// `buildWarningTrend` 聚合。2026-10-01 第二十二轮新增：这张图此前**不接任何数据**。
+const trendRows = ref([])
 // 优先取登录时写入的 'name'（Login.vue 存的是真名）。
 // 不能只读 'userName'：它是 CounselorLayout 在 onMounted 里才写入的，
 // 而子组件的 setup 早于父组件的 onMounted 执行，首屏永远读不到，会退化成「辅导员」。
@@ -161,8 +165,8 @@ const greeting = (() => { const h = new Date().getHours(); return h < 9 ? '早�
 onMounted(async () => { await loadDashboard() })
 
 const loadDashboard = async () => {
+  const uid = getUserId(); if (!uid) return
   try {
-    const uid = getUserId(); if (!uid) return
     const res = await counselorAPI.getDashboard(uid)
     // 拦截器已解包，res 直接是 data Map
     const data = (res && !res.code) ? res : (res && res.data ? res.data : {})
@@ -186,9 +190,18 @@ const loadDashboard = async () => {
       blueCount: (warnByClass[c.id]?.blue) || 0
     }))
     recentWarnings.value = (data.recentWarnings || []).slice(0, 5)
-    await nextTick()
-    renderChart()
   } catch (e) { console.error('加载仪表盘失败:', e) }
+
+  // 2026-10-01 第二十二轮: 趋势图的原始数据在**另一个接口**上（/counselors/analytics/warning-trend），
+  // 本页此前从来没有调过它 —— 详见下面 renderChart 的注释。单独 try：趋势取不到只该让那张图
+  // 显示「暂无预警数据」，不该把整页拖垮。
+  try {
+    const tr = await counselorAPI.getWarningTrend(uid)
+    trendRows.value = Array.isArray(tr) ? tr : (tr?.data ?? tr?.list ?? [])
+  } catch (e) { console.error('加载预警趋势失败:', e) }
+
+  await nextTick()
+  renderChart()
 }
 
 const formatTime = (dt) => {
@@ -206,11 +219,23 @@ function renderChart() {
   if (!trendChart.value) return
   if (chartInstance) chartInstance.dispose()
   chartInstance = echarts.init(trendChart.value)
-  // 使用真实月份数据
-  const months = []; const d = new Date()
-  for (let i = 5; i >= 0; i--) {
-    const m = new Date(d.getFullYear(), d.getMonth() - i, 1)
-    months.push((m.getMonth() + 1) + '月')
+
+  // 2026-10-01 第二十二轮修: 原来这里把三条序列写成**字面量数组** ——
+  //   data: [0,0,0,0, red, red] / [0,0,0,0, yellow, yellow] / [0,0,0, blue, blue, blue]
+  // 只有 x 轴的月份是真算出来的，所以它**看起来**像一张趋势图，实际值全是编的；
+  // 而且"最近两个月永远同值"是那对字面量必然的产物。
+  // 实测（辅导员 53，库内 4 条预警全在 2026-09，等级 2×3 + 1×1）：假图在 8 月凭空多 1 条轻度、
+  // 10 月凭空多 3 条中度 + 1 条轻度 —— 而**同一屏**上方 KPI 卡的 0/3/1 是对的，自相矛盾。
+  // 真数据源一直存在（/counselors/analytics/warning-trend），数据分析页就在用它。
+  const { months, severe, medium, mild } = buildWarningTrend(trendRows.value)
+  if (!months.length) {
+    chartInstance.setOption({
+      title: {
+        text: '暂无预警数据', left: 'center', top: 'center',
+        textStyle: { color: '#94a3b8', fontSize: 13, fontWeight: 'normal' }
+      }
+    })
+    return
   }
   chartInstance.setOption({
     tooltip: { trigger: 'axis' },
@@ -219,9 +244,9 @@ function renderChart() {
     xAxis: { type: 'category', data: months, axisLabel: { fontSize: 10, color: '#94a3b8' }, axisLine: { lineStyle: { color: '#e2e8f0' } } },
     yAxis: { type: 'value', minInterval: 1, splitLine: { lineStyle: { type: 'dashed', color: '#f1f5f9' } }, axisLabel: { fontSize: 10, color: '#94a3b8' } },
     series: [
-      { name: '严重', type: 'line', smooth: true, data: [0, 0, 0, 0, stats.redWarnings, stats.redWarnings], itemStyle: { color: '#ef4444' }, lineStyle: { color: '#ef4444', width: 2 }, areaStyle: { color: 'rgba(239,68,68,0.06)' } },
-      { name: '中度', type: 'line', smooth: true, data: [0, 0, 0, 0, stats.yellowWarnings, stats.yellowWarnings], itemStyle: { color: '#3b82f6' }, lineStyle: { color: '#3b82f6', width: 2 }, areaStyle: { color: 'rgba(245,158,11,0.06)' } },
-      { name: '轻度', type: 'line', smooth: true, data: [0, 0, 0, stats.blueWarnings, stats.blueWarnings, stats.blueWarnings], itemStyle: { color: '#3b82f6' }, lineStyle: { color: '#3b82f6', width: 2 }, areaStyle: { color: 'rgba(59,130,246,0.06)' } }
+      { name: '严重', type: 'line', smooth: true, data: severe, itemStyle: { color: warningLevelColor(3) }, lineStyle: { color: warningLevelColor(3), width: 2 }, areaStyle: { color: 'rgba(239,68,68,0.06)' } },
+      { name: '中度', type: 'line', smooth: true, data: medium, itemStyle: { color: warningLevelColor(2) }, lineStyle: { color: warningLevelColor(2), width: 2 }, areaStyle: { color: 'rgba(245,158,11,0.06)' } },
+      { name: '轻度', type: 'line', smooth: true, data: mild, itemStyle: { color: warningLevelColor(1) }, lineStyle: { color: warningLevelColor(1), width: 2 }, areaStyle: { color: 'rgba(59,130,246,0.06)' } }
     ]
   })
 }

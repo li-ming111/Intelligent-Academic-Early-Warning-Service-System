@@ -78,6 +78,7 @@ import { ref, reactive, onMounted, onUnmounted, computed } from 'vue'
 import * as echarts from 'echarts'
 import { counselorAPI } from '@/api/index'
 import { getUserId } from '@/utils/userUtils'
+import { buildWarningTrend, warningLevelColor, warningLevelText } from '@/utils/score'
 
 const warningChart = ref(null), efficiencyChart = ref(null), trendChart = ref(null)
 const classRanking = ref([])
@@ -133,9 +134,19 @@ async function loadData() {
 
 function renderWarn(data) {
   if (!warningChart.value) return; wc?.dispose(); wc = echarts.init(warningChart.value)
-  const lm = { 1:'红色', 2:'黄色', 3:'蓝色' }, cm = { 1:'#ef4444', 2:'#3b82f6', 3:'#3b82f6' }
+  // 2026-10-01 第二十二轮修: 原表是
+  //   lm = {1:'红色', 2:'黄色', 3:'蓝色'}, cm = {1:'#ef4444', 2:'#3b82f6', 3:'#3b82f6'}
+  // 两处都错 —— ① 1 和 3 对调了：全仓口径是 1=轻度、2=中度、≥3=严重（见 utils/score.js 的
+  // warningLevelText，以及 invariants 的 H 组「1-2 门→1 级、3-5 门→2 级、>5 门→3 级」）；
+  // ② `2:'黄色'` 的颜色写成 #3b82f6（蓝），`3:'蓝色'` 也是 #3b82f6 ⇒ 中度与严重同色。
+  // 实测辅导员 53 的分布是 level2×3 + level1×1，原图显示「红色 1 / 黄色 3」；真相是
+  // 「轻度 1 / 中度 3 / 严重 0」—— 图把**最轻的那条说成了最重的**。色值与文案统一改走
+  // utils/score.js，别再手写第二张等级表。
   const dt = Array.isArray(data) ? data : (data?.list || data?.data || [])
-  const cd = dt.map(i=>({ value:i.count||0, name:lm[i.warning_level||i.level]||'其他', itemStyle:{color:cm[i.warning_level||i.level]||'#94a3b8'} }))
+  const cd = dt.map(i => {
+    const lv = i.warning_level ?? i.level
+    return { value: i.count || 0, name: warningLevelText(lv), itemStyle: { color: warningLevelColor(lv) } }
+  })
   if (!cd.length) cd.push({ value:1, name:'暂无数据', itemStyle:{color:'#e2e8f0'} })
   wc.setOption({ tooltip:{trigger:'item'}, series:[{ type:'pie', radius:['45%','68%'], center:['50%','52%'], data:cd, label:{show:true,fontSize:12}, emphasis:{label:{fontSize:15,fontWeight:'bold'} }}] })
 }
@@ -168,17 +179,18 @@ function renderEfficiency(days) {
 
 function renderTrend(data) {
   if (!trendChart.value) return; tc?.dispose(); tc = echarts.init(trendChart.value)
-  const dt = Array.isArray(data) ? data : (data?.list || data?.data || [])
-  const ms=[], r=[], y=[], b=[], map={}
-  dt.forEach(i=>{ const m=i.month||''; if(!m)return; map[m]=map[m]||{r:0,y:0,b:0}; const l=i.warning_level||0,c=i.count||0; l===1?map[m].r+=c:l===2?map[m].y+=c:map[m].b+=c })
-  Object.keys(map).sort().forEach(m=>{ ms.push(m); r.push(map[m].r); y.push(map[m].y); b.push(map[m].b) })
+  // 2026-10-01 第二十二轮修: 原来这里是
+  //   l===1 ? map[m].r += c : l===2 ? map[m].y += c : map[m].b += c
+  // —— 又把 1 累加进"红色"、≥3 累加进"蓝色"，和上面环形图同一个 1↔3 对调。
+  // 改用 utils/score.js 的共用聚合，与辅导员首页同一份实现（那边此前压根没调接口）。
+  const { months, severe, medium, mild } = buildWarningTrend(data)
   tc.setOption({
-    tooltip:{trigger:'axis'}, legend:{data:['红色','黄色','蓝色'],bottom:0}, grid:{left:30,right:10,top:10,bottom:40},
-    xAxis:{type:'category',data:ms.length?ms:['暂无'],axisLabel:{fontSize:10}}, yAxis:{type:'value',min:0,splitLine:{lineStyle:{type:'dashed',color:'#f1f5f9'}}},
+    tooltip:{trigger:'axis'}, legend:{data:['严重','中度','轻度'],bottom:0}, grid:{left:30,right:10,top:10,bottom:40},
+    xAxis:{type:'category',data:months.length?months:['暂无'],axisLabel:{fontSize:10}}, yAxis:{type:'value',min:0,splitLine:{lineStyle:{type:'dashed',color:'#f1f5f9'}}},
     series:[
-      {name:'红色',type:'line',smooth:true,data:r.length?r:[0],itemStyle:{color:'#ef4444'},lineStyle:{color:'#ef4444',width:2},areaStyle:{color:'rgba(239,68,68,.1)'}},
-      {name:'黄色',type:'line',smooth:true,data:y.length?y:[0],itemStyle:{color:'#3b82f6'},lineStyle:{color:'#3b82f6',width:2},areaStyle:{color:'rgba(245,158,11,.1)'}},
-      {name:'蓝色',type:'line',smooth:true,data:b.length?b:[0],itemStyle:{color:'#3b82f6'},lineStyle:{color:'#3b82f6',width:2},areaStyle:{color:'rgba(59,130,246,.1)'}}
+      {name:'严重',type:'line',smooth:true,data:months.length?severe:[0],itemStyle:{color:warningLevelColor(3)},lineStyle:{color:warningLevelColor(3),width:2},areaStyle:{color:'rgba(239,68,68,.1)'}},
+      {name:'中度',type:'line',smooth:true,data:months.length?medium:[0],itemStyle:{color:warningLevelColor(2)},lineStyle:{color:warningLevelColor(2),width:2},areaStyle:{color:'rgba(245,158,11,.1)'}},
+      {name:'轻度',type:'line',smooth:true,data:months.length?mild:[0],itemStyle:{color:warningLevelColor(1)},lineStyle:{color:warningLevelColor(1),width:2},areaStyle:{color:'rgba(59,130,246,.1)'}}
     ]
   })
 }

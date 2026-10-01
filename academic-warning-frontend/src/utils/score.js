@@ -135,3 +135,59 @@ export function warningLevelTagType(value) {
   if (level === 1) return 'info'
   return 'info'
 }
+
+/**
+ * 等级对应的图表色。全站统一：严重=红、中度=橙、轻度=蓝。
+ *
+ * 色值与 `AdminStatistics.vue` 的饼图一致。**别再手写第二张等级色表** ——
+ * 2026-10-01 第二十二轮就是因为 `CounselorAnalytics.vue` 自己写了一张
+ * `{1:'红色',2:'黄色',3:'蓝色'}` / `{1:'#ef4444',2:'#3b82f6',3:'#3b82f6'}`：
+ * 前者把 1 和 3 对调（口径见上面的 {@link warningLevelText}），
+ * 后者让"中度"与"严重"同色。两处都不报错，只是**图在撒谎**。
+ */
+export function warningLevelColor(value) {
+  const level = warningLevel(value)
+  if (level >= 3) return '#ef4444'
+  if (level === 2) return '#f59e0b'
+  if (level === 1) return '#3b82f6'
+  return '#94a3b8'
+}
+
+/**
+ * 把「预警趋势」接口的行聚合成可直接喂给 ECharts 的三条序列。
+ *
+ * 入参形如 `[{month:'2026-09', warning_level:1, count:1}, ...]`，来自
+ * `/counselors/analytics/warning-trend`（后端 `WarningMapper.getWarningTrendByCounselor`，
+ * 库内按月 + 按等级 `GROUP BY`）。出参 `{months, severe, medium, mild}`，
+ * 三个数组与 `months` 等长、按月份（'YYYY-MM'）升序。
+ *
+ * 分档口径与后端 `getWarningLevelCountByClass` 逐字一致：`>=3` 严重、`==2` 中度、`==1` 轻度。
+ * 未被识别的等级**不归入任何一条**（不替它猜一个档），与后端 `SUM(CASE …)` 的行为相同。
+ *
+ * 2026-10-01 第二十二轮抽成共用函数：此前首页 `CounselorDashboard.vue` 根本没调这个接口，
+ * 而是把图画成写死的 `[0,0,0,0,X,X]`（x 轴月份是真的、值全是编的）；数据分析页
+ * `CounselorAnalytics.vue` 调了接口却把 1 和 3 对调。两页现在共用这一份实现。
+ */
+export function buildWarningTrend(rows) {
+  const list = Array.isArray(rows) ? rows : []
+  const order = []
+  const bucket = {}
+  for (const row of list) {
+    const month = row?.month
+    if (!month) continue
+    const key = String(month)
+    if (!bucket[key]) { bucket[key] = { severe: 0, medium: 0, mild: 0 }; order.push(key) }
+    const level = warningLevel(row.warning_level ?? row.level)
+    const count = Number(row.count) || 0
+    if (level >= 3) bucket[key].severe += count
+    else if (level === 2) bucket[key].medium += count
+    else if (level === 1) bucket[key].mild += count
+  }
+  const months = order.sort()
+  return {
+    months,
+    severe: months.map((m) => bucket[m].severe),
+    medium: months.map((m) => bucket[m].medium),
+    mild: months.map((m) => bucket[m].mild)
+  }
+}
