@@ -638,9 +638,15 @@ class ApiClient {
     /**
      * 待办汇总：`{pendingWarnings, appeals, classRequests, teacherClassRequests,
      * counselorClassRequests}`。
-     * ⚠️ 实测 `appeals/classRequests/teacherClassRequests/counselorClassRequests` 都是 0
-     *    （学生的申诉表是空的、9 条班级申请没有一条是待审核），只有
-     *    `pendingWarnings=4` 是有数的。这个 0 是**实情**，不是接口坏了。
+     * ✅ 2026-10-01 第十九轮更正：本注释此前写 "`appeals` 实测 0 是**实情**，不是接口坏了" ——
+     *    **那句是错的**。`appeals` 当时是后端 `AdminController.getPendingRequests` 里
+     *    一句写死的 `result.put("appeals", 0)`，而同方法另外三个计数都是真查询。
+     *    库里 `score_appeals` 确实有 1 条 `status=0` ⇒ 当时页面少显示了 1 条待办。
+     *    已改成 `COUNT(*) WHERE status=0`，现在返回的是真数（当前库里为 1）。
+     *    另外三个班级申请计数本来就是真查询，那句对它们成立。
+     * ⚠️ 仍要注意的口径：`pendingWarnings` 是 `academic_warning.status=0` 的行数，
+     *    而 `/admin/dashboard` 的 `totalWarnings` 是**全部行数**（未过滤），两个数名字像、
+     *    含义不同，别混用。
      */
     getPendingRequests: () => this._get('/admin/pending-requests'),
     /** 系统动态。⚠️ **实测恒为 `[]`** —— 没有任何服务往这张表写，页面上如实展示为空。 */

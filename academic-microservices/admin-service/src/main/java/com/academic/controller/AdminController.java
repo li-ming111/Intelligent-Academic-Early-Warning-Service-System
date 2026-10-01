@@ -119,6 +119,9 @@ public class AdminController {
     private ClassesMapper classesMapper;
 
     @Autowired
+    private com.academic.mapper.ScoreAppealMapper scoreAppealMapper;
+
+    @Autowired
     private TeacherProfileMapper teacherProfileMapper;
 
     @Autowired
@@ -262,7 +265,7 @@ public class AdminController {
             try {
                 List<AcademicWarning> warnings = academicWarningMapper.selectList(null);
                 statistics.put("totalWarnings", warnings.size());
-                int redCount = 0, yellowCount = 0, lowCount = 0;
+                int redCount = 0, yellowCount = 0, lowCount = 0, processedCount = 0;
                 for (AcademicWarning w : warnings) {
                     Integer level = w.getWarningLevel();
                     if (level != null) {
@@ -270,16 +273,24 @@ public class AdminController {
                         else if (level == 2) yellowCount++;
                         else lowCount++;
                     }
+                    // 2026-10-01 第十九轮: 首页那四枚「严重/中度/轻度/已处理」徽章原来是从
+                    // /admin/dashboard 的 recentWarnings(只取前 5 条)算的 —— 数据一超 5 条就少算。
+                    // 这里给出全量的「已处理」计数, 与上面的分级计数同源。
+                    if (w.getStatus() != null && w.getStatus() == 1) {
+                        processedCount++;
+                    }
                 }
                 statistics.put("redWarnings", redCount);
                 statistics.put("yellowWarnings", yellowCount);
                 statistics.put("lowWarnings", lowCount);
+                statistics.put("processedWarnings", processedCount);
             } catch (Exception e) {
                 log.warn("获取预警数据失败: {}", e.getMessage());
                 statistics.put("totalWarnings", 0);
                 statistics.put("redWarnings", 0);
                 statistics.put("yellowWarnings", 0);
                 statistics.put("lowWarnings", 0);
+                statistics.put("processedWarnings", 0);
             }
 
             Map<String, Object> todayStats = new HashMap<>();
@@ -338,7 +349,12 @@ public class AdminController {
         int teacherRequests = (int) result.getOrDefault("teacherClassRequests", 0);
         int counselorRequests = (int) result.getOrDefault("counselorClassRequests", 0);
         result.put("classRequests", teacherRequests + counselorRequests);
-        result.put("appeals", 0);
+        // 2026-10-01 第十九轮: 原先是 `result.put("appeals", 0)` **写死** —— 管理员首页那张
+        // 「成绩申诉」待办卡永远是 0, 而库里 score_appeals 真有 1 条 status=0。
+        // 同方法里另外三个计数本来就是真查询, 只有它没查。
+        try {
+            result.put("appeals", (int) scoreAppealMapper.countPending());
+        } catch (Exception e) { result.put("appeals", 0); }
         // 待处理预警数
         try {
             long pendingWarnings = academicWarningMapper.selectCount(

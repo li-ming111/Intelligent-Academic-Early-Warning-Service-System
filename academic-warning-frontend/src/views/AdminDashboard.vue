@@ -134,16 +134,19 @@
 import { ref, reactive, computed, onMounted } from 'vue'
 import { adminAPI } from '@/api/index'
 
-const stats = reactive({ totalStudents:'--', totalTeachers:'--', totalCounselors:'--', totalCourses:'--', totalMajors:'--', totalWarnings:'--', totalColleges:'--', totalUsers:'--', redWarnings:'--', yellowWarnings:'--', lowWarnings:'--' })
+const stats = reactive({ totalStudents:'--', totalTeachers:'--', totalCounselors:'--', totalCourses:'--', totalMajors:'--', totalWarnings:'--', totalColleges:'--', totalUsers:'--', redWarnings:'--', yellowWarnings:'--', lowWarnings:'--', processedWarnings:'--' })
 const warnings = ref([])
 const pending = reactive({ classRequests: 0, warnings: 0, appeals: 0 })
 const greetingText = (() => { const h = new Date().getHours(); return h<9?'早上好':h<12?'上午好':h<14?'中午好':h<18?'下午好':'晚上好' })()
 
+// 2026-10-01 第十九轮: 这四枚徽章原来是对 `warnings`(来自 /admin/dashboard 的 recentWarnings,
+// 后端只给前 5 条)做 filter 统计。数据一超 5 条,"严重/中度/轻度"就会少算、"已处理"更是把
+// 没拿到的那部分当 0。现改为与同页柱状图同源 —— 全量口径的 /admin/statistics。
 const warnCounts = computed(() => ({
-  severe: warnings.value.filter(w => w.warningLevel >= 3).length,
-  medium: warnings.value.filter(w => w.warningLevel == 2).length,
-  low: warnings.value.filter(w => w.warningLevel == 1).length,
-  processed: warnings.value.filter(w => w.status == 1).length,
+  severe: Number(stats.redWarnings) || 0,
+  medium: Number(stats.yellowWarnings) || 0,
+  low: Number(stats.lowWarnings) || 0,
+  processed: Number(stats.processedWarnings) || 0,
 }))
 
 function warnBar(level) {
@@ -167,9 +170,12 @@ const actions = [
 ]
 
 onMounted(async () => {
-  try { const r = await adminAPI.getStatistics(); if (r && typeof r === 'object') { stats.totalStudents=r.totalStudents||0; stats.totalTeachers=r.totalTeachers||0; stats.totalCounselors=r.totalCounselors||0; stats.totalCourses=r.totalCourses||0; stats.totalColleges=r.totalColleges||0; stats.totalMajors=r.totalMajors||0; stats.totalUsers=r.totalUsers||0; stats.totalWarnings=r.totalWarnings||0; stats.redWarnings=r.redWarnings||0; stats.yellowWarnings=r.yellowWarnings||0; stats.lowWarnings=r.lowWarnings||0 } } catch(e){}
-  try { const d = await adminAPI.getDashboard(); if (d) { const wl = d.recentWarnings || d.warnings || []; warnings.value = (Array.isArray(wl)?wl:[]).slice(0,20); pending.warnings = (d.totalWarnings||0) } } catch(e){}
-  try { const pr = await adminAPI.getPendingRequests(); if (pr) { pending.classRequests=pr.classRequests||0; pending.appeals=pr.appeals||0 } } catch(e){}
+  try { const r = await adminAPI.getStatistics(); if (r && typeof r === 'object') { stats.totalStudents=r.totalStudents||0; stats.totalTeachers=r.totalTeachers||0; stats.totalCounselors=r.totalCounselors||0; stats.totalCourses=r.totalCourses||0; stats.totalColleges=r.totalColleges||0; stats.totalMajors=r.totalMajors||0; stats.totalUsers=r.totalUsers||0; stats.totalWarnings=r.totalWarnings||0; stats.redWarnings=r.redWarnings||0; stats.yellowWarnings=r.yellowWarnings||0; stats.lowWarnings=r.lowWarnings||0; stats.processedWarnings=r.processedWarnings||0 } } catch(e){}
+  // 2026-10-01 第十九轮: 这里原先把 /admin/dashboard 的 `totalWarnings` 当作"待处理预警"。
+  // 那个数是**全部行数**(后端没按 status 过滤), 而且"待处理"的正确来源是
+  // /admin/pending-requests 的 `pendingWarnings`(那边是 eq(status,0))。已改到下面那行取。
+  try { const d = await adminAPI.getDashboard(); if (d) { const wl = d.recentWarnings || d.warnings || []; warnings.value = (Array.isArray(wl)?wl:[]).slice(0,20) } } catch(e){}
+  try { const pr = await adminAPI.getPendingRequests(); if (pr) { pending.classRequests=pr.classRequests||0; pending.appeals=pr.appeals||0; pending.warnings=pr.pendingWarnings||0 } } catch(e){}
 })
 </script>
 
