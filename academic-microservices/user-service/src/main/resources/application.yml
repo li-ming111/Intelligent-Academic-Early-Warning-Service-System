@@ -21,8 +21,12 @@ spring:
 
   datasource:
     url: jdbc:mysql://localhost:3306/academic_warning_system?useUnicode=true&characterEncoding=utf-8&useSSL=false&serverTimezone=GMT%2B8&allowPublicKeyRetrieval=true
-    username: root
-    password: root
+    username: ${DB_USERNAME:root}
+    # 2026-10-01：原来这里是裸字面量 `root`，是**唯一一个**没有 `${DB_PASSWORD:...}` 兜底的连库服务
+    # （其余 10 个都有）。后果：把 MySQL 口令改成非 root 时，其它服务全正常，唯独**全站唯一的登录
+    # 入口**（`/api/auth/**` 挂在 user-service 上）连不上库 —— 最难查的那种"只有登录坏"。
+    # 默认值仍是 root，所以本地开箱即用的行为**一字未变**，只是现在可以用环境变量覆盖了。
+    password: ${DB_PASSWORD:root}
     driver-class-name: com.mysql.cj.jdbc.Driver
 
   redis:

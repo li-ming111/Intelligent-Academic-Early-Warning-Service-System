@@ -1,9 +1,13 @@
 package com.academic.util;
 
+import com.academic.common.config.JwtSecretGuard;
 import com.academic.common.constant.ApiConstants;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.security.Keys;
+import jakarta.annotation.PostConstruct;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -21,11 +25,19 @@ import java.util.Map;
 @Component
 public class JwtUtil {
 
+    private static final Logger log = LoggerFactory.getLogger(JwtUtil.class);
+
     @Value("${jwt.secret:${JWT_SECRET:academic-jwt-secret-key-for-academic-warning-system-2026}}")
     private String secret;
 
     @Value("${jwt.expiration:7200000}")
     private long expiration;
+
+    /** 这里解析出来的就是**真正用于签发**的密钥 —— 顺手在启动时提醒一次它是不是开发默认值。 */
+    @PostConstruct
+    void warnIfUsingDevSecret() {
+        JwtSecretGuard.warnIfDefault(secret, log, "auth-service JwtUtil");
+    }
 
     private SecretKey getSigningKey() {
         return Keys.hmacShaKeyFor(secret.getBytes(StandardCharsets.UTF_8));

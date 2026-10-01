@@ -124,9 +124,32 @@ public class AuthenticationFilter implements GlobalFilter, Ordered {
     @Value("${spring.cloud.gateway.jwt.secret:academic-jwt-secret-key-for-academic-warning-system-2026}")
     private String jwtSecret;
 
+    /**
+     * 与四处源码字面量逐字相同。**网关是本工程里唯一不依赖 `academic-common` 的模块**
+     * （它是 WebFlux 网关，只带最小依赖），所以那句本可以共享的告警在
+     * `academic-common/config/JwtSecretGuard.java` 里，这里只能各写一份 —— 这是模块边界的代价，
+     * 不是重复代码没收拾。
+     */
+    private static final String DEV_DEFAULT_SECRET =
+            "academic-jwt-secret-key-for-academic-warning-system-2026";
+
     @PostConstruct
     public void init() {
         log.info("AuthenticationFilter 初始化完成，密钥长度: {}", jwtSecret.length());
+        // 网关是**校验方**：它用哪个密钥，等于全系统认哪个密钥。默认值仍可用（演示不受影响），
+        // 但必须让"还在用开发默认值"这件事在启动日志里看得见。
+        if (DEV_DEFAULT_SECRET.equals(jwtSecret)) {
+            log.warn("");
+            log.warn("========================================================================");
+            log.warn("  ⚠️  [gateway AuthenticationFilter] JWT 密钥正在使用**开发默认值**（源码里的字面量）。");
+            log.warn("      后果：任何拿到本仓库的人都能伪造任意角色（含管理员）的 token。");
+            log.warn("      本地演示可忽略；但**不要**把这个默认值带到任何对外可访问的环境。");
+            log.warn("      换掉它：设置环境变量 JWT_SECRET（auth/user/gateway 三处会一起生效）。");
+            log.warn("========================================================================");
+            log.warn("");
+        } else {
+            log.info("[gateway AuthenticationFilter] JWT 密钥已由外部配置提供（非开发默认值）。");
+        }
     }
 
     @Override
