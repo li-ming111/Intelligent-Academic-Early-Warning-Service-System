@@ -10,6 +10,16 @@ import java.util.List;
 
 /**
  * 学生服务降级处理类
+ *
+ * <p><b>⚠️ 2026-10-01 第十七轮查证：本类是个死 bean，永远不会被调用。</b>
+ * 它只是个普通的 {@code @Component}，本仓<b>没有任何</b> {@code fallbackClass} /
+ * {@code fallback =} 指向它（全仓 grep {@code fallbackClass|blockHandlerClass} 零命中），
+ * 而 {@link StudentServiceImpl} 标了 {@code @Primary} —— 容器里每个 {@code StudentService}
+ * 注入点拿到的都是 impl。
+ *
+ * <p>本仓真正生效的降级是<b>另一套</b>：{@code @SentinelResource(fallback = "方法名")}
+ * （注意是<b>方法名</b>，不是类），以及各调用点自己的 try/catch。
+ * 详见《答辩准备-启动与演示手册》§6.17。
  */
 @Component
 public class StudentServiceFallback implements StudentService {

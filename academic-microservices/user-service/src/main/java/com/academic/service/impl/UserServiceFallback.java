@@ -13,6 +13,19 @@ import java.util.Map;
 
 /**
  * 用户服务降级处理类
+ *
+ * <p><b>⚠️ 2026-10-01 第十七轮查证：本类是个死 bean，永远不会被调用。</b>
+ * 它只是个普通的 {@code @Component}，本仓<b>没有任何</b> {@code fallbackClass} /
+ * {@code fallback =} 指向它（全仓 grep {@code fallbackClass|blockHandlerClass} 零命中），
+ * 而 {@link UserServiceImpl} 标了 {@code @Primary} —— 容器里每个 {@code UserService}
+ * 注入点拿到的都是 impl。
+ *
+ * <p>它<b>唯一的作用</b>是"接口多一个方法就得跟着改一遍"：{@code UserController} 的
+ * 构造函数注释里就记着这件事逼出来的一个绕行写法（那里干脆直接注入 Mapper 来躲开它）。
+ *
+ * <p>本仓真正生效的降级是<b>另一套</b>：{@code @SentinelResource(fallback = "方法名")}
+ * （注意是<b>方法名</b>，不是类），以及各调用点自己的 try/catch。
+ * 详见《答辩准备-启动与演示手册》§6.17。
  */
 @Component
 public class UserServiceFallback implements UserService {
