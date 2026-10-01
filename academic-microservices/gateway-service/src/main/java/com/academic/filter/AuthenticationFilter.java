@@ -94,9 +94,11 @@ public class AuthenticationFilter implements GlobalFilter, Ordered {
     //   /api/users/list、/api/users/add、/api/users/delete/{id}、/api/users/count
     //   /api/users/by-username/{name}  ← 直接返回含密码哈希的原始 User 实体
     //   /api/users/update/{id}         ← ★ 请求体是完整 User 实体，改别人的 role/status 就是提权
-    // 同理 `/api/auth/**` 也不能整段放开：`/api/auth/register` 能建账号（按最低权限建学生），
+    // 同理 `/api/auth/**` 也不能整段放开：`/api/auth/register/student` 能建账号，
     // `/api/auth/info/{id}` 也会绕过下面的归属校验。
-    // （原话是 `/api/auth/register/admin` 能造系统管理员账号 —— 那个端点 2026-10-01 已删。）
+    // （原话点名的是 `/api/auth/register/admin` —— 它能造系统管理员账号，那个端点 2026-10-01 已删；
+    //  裸的 `/api/auth/register` 同日也按"零调用方"删了，所以现在这一段伞下**只剩三条自助注册路径**，
+    //  而它们的约束在 user-service 自己的 SecurityConfig 里逐条列着。）
 
     /** 改自己的密码。 */
     private static final String AUTH_CHANGE_PASSWORD = "/api/auth/change-password";
@@ -266,8 +268,9 @@ public class AuthenticationFilter implements GlobalFilter, Ordered {
         //   GET    /api/users/by-username/{n}   原始 User 实体（含 BCrypt 密码哈希）
         //   GET    /api/users/count             账号总数
         // 该对非管理员开放的只有"本人的资料 / 本人的设置"，且 id 必须等于 token 里的 userId。
-        // ⚠️ 与 /api/auth/register 那条同理：user-service 没有 GatewayAuthFilter、
-        //    而且是本机可直连的，**网关不是网络边界** —— 那边 UserController 里做了同样的判定。
+        // ⚠️ 与 `/api/auth/**` 同理（那个前缀过去也挂过一条"管理员专用"的闸，2026-10-01 随端点一起删了）：
+        //    user-service 没有 GatewayAuthFilter、而且是本机可直连的，**网关不是网络边界**
+        //    —— 那边 UserController 里做了同样的判定。
         if (path.equals(PREFIX_USERS) || path.startsWith(PREFIX_USERS + "/")) {
             Matcher m = USER_SELF_PATTERN.matcher(path);
             if (m.matches() && userId != null) {
@@ -281,25 +284,26 @@ public class AuthenticationFilter implements GlobalFilter, Ordered {
             return false;
         }
 
-        // 注册端点：白名单只放过 /api/auth/register/{student,teacher,counselor} 三条**自助**路径，
-        // 它们匹配白名单后直接 return，走不到这里。能走到这一行的只剩裸的 /api/auth/register
-        // —— 它按**最低权限**建学生（控制器里写死 ROLE_STUDENT，请求体的 role 不生效）。
-        // 把这一关放在网关，是因为下游 user-service 里没有 GatewayAuthFilter、拿不到调用者角色，
-        // 它的 /auth 段对任何持 token 的人都通（见本文件末尾的 return true）。
+        // ==================== 这里原来有 `/api/auth/register/**` 的角色闸（2026-10-01 删） ====================
         //
-        // ⚠️ 2026-10-01 变更：`/api/auth/register/admin` **已连同端点一起删除**。
-        //    2026-09-30 那个洞是真的 —— 任何已登录角色（含学生）POST 它并带 role:4
-        //    就能造出系统管理员（当时是"网关要求 role=4 + 控制器按已验签 token 再判一次"
-        //    两层修的）。后来发现它零调用方、且与 `/users/add` 重复，就**删掉端点本身**
-        //    ⇒ 攻击面随之消失，比留着再加闸更彻底。管理员建号现在只剩
-        //    AdminUsers.vue → `POST /api/users/add` 一条活路径（上面 PREFIX_USERS 那段管着）。
-        if (path.startsWith("/api/auth/register")) {
-            boolean allowed = role == ROLE_ADMIN;
-            if (!allowed) {
-                log.warn("拒绝非管理员访问注册端点（管理员专用）: role={}, path={}", role, path);
-            }
-            return allowed;
-        }
+        // 历史：`/api/auth/register/admin` 曾经是个真洞 —— 任何已登录角色（含学生）
+        // POST 它并带 `role:4` 就能造出系统管理员。2026-09-30 用两层修（网关要求 role=4 +
+        // 控制器按已验签 token 再判一次）；2026-10-01 发现它零调用方、且与 `/users/add` 重复，
+        // 就**删掉端点本身** ⇒ 攻击面消失，比留着再加闸更彻底。管理员建号现在只剩
+        // AdminUsers.vue → `POST /api/users/add` 一条活路径（上面 PREFIX_USERS 那段管着）。
+        //
+        // 剩下的那段 `path.startsWith("/api/auth/register")` 闸，**原本只拦得住裸的
+        // `/api/auth/register`**（白名单放了三条自助路径，它们匹配后直接 return，走不到这里；
+        // 这一点原注释自己就写明了）。而裸端点在 2026-10-01 也按"零调用方 = 删"删掉了
+        // （与 `/register/student` 是同一个调用、一字不差）⇒ **这段闸再没有任何请求能命中**，
+        // 属死代码，一并删除。两处是**同一次改动的两半**，只删一处会留下一个永远不成立的判断。
+        //
+        // ⚠️ 保留这条注释是因为下面这句仍然成立、且值得记住：
+        //    **网关不是网络边界。** user-service 没有 GatewayAuthFilter、而且本机可直连，
+        //    它的 `/auth` 段对任何持 token 的人都通（见本文件末尾的 return true）。
+        //    所以 `/api/auth/register/{student,teacher,counselor}` 三条自助路径的约束
+        //    **只在 user-service 自己的 SecurityConfig 里**（那边刻意逐个列出、不用通配），
+        //    网关白名单只是"放进来"而已，不是"管住"。
 
         // RBAC 细粒度校验（有 RBAC 数据时才生效）
         if (rbacCache.hasRbacData()) {

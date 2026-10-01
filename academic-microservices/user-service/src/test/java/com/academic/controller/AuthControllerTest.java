@@ -58,24 +58,16 @@ class AuthControllerTest {
         verify(userService, times(1)).login(request);
     }
     
-    /** 通用 /register 入口按**最低权限**（学生）处理。 */
-    @Test
-    void testRegister_Success() {
-        // 准备测试数据
-        Object request = new Object();
-
-        // 模拟行为
-        when(userService.register(request, 1)).thenReturn("Register successful");
-
-        // 执行测试
-        ApiResponse<String> result = authController.register(request);
-
-        // 验证结果
-        assertNotNull(result);
-
-        // 验证调用
-        verify(userService, times(1)).register(request, 1);
-    }
+    // ==================== 这里原有 `testRegister_Success`（2026-10-01 删） ====================
+    //
+    // 它测的是裸的 `POST /register`（调 `authController.register(request)`）。那个端点
+    // 2026-10-01 按"零调用方 = 删"删掉了 —— 它与 `POST /register/student` 是同一个调用
+    // （两处实现体一字不差，都是 `userService.register(request, ROLE_STUDENT)`）。
+    //
+    // 它覆盖的"通用入口按最低权限处理"这件事**没有失去覆盖**：下面这条
+    // `testRegisterStudent_ignoresRoleInBody` 走的就是 `registerStudent`，
+    // 断言的是同一件事（传下去的是端点写死的 1，不是请求体里的 role），
+    // 而且比原来更严（额外断言 `never()).register(..., 4)`）。所以是收敛，不是丢覆盖。
 
     /**
      * 请求体里带 {@code role:4} 也**提不了权** —— 学生注册端点固定传 1。

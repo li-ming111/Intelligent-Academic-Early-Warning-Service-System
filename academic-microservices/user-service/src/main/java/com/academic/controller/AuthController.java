@@ -64,27 +64,20 @@ public class AuthController {
         }
     }
 
-    /**
-     * 用户注册（通用入口）
-     * <p>
-     * 处理用户注册请求，验证并保存用户信息。
-     * ⚠️ 该入口**只创建学生**（role=1）：请求体里的 {@code role} 不生效。
-     * </p>
-     * @param request 注册请求，包含用户信息
-     * @return 注册结果
-     */
-    @PostMapping("/register")
-    public ApiResponse<String> register(@RequestBody Object request) {
-        try {
-            log.info("User register request");
-            // 通用入口按**最低权限**处理（注册学生）。要更高角色请走各自的端点。
-            String result = userService.register(request, ROLE_STUDENT);
-            return ApiResponse.success(result);
-        } catch (Exception e) {
-            log.error("Register failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
-        }
-    }
+    // ==================== 这里原来有裸的 `POST /register`（2026-10-01 删） ====================
+    //
+    // 它和紧跟其后的 `POST /register/student` 是**同一个调用** —— 两处的实现体一字不差，
+    // 都是 `userService.register(request, ROLE_STUDENT)`，注释也都写明"通用入口按最低权限
+    // 处理（注册学生）"。也就是说它**不是**提权面（请求体里的 `role` 本来就不生效），
+    // 只是一个和后缀端点完全重复的入口。
+    //
+    // 删它的依据是"零调用方"：前端 `api/index.js` 只发 `/auth/register/{student,teacher,counselor}`，
+    // 小程序 `services/api.js` 同三条，裸路径全仓无一处（逐文件 grep 过）。
+    //
+    // ⚠️ 连带改动：网关 `AuthenticationFilter` 里那段 `path.startsWith("/api/auth/register")`
+    //    的闸**原本只拦得住裸路径**（它自己的注释写明：白名单放过三条自助路径后，
+    //    "能走到这一行的只剩裸的 /api/auth/register"）。端点没了，那段闸就成了死代码，
+    //    已一并删除 —— 所以这两处必须一起改，只删一处会留下一个永远不成立的判断。
 
     /**
      * 学生注册

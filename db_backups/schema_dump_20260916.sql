@@ -5,6 +5,7 @@ CREATE TABLE `academic_warning` (
   `student_id` bigint NOT NULL,
   `student_name` varchar(100) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `rule_id` bigint DEFAULT NULL,
+  `fail_count` int DEFAULT NULL,
   `type` int DEFAULT NULL,
   `title` varchar(100) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `description` text COLLATE utf8mb4_unicode_ci,
@@ -78,6 +79,7 @@ CREATE TABLE `assistance_evaluations` (
   `counselor_id` bigint DEFAULT NULL,
   `content` text COLLATE utf8mb4_unicode_ci,
   `score` int DEFAULT NULL,
+  `effectiveness` int DEFAULT NULL,
   `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
@@ -210,8 +212,6 @@ CREATE TABLE `colleges` (
   `code` varchar(50) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `description` varchar(500) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `status` int DEFAULT '1',
-  `student_count` int DEFAULT '0',
-  `teacher_count` int DEFAULT '0',
   `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
@@ -615,6 +615,7 @@ CREATE TABLE `score_appeals` (
   `score_id` bigint DEFAULT NULL,
   `course_id` bigint DEFAULT NULL,
   `reason` text COLLATE utf8mb4_unicode_ci,
+  `description` text COLLATE utf8mb4_unicode_ci,
   `attachments` varchar(500) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `status` int DEFAULT '0',
   `reply` text COLLATE utf8mb4_unicode_ci,
@@ -783,31 +784,6 @@ CREATE TABLE `subscription_preferences` (
 /*!40101 SET character_set_client = @saved_cs_client */;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!50503 SET character_set_client = utf8mb4 */;
-CREATE TABLE `support_resource` (
-  `id` bigint NOT NULL AUTO_INCREMENT,
-  `title` varchar(200) COLLATE utf8mb4_unicode_ci NOT NULL,
-  `description` text COLLATE utf8mb4_unicode_ci,
-  `type` varchar(50) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
-  `category` varchar(50) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
-  `content` text COLLATE utf8mb4_unicode_ci,
-  `url` varchar(500) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
-  `file_path` varchar(500) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
-  `file_size` bigint DEFAULT NULL,
-  `file_type` varchar(50) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
-  `author` varchar(100) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
-  `views` int DEFAULT '0',
-  `downloads` int DEFAULT '0',
-  `status` int DEFAULT '1',
-  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
-  `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  PRIMARY KEY (`id`),
-  KEY `idx_support_resource_type` (`type`),
-  KEY `idx_support_resource_category` (`category`),
-  KEY `idx_support_resource_status` (`status`)
-) ENGINE=InnoDB AUTO_INCREMENT=5 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-/*!40101 SET character_set_client = @saved_cs_client */;
-/*!40101 SET @saved_cs_client     = @@character_set_client */;
-/*!50503 SET character_set_client = utf8mb4 */;
 CREATE TABLE `teacher_class_application` (
   `id` bigint NOT NULL AUTO_INCREMENT,
   `teacher_id` bigint NOT NULL,
@@ -863,30 +839,6 @@ CREATE TABLE `teacher_profile` (
   CONSTRAINT `fk_teacher_profile_college_id` FOREIGN KEY (`college_id`) REFERENCES `colleges` (`id`),
   CONSTRAINT `fk_teacher_profile_user_id` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`)
 ) ENGINE=InnoDB AUTO_INCREMENT=9 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-/*!40101 SET character_set_client = @saved_cs_client */;
-/*!40101 SET @saved_cs_client     = @@character_set_client */;
-/*!50503 SET character_set_client = utf8mb4 */;
-CREATE TABLE `teaching_resources` (
-  `id` bigint NOT NULL AUTO_INCREMENT,
-  `course_id` bigint DEFAULT NULL,
-  `title` varchar(200) COLLATE utf8mb4_unicode_ci NOT NULL,
-  `description` text COLLATE utf8mb4_unicode_ci,
-  `type` varchar(50) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
-  `url` varchar(500) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
-  `file_path` varchar(500) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
-  `file_size` bigint DEFAULT NULL,
-  `file_type` varchar(50) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
-  `downloads` int DEFAULT '0',
-  `status` int DEFAULT '1',
-  `created_by` varchar(100) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
-  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
-  `updated_by` varchar(100) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
-  `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  PRIMARY KEY (`id`),
-  KEY `idx_teaching_resources_course_id` (`course_id`),
-  KEY `idx_teaching_resources_uploader_id` (`created_by`),
-  CONSTRAINT `fk_teaching_resources_course_id` FOREIGN KEY (`course_id`) REFERENCES `courses` (`id`)
-) ENGINE=InnoDB AUTO_INCREMENT=11 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!50503 SET character_set_client = utf8mb4 */;

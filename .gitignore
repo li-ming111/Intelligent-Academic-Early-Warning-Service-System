@@ -42,7 +42,10 @@ temp_gateway/
 generated-images/
 
 # 一次性草稿（接口转储、临时修复脚本）
+# 约定：`_*.txt` 一律是扫描/探针草稿，不入库 —— 仓库根和 academic-microservices/ 下都算。
+# （原规则只写了 academic-microservices/ 一层，2026-10-01 在仓库根写草稿时漏网了。）
 /tmp/
+_*.txt
 academic-microservices/_*.txt
 
 # testsprite：脚本与 plan 入库，跑出来的产物不入库

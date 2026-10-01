@@ -22,8 +22,10 @@ CREATE TABLE IF NOT EXISTS `colleges` (
     `code` varchar(50) DEFAULT NULL,
     `description` varchar(500) DEFAULT NULL,
     `status` int DEFAULT '1',
-    `student_count` int DEFAULT '0',
-    `teacher_count` int DEFAULT '0',
+    -- 这里原来有 `student_count` / `teacher_count` 两列（2026-10-01 删，与活库对齐）。
+    -- 见第十一轮：两者在 `College` 实体上都是 `@TableField(exist=false)`、全仓 getter
+    -- 读取点 = 0，唯一维护者是注册路径的 `+1` ⇒ 必然漂移；与其补写路径不如删列。
+    -- ⚠️ 本文件此前**一直还留着这两列**，而活库 2026-10-01 已经删了 —— 属于下面说的"结构漂移"。
     `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
     `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     PRIMARY KEY (`id`),
@@ -127,28 +129,17 @@ CREATE TABLE IF NOT EXISTS `warning_rules` (
     KEY `idx_status` (`status`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci comment '预警规则表';
 
-CREATE TABLE IF NOT EXISTS `support_resource` (
-    `id` bigint NOT NULL AUTO_INCREMENT,
-    `title` varchar(200) NOT NULL,
-    `description` text,
-    `type` varchar(50) DEFAULT NULL,
-    `category` varchar(50) DEFAULT NULL,
-    `content` text,
-    `url` varchar(500) DEFAULT NULL,
-    `file_path` varchar(500) DEFAULT NULL,
-    `file_size` bigint DEFAULT NULL,
-    `file_type` varchar(50) DEFAULT NULL,
-    `author` varchar(100) DEFAULT NULL,
-    `views` int DEFAULT '0',
-    `downloads` int DEFAULT '0',
-    `status` int DEFAULT '1',
-    `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
-    `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    PRIMARY KEY (`id`),
-    KEY `idx_support_resource_type` (`type`),
-    KEY `idx_support_resource_category` (`category`),
-    KEY `idx_support_resource_status` (`status`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+-- ==================== 这里原来有 `support_resource`（2026-10-01 删） ====================
+--
+-- 那张表是早期"支持资源"模块的。2026-09-30 第十一轮把整个 `/api/resources/**` 模块
+-- 连根删掉之后，它的 `views` 写入方也一起没了 —— 到 2026-10-01 复核时已经是
+-- **整张表零读零写**：全仓 `grep -rn "support_resource"` 在 Java / XML / 前端 / 小程序 /
+-- 网关路由里 **0 命中**，只出现在本文件与历史备份 SQL 里；表里剩 4 行种子数据
+-- （`views`/`downloads` = 150/45、200/60、80/30、120/38），没有任何代码消费。
+--
+-- 所以按"零调用方 = 删"的口径连表一起删，与第十一轮删 `/api/resources/**` 同一收尾。
+-- ⚠️ 与 `teaching_resources` **不是同一张表**（那张在 course-service，见本文件下面的说明）——
+--    两张都孤儿，但来路不同，别混为一谈。
 
 CREATE TABLE IF NOT EXISTS `export_history` (
     `id` bigint NOT NULL AUTO_INCREMENT,
@@ -429,27 +420,22 @@ CREATE TABLE IF NOT EXISTS `enrollments` (
     CONSTRAINT `fk_enrollments_student_id` FOREIGN KEY (`student_id`) REFERENCES `student_profile` (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
-CREATE TABLE IF NOT EXISTS `teaching_resources` (
-    `id` bigint NOT NULL AUTO_INCREMENT,
-    `course_id` bigint DEFAULT NULL,
-    `title` varchar(200) NOT NULL,
-    `description` text,
-    `type` varchar(50) DEFAULT NULL,
-    `url` varchar(500) DEFAULT NULL,
-    `file_path` varchar(500) DEFAULT NULL,
-    `file_size` bigint DEFAULT NULL,
-    `file_type` varchar(50) DEFAULT NULL,
-    `downloads` int DEFAULT '0',
-    `status` int DEFAULT '1',
-    `created_by` varchar(100) DEFAULT NULL,
-    `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
-    `updated_by` varchar(100) DEFAULT NULL,
-    `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    PRIMARY KEY (`id`),
-    KEY `idx_teaching_resources_course_id` (`course_id`),
-    KEY `idx_teaching_resources_uploader_id` (`created_by`),
-    CONSTRAINT `fk_teaching_resources_course_id` FOREIGN KEY (`course_id`) REFERENCES `courses` (`id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+-- ==================== 这里原来有 `teaching_resources`（2026-10-01 删） ====================
+--
+-- 它和上面的 `support_resource` 是**两张不同的表**，来路也不同：
+-- 这张是 course-service 里一整套**从没被接上过**的后端面 ——
+-- `TeachingResourceController`（`@RequestMapping("/teaching-resources")`，9 个端点）
+-- + 实体 + Mapper + Service + Impl。2026-10-01 复核时全仓零调用方：
+--
+--   * 网关**没有这条路由**（`gateway-service/application.yml` 里 course-service 只挂
+--     `Path=/api/courses/**` + `StripPrefix=1`），而 course-service 自己**没有
+--     `context-path`** ⇒ 连 `/api/courses/teaching-resources/...` 也映射不到 `/teaching-resources/...`；
+--   * 前端 `academic-warning-frontend/src` 与小程序 `academic-warning-xcx/src` grep
+--     `teaching-resource` **0 命中**；
+--   * 全仓提到 `teaching-resources` 的地方，当时只有它自己的 `@RequestMapping`
+--     和实体的 `@TableName` 两行。
+--
+-- 表里那 10 行数据同样没有任何代码消费。⇒ 代码与表一起删，口径同第十一轮删 `/api/resources/**`。
 
 -- ==================== 成绩相关 ====================
 
@@ -513,6 +499,9 @@ CREATE TABLE IF NOT EXISTS `score_appeals` (
     `score_id` bigint DEFAULT NULL,
     `course_id` bigint DEFAULT NULL,
     `reason` text,
+    -- 2026-09-30 加：学生自己写的申诉正文（"请详细描述申诉理由"那一栏）。
+    -- 加列前提交体里这个 key 被静默丢弃，所以历史行为 NULL。
+    `description` text,
     `attachments` varchar(500) DEFAULT NULL,
     `status` int DEFAULT '0',
     `reply` text,
@@ -567,6 +556,11 @@ CREATE TABLE IF NOT EXISTS `academic_warning` (
     `student_id` bigint NOT NULL,
     `student_name` varchar(100) DEFAULT NULL,
     `rule_id` bigint DEFAULT NULL,
+    -- 2026-09-30 加：触发本次预警时的挂科门数。是"预警判重键"的一半
+    -- （判重键 = 学生 + 门数，且**不看 status**），也是档位校验的输入。
+    -- 在此之前的取值方式见 §6.6。**这条注释是 2026-10-01 补的** ——
+    -- 在此之前 init_schema.sql 一直缺这一列（见本节末的"结构漂移"说明）。
+    `fail_count` int DEFAULT NULL,
     `type` int DEFAULT NULL,
     `title` varchar(100) DEFAULT NULL,
     `description` text,
@@ -637,6 +631,9 @@ CREATE TABLE IF NOT EXISTS `assistance_evaluations` (
     `counselor_id` bigint DEFAULT NULL,
     `content` text,
     `score` int DEFAULT NULL,
+    -- 2026-09-30 加：帮扶有效性评分 1-5。加列前的历史行为 NULL
+    -- （是"当时没收集"，不是 0 分，页面不要拿 `|| 0` 盖过去）。
+    `effectiveness` int DEFAULT NULL,
     `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
     `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     PRIMARY KEY (`id`),
