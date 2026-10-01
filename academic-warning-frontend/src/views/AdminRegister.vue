@@ -109,7 +109,11 @@ const handleRegister = () => {
     if (!valid) return
     loading.value = true
     try {
-      await authAPI.registerAdmin({ ...form.value, role: 3 })
+      // 不传 role：角色由**端点**决定 —— /auth/register/admin 建的就是管理员（role=4）。
+      // 从前这里传 role:3，而服务端当年从请求体读 role，于是这页标题写着"管理员注册"、
+      // 字段是工号+所属部门，实际建出来的却是**辅导员**（2026-09-30 修：角色改由端点写死，
+      // 请求体里的 role 一律忽略）。现在这页终于名副其实。
+      await authAPI.registerAdmin({ ...form.value })
       ElMessage.success('注册成功，请登录')
       router.push('/login')
     } catch (e) { ElMessage.error(e.message || '注册失败') }

@@ -145,12 +145,42 @@ const searchStudents = () => {
   ElMessage.success('搜索完成，共 ' + studentList.value.length + ' 条结果')
 }
 
-const exportStudents = async () => {
-  try {
-    ElMessage.info('学生信息已导出')
-  } catch (error) {
-    console.error('导出失败:', error)
+// 导出当前**列表里正在显示**的那批（= 搜索/班级筛选之后的结果），
+// 而不是全量 —— 按钮就挨着「搜索」，导出被筛过的那批才符合预期，提示里也写清条数。
+// 2026-09-30 之前这里只有一句 `ElMessage.info('学生信息已导出')`，**不生成任何文件**：
+// 用户看到"已导出"，去下载目录里什么也没有。CSV 在浏览器本地生成，不依赖后端
+// （counselor-service 没有任何导出口径，也没有 POI 依赖），断网也能用。
+const exportStudents = () => {
+  const rows = studentList.value
+  if (!rows.length) {
+    ElMessage.warning('当前没有可导出的学生')
+    return
   }
+
+  const header = ['学号', '姓名', '班级', '联系电话', '邮箱']
+  // 逗号/引号/换行要按 CSV 规则转义，否则含这些字符的字段会把列错开
+  const cell = (v) => {
+    const s = v === null || v === undefined ? '' : String(v)
+    return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
+  }
+  const csv = [header, ...rows.map(s => [
+    s.studentId, s.studentName || s.name || '', s.className, s.phone, s.email
+  ])].map(r => r.map(cell).join(',')).join('\r\n')
+
+  // 开头的 ﻿ 是 UTF-8 BOM：不加的话 Excel 会按 GBK 解这份 UTF-8 文件，
+  // 中文列名和姓名全是乱码 —— "导出了但打不开"等于没导出。
+  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' })
+  const url = window.URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = `学生名单_${new Date().toISOString().slice(0, 10)}.csv`
+  document.body.appendChild(link)
+  link.click()
+  document.body.removeChild(link)
+  // 立刻释放会让部分浏览器来不及取数据，延到下一轮事件循环
+  setTimeout(() => window.URL.revokeObjectURL(url), 0)
+
+  ElMessage.success(`已导出 ${rows.length} 条`)
 }
 
 const viewStudent = (row) => {

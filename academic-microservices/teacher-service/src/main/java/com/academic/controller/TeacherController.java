@@ -663,12 +663,14 @@ public class TeacherController {
      * <p>谁处理的取 {@code X-Username}（网关注入）。直连服务时该头可能为空，
      * 那就如实记 {@code null}，不编一个名字。
      *
-     * <p>⚠️ **"已处理"不是永久的。** {@code WarningScheduledTask} 每 30 分钟增量扫一次，
-     * 判重只看"该生有没有 status=0 的预警"
-     * （{@code ScoreReadMapper.findExistingWarningStudentIds} 里写死 {@code WHERE status = 0}）。
-     * 所以置成已处理之后，只要该生挂科门数仍 > 0，下一轮扫描就会**再生成一条新的**
-     * （新 id、status=0，页面上就是"这个人又冒出来了"）。这不是本方法的问题，
-     * 是那个判重口径的问题；没在这条路径上顺手改，因为它会改变全库的预警生成行为。
+     * <p><b>2026-09-30 更新："已处理"现在是稳的。</b>此前 {@code WarningScheduledTask}
+     * 每 30 分钟增量扫一次，判重只看"该生有没有 status=0 的预警"
+     * （{@code ScoreReadMapper} 里写死 {@code WHERE status = 0}），于是置成已处理
+     * 就等于给该生开了绿灯 —— 只要他挂科门数仍 &gt; 0，下一轮就再插一条新的
+     * （新 id、status=0），页面上同一个人挂着"已处理"和"待处理"两条。
+     * 判重口径已改成「学生 + 挂科门数」且**不看 status**（见
+     * {@code ScoreReadMapper.findExistingWarningKeys}），所以处理掉之后不会复活；
+     * 只有门数真的变了才会再报一条 —— 那本来就该报。
      */
     @PostMapping("/warnings/{warningId}/process")
     public ApiResponse<Object> processWarning(@PathVariable Long warningId,
@@ -1799,17 +1801,18 @@ public class TeacherController {
         }
     }
 
-    /**
-     * 标记消息已读
-     */
-    @PostMapping("/messages/{messageId}/mark-read")
-    public ApiResponse<Object> markMessageAsRead(@PathVariable Long messageId) {
-        try {
-            return ApiResponse.success("消息已标记为已读");
-        } catch (Exception e) {
-            return ApiResponse.error(e.getMessage());
-        }
-    }
+    // 「标记消息已读」`POST /messages/{id}/mark-read` 已删（2026-09-30）。
+    //
+    // 它原先的整个方法体只有一句 `return ApiResponse.success("消息已标记为已读")` ——
+    // **不碰任何表**，却回 success，是典型的"200 但不写库"空壳。
+    // 更要紧的是：这里的"消息"就是 `feedback` 表（见 getMessages 的说明），
+    // 该表**没有"已读"这一列**，只有 status 0=未回复 / 1=已回复。
+    // 于是前端那个「已读」按钮本地把 status 改成 1 —— 等于**点一下就把未回复的反馈标成已回复**，
+    // 而刷新后 unread-count 又从库里算回来，界面与库各说各话。
+    //
+    // 删掉而不是"补实现"：这个状态没有地方可落，补出来也只能是假的。
+    // 「未回复」口径由 `GET /messages/{userId}/unread-count` 给（status=0 的条数），
+    // 回复走 `POST /feedbacks/{feedbackId}/reply`。
 
     /**
      * 按学院统计教师数量

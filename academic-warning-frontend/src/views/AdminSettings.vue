@@ -296,22 +296,33 @@ const updateAccount = async () => {
       return
     }
     
-    // 保存到localStorage
-    if (accountInfo.value.name) {
-      localStorage.setItem('userName', accountInfo.value.name)
+    const userId = localStorage.getItem('userId')
+    if (!userId) {
+      ElMessage.error('未取到当前账号，请重新登录')
+      return
     }
-    if (accountInfo.value.email) {
-      localStorage.setItem('email', accountInfo.value.email)
-    }
-    if (accountInfo.value.phone) {
-      localStorage.setItem('phone', accountInfo.value.phone)
-    }
-    
+
+    // 真的写库：`users` 表是账号属性的**唯一权威源**，与 student/teacher/counselor
+    // 的设置页走同一条路径（PUT /users/update/{自己的id}）。
+    // 2026-09-30 之前这里**只改 localStorage 就弹成功** —— 而 loadAdminInfo 又优先
+    // 从 localStorage 读姓名/邮箱，所以页面看着"改成功了"，库里那行一个字没动。
+    await adminAPI.updateProfile(parseInt(userId), {
+      name: accountInfo.value.name,
+      email: accountInfo.value.email,
+      phone: accountInfo.value.phone
+    })
+
+    // 库写成功之后再落 localStorage。顺序反了的话，接口失败时本地已经"改"了，
+    // 页面显示与库不一致 —— 正是上面那个坑的翻版。
+    localStorage.setItem('userName', accountInfo.value.name)
+    localStorage.setItem('email', accountInfo.value.email)
+    localStorage.setItem('phone', accountInfo.value.phone)
+
     ElMessage.success('账户信息已更新')
     accountInfoBackup.value = JSON.parse(JSON.stringify(accountInfo.value))
   } catch (error) {
     console.error('更新账户信息失败:', error)
-    ElMessage.error('更新失败')
+    ElMessage.error(error?.message || '更新失败')
   }
 }
 
@@ -338,13 +349,29 @@ const changePassword = async () => {
     return
   }
 
+  const userId = localStorage.getItem('userId')
+  if (!userId) {
+    ElMessage.error('未取到当前账号，请重新登录')
+    return
+  }
+
   try {
-    // 调用后端修改密码接口
+    // 真的打后端。2026-09-30 之前这里**注释写着"调用后端修改密码接口"、
+    // 下一行就直接弹「密码修改成功」**，一个请求都没发出去 —— 管理员以为改了口令，
+    // 实际还是原来的（答辩话术要讲 BCrypt，这个按钮恰好是反例，现在补真了）。
+    // 后端 /auth/change-password 会**校验旧密码**：旧密码不对 → 里层 code:500，
+    // `client.js` 把它们 reject 成 Error(message)，所以成功提示只可能在真改成功时出现。
+    // 身份以网关注入的 `X-User-Id` 为准，body 里的 userId 只是"未经网关"时的兜底。
+    await adminAPI.changePassword({
+      userId: parseInt(userId),
+      oldPassword: passwordForm.value.oldPassword,
+      newPassword: passwordForm.value.newPassword
+    })
     ElMessage.success('密码修改成功！')
     resetPasswordForm()
   } catch (error) {
     console.error('修改密码失败:', error)
-    ElMessage.error('密码修改失败')
+    ElMessage.error(error?.message || '密码修改失败')
   }
 }
 

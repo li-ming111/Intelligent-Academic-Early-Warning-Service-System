@@ -301,9 +301,13 @@ const totalRules = computed(() => {
   return filtered.length
 })
 
-const testRule = (row) => {
-  ElMessage.success(`规则【${row.ruleName}】测试通过`)
-}
+// `testRule` 已删（2026-09-30）：它无条件弹「规则【X】测试通过」，不比对任何数据，
+// 而且**模板里根本没有按钮引用它**（操作列只有 编辑/删除）—— 是一段没被调用的死代码。
+// 真的"测试规则"不是前端能做的事：判断一条规则会不会生效要看
+// warning-service 的 `RuleConditionParser` 能否解析它的 expression、`status` 是否为 1、
+// `warningLevel` 是否已配（三项缺一，`WarningScheduledTask.loadRules` 就会把这条规则跳过，
+// 只写日志不报警）。要在页面上给出真结论，得在服务端加一个复用 `RuleConditionParser`
+// 的接口 —— 见手册 §7 该项的说明，本轮未做。
 
 const getConditionText = (row) => {
   if (row.expression) {

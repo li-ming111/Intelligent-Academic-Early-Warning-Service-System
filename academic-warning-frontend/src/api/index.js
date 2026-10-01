@@ -334,8 +334,13 @@ export const teacherAPI = {
   getFeedbacks: (teacherId, category) => {
     return apiClient.get(`/teachers/feedbacks`, { params: { teacherId: teacherId, category } })
   },
+  // ⚠️ 2026-09-30 修正：原来打的是 `PUT /teachers/feedbacks/{id}`，**后端没有这个端点**
+  // （teacher-service 只有 `GET /feedbacks` 与 `POST /feedbacks/{id}/reply`），
+  // 所以 PC 教师「反馈管理」页的回复按钮**从来没成功过一次**，只会弹"回复失败"。
+  // 现在与下面「反馈管理API」里的 `replyToFeedback` 指向同一路径 ——
+  // 保留 `replyFeedback` 这个名字是因为 `TeacherFeedback.vue` 已经在调它。
   replyFeedback: (feedbackId, data) => {
-    return apiClient.put(`/teachers/feedbacks/${feedbackId}`, data)
+    return apiClient.post(`/teachers/feedbacks/${feedbackId}/reply`, data)
   },
   getEnrollments: (teacherId, courseId) => {
     const params = {}
@@ -459,10 +464,12 @@ export const teacherAPI = {
   },
   getUnreadCount: (userId) => {
     return apiClient.get(`/teachers/messages/${userId}/unread-count`)
-  },
-  markMessageAsRead: (messageId) => {
-    return apiClient.post(`/teachers/messages/${messageId}/mark-read`)
   }
+  // markMessageAsRead 已删（2026-09-30）：它打的 `POST /teachers/messages/{id}/mark-read`
+  // 后端只有一行 `return ApiResponse.success("消息已标记为已读")`，**不碰任何表**。
+  // 数据源 `feedback` 表也没有"已读"列（只有 status 0=未回复/1=已回复），
+  // 所以这个动作没有地方可落 —— 保留一个"看起来能用"的调用只会让人以为标记生效了。
+  // 未读口径用上面的 `getUnreadCount`（= status 0 的条数），回复走 `replyToFeedback`。
 }
 
 export const counselorAPI = {
@@ -717,6 +724,20 @@ export const adminAPI = {
   // /users/add 重名直接抛异常，前端能正确显示失败。
   createUser: (data) => {
     return apiClient.post('/users/add', data)
+  },
+  // ---- 管理员本人的账号级自助设置 ----
+  // 与 student/teacher/counselor 用的是同两条路径（users 表是账号属性的唯一权威源）：
+  //   改姓名/邮箱/电话 → PUT /users/update/{自己的id}
+  //   改密码（要验旧密码）→ POST /auth/change-password
+  // 2026-09-30 补：管理员账号以前**两条都没有** —— `AdminSettings.vue` 的
+  // 「保存」和「修改密码」只在 localStorage 里改、然后直接弹成功，一个请求都不发。
+  // 用户名/姓名/邮箱在 loadAdminInfo 里优先读 localStorage，所以页面看着"改成功了"，
+  // 库里那行一个字都没动，刷新后（或换台机器）就变回去。
+  changePassword: ({ userId, oldPassword, newPassword }) => {
+    return apiClient.post('/auth/change-password', { userId, oldPassword, newPassword })
+  },
+  updateProfile: (userId, data) => {
+    return apiClient.put(`/users/update/${userId}`, data)
   },
   getDashboard: () => {
     return apiClient.get(`/admin/dashboard`)

@@ -199,7 +199,21 @@ class ScoreRecordServiceTest {
         assertNotNull(saved.getFinalScore(), "final_score 被抹掉会让这一行从挂科统计里消失");
         assertEquals(0, new BigDecimal("90.0").compareTo(saved.getFinalScore()));
 
-        verify(auditLogService).record(oldRecord, sent, "补考通过", "教师");
+        // 审计日志：ScoreAuditLogService.record() 只从 newRecord 里取**归属**
+        // （studentId / studentName / courseId / teacherId）和**新旧分数**，
+        // 它不读 grade / grade_point / score_total / remark。
+        // 所以不能拿上面那个裸对象 `sent` 当预期 —— 生产代码故意另起了一个
+        // 只带归属信息的新对象：裸对象没有 student_id，而 score_audit_log.student_id
+        // 是 NOT NULL，直接塞进去会插入失败 → 整个事务回滚 → 接口表面 500、
+        // 实际一分都没改。这里断言的是"审计行最终会被写成什么"。
+        ArgumentCaptor<ScoreRecord> auditNewCap = ArgumentCaptor.forClass(ScoreRecord.class);
+        verify(auditLogService).record(same(oldRecord), auditNewCap.capture(),
+                eq("补考通过"), eq("教师"));
+        ScoreRecord audited = auditNewCap.getValue();
+        assertEquals(3L, audited.getStudentId(), "student_id 是 NOT NULL，不能为 null");
+        assertEquals(1L, audited.getCourseId());
+        assertEquals(62.0, audited.getScore(), "审计行的新分数必须是被写入的那个分数");
+        assertEquals(55.0, oldRecord.getScore(), "旧分数取自改分前那一行");
     }
 
     /** 删单条：连带删掉对应学期的权威行。 */
