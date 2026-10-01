@@ -1,6 +1,7 @@
 package com.academic.controller;
 
 import com.academic.common.dto.ApiResponse;
+import com.academic.exception.WarningNotFoundException;
 import com.academic.service.IntelligentWarningService;
 import com.academic.task.WarningScheduledTask;
 import lombok.extern.slf4j.Slf4j;
@@ -51,8 +52,11 @@ public class IntelligentWarningController {
             log.info("Generate warning request: {}", request);
             Object result = intelligentWarningService.generateWarning(request);
             return ApiResponse.success(result);
+        } catch (IllegalArgumentException e) {
+            log.warn("Generate warning 参数错误: {}", e.getMessage());
+            return ApiResponse.badRequest(e.getMessage());
         } catch (Exception e) {
-            log.error("Generate warning failed: {}", e.getMessage());
+            log.error("Generate warning failed: {}", e.getMessage(), e);
             return ApiResponse.error(500, e.getMessage());
         }
     }
@@ -66,8 +70,14 @@ public class IntelligentWarningController {
             log.info("Handle warning request: {}", request);
             Object result = intelligentWarningService.handleWarning(request);
             return ApiResponse.success(result);
+        } catch (WarningNotFoundException e) {
+            log.warn("Handle warning 目标不存在: {}", e.getMessage());
+            return ApiResponse.notFound(e.getMessage());
+        } catch (IllegalArgumentException e) {
+            log.warn("Handle warning 参数错误: {}", e.getMessage());
+            return ApiResponse.badRequest(e.getMessage());
         } catch (Exception e) {
-            log.error("Handle warning failed: {}", e.getMessage());
+            log.error("Handle warning failed: {}", e.getMessage(), e);
             return ApiResponse.error(500, e.getMessage());
         }
     }
@@ -82,7 +92,7 @@ public class IntelligentWarningController {
             Object result = intelligentWarningService.getWarningList(params);
             return ApiResponse.success(result);
         } catch (Exception e) {
-            log.error("Get warning list failed: {}", e.getMessage());
+            log.error("Get warning list failed: {}", e.getMessage(), e);
             return ApiResponse.error(500, e.getMessage());
         }
     }
@@ -97,7 +107,7 @@ public class IntelligentWarningController {
             Object result = intelligentWarningService.getWarningsByStudentId(studentId);
             return ApiResponse.success(result);
         } catch (Exception e) {
-            log.error("Get warnings by studentId failed: {}", e.getMessage());
+            log.error("Get warnings by studentId failed: {}", e.getMessage(), e);
             return ApiResponse.error(500, e.getMessage());
         }
     }
@@ -112,7 +122,7 @@ public class IntelligentWarningController {
             Object result = intelligentWarningService.getWarningsByLevel(level);
             return ApiResponse.success(result);
         } catch (Exception e) {
-            log.error("Get warnings by level failed: {}", e.getMessage());
+            log.error("Get warnings by level failed: {}", e.getMessage(), e);
             return ApiResponse.error(500, e.getMessage());
         }
     }
@@ -126,8 +136,14 @@ public class IntelligentWarningController {
             log.info("Get warning detail request: {}", warningId);
             Object result = intelligentWarningService.getWarningDetail(warningId);
             return ApiResponse.success(result);
+        } catch (WarningNotFoundException e) {
+            log.warn("Get warning detail 目标不存在: {}", e.getMessage());
+            return ApiResponse.notFound(e.getMessage());
+        } catch (IllegalArgumentException e) {
+            log.warn("Get warning detail 参数错误: {}", e.getMessage());
+            return ApiResponse.badRequest(e.getMessage());
         } catch (Exception e) {
-            log.error("Get warning detail failed: {}", e.getMessage());
+            log.error("Get warning detail failed: {}", e.getMessage(), e);
             return ApiResponse.error(500, e.getMessage());
         }
     }
@@ -141,8 +157,14 @@ public class IntelligentWarningController {
             log.info("Update warning status request: {} {}", warningId, request);
             Object result = intelligentWarningService.updateWarningStatus(warningId, request);
             return ApiResponse.success(result);
+        } catch (WarningNotFoundException e) {
+            log.warn("Update warning status 目标不存在: {}", e.getMessage());
+            return ApiResponse.notFound(e.getMessage());
+        } catch (IllegalArgumentException e) {
+            log.warn("Update warning status 参数错误: {}", e.getMessage());
+            return ApiResponse.badRequest(e.getMessage());
         } catch (Exception e) {
-            log.error("Update warning status failed: {}", e.getMessage());
+            log.error("Update warning status failed: {}", e.getMessage(), e);
             return ApiResponse.error(500, e.getMessage());
         }
     }
