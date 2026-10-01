@@ -41,7 +41,17 @@ public class SecurityConfig {
             .httpBasic(AbstractHttpConfigurer::disable)
             .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .authorizeHttpRequests(auth -> auth
-                .requestMatchers("/auth/login", "/auth/register/**", "/auth/refresh-token", "/auth/colleges", "/auth/majors").permitAll()
+                // ⚠️ 这里**刻意逐个列出**，不用 `/auth/register/**` 通配。
+                // 通配会把 `/auth/register/admin` 也放进匿名白名单，而那个端点建的是
+                // **系统管理员(role=4)**。网关那张白名单
+                // (`AuthenticationFilter.WHITE_LIST`) 本来就是逐个列 student|teacher|counselor
+                // 的 —— 两张表口径必须一致，否则"网关是唯一真实入口"这个前提一破，
+                // 直连 8082 就绕开了网关注册闸。
+                // 2026-09-30 实测（服务直连、不带任何 token）: 改前 `POST :8082/api/auth/register/admin`
+                // **能走到业务逻辑**（回 `code:500 用户名已存在`）；改后应被这一行挡下。
+                .requestMatchers("/auth/login",
+                        "/auth/register/student", "/auth/register/teacher", "/auth/register/counselor",
+                        "/auth/refresh-token", "/auth/colleges", "/auth/majors").permitAll()
                 .anyRequest().authenticated()
             )
             .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);

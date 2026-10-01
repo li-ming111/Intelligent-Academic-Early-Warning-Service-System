@@ -22,11 +22,18 @@
           </el-input>
         </div>
 
+        <el-alert v-if="collegesError" :title="collegesError" type="error" :closable="false" style="margin-bottom:14px" />
+
         <div class="rg-field">
           <label>所属学院</label>
-          <el-select v-model="form.collegeId" placeholder="请选择学院" style="width:100%" clearable>
+          <el-select v-model="form.collegeId" placeholder="请选择学院" style="width:100%" clearable
+            :loading="collegesLoading">
             <el-option v-for="c in colleges" :key="c.id" :label="c.name" :value="c.id" />
           </el-select>
+          <!-- ⚠️ /auth/colleges 会对每个学院各发起 3 次 Feign 调用（学生/教师/辅导员计数），
+               4 个学院 = 12 次。任何一个下游服务没起来时，每次都要等 Feign 重试链跑完（实测 ~13 秒）
+               —— 学院下拉可能几十秒才出来。带上 loading 至少让它"看起来在加载"而不是点不动。 -->
+          <span v-if="collegesLoading" class="rg-hint dim">正在加载学院列表…</span>
         </div>
 
         <div class="rg-field">
@@ -85,6 +92,8 @@ const router = useRouter()
 const formRef = ref()
 const loading = ref(false)
 const colleges = ref([])
+const collegesError = ref('')
+const collegesLoading = ref(false)
 const form = ref({ username: '', name: '', collegeId: '', phone: '', email: '', password: '', confirmPassword: '' })
 
 const vPhone = (_r, v, cb) => !v ? cb(new Error('请输入手机号')) : !/^1[3-9]\d{9}$/.test(v) ? cb(new Error('请输入正确的手机号')) : cb()
@@ -103,8 +112,20 @@ const rules = {
 }
 
 onMounted(async () => {
-  try { const r = await authAPI.getColleges(); colleges.value = r || [] }
-  catch (e) { ElMessage.error('加载数据失败') }
+  // 学院是**必填项**，列表拉不到就没人能提交这个表单。原来只在 catch 里闪一句
+  // ElMessage.error('加载数据失败')，3 秒后消失，用户只看到"下拉框是空的、选不了、
+  // 也点不动提交"，看不出发生了什么。改成常驻的红色横幅，并说明能做什么。
+  collegesLoading.value = true
+  try {
+    const r = await authAPI.getColleges()
+    colleges.value = r || []
+    collegesError.value = colleges.value.length ? '' : '学院列表为空，暂时无法注册；请联系管理员检查学院数据'
+  } catch (e) {
+    colleges.value = []
+    collegesError.value = '学院列表加载失败：' + (e.message || '') + '（学院是必填项，加载成功前无法提交注册）'
+  } finally {
+    collegesLoading.value = false
+  }
 })
 
 const handleRegister = () => {
@@ -112,8 +133,13 @@ const handleRegister = () => {
     if (!valid) return
     loading.value = true
     try {
-      await authAPI.registerTeacher({ ...form.value, role: 2 })
-      ElMessage.success('注册成功，请登录')
+      // 不传 role：角色由端点决定（/auth/register/teacher → 2），请求体里的 role
+      // 服务端一律忽略。留在 body 里只会让人以为"角色是前端选的"。
+      await authAPI.registerTeacher({ ...form.value })
+      // ⚠️ 教师注册出来的账号是 status=0（待审批），**现在登录不了**。
+      // 原来这里写"注册成功，请登录"再跳登录页，老师输密码会撞上
+      // 「账号正在审批中，请等待管理员审核」—— 一句和上一屏自相矛盾的话。
+      ElMessage.success({ message: '注册申请已提交，待管理员审核通过后方可登录', duration: 4000 })
       router.push('/login')
     } catch (e) { ElMessage.error(e.message || '注册失败') }
     finally { loading.value = false }

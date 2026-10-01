@@ -2,8 +2,11 @@
   <view class="page-root" :style="themeStyle">
     <app-navbar title="管理控制台" :show-back="false" />
 
+    <!-- 这里原来写的是 `adminName || userName || ...`，而 adminName 在 script 里
+         根本没有定义：编译成 _ctx.adminName，恒为 undefined，永远是 userName 生效。
+         一个不存在的"首选来源"会让人以为姓名走的是别的字段。 -->
     <role-hero
-      :title="adminName || userName || '系统管理员'"
+      :title="userName || '系统管理员'"
       subtitle="校级视图 · 全平台数据"
       :avatar-text="avatarText"
       :stats="heroStats"

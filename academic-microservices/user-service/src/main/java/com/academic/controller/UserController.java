@@ -10,6 +10,8 @@ import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DuplicateKeyException;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -36,6 +38,53 @@ public class UserController {
         this.userSettingsMapper = userSettingsMapper;
     }
 
+    // ==================== 调用者身份 ====================
+    //
+    // 2026-09-30：本控制器原先**一个权限判断都没有**。网关对 `/api/users/**` 那句
+    // "非管理员不可访问" 只写在注释里（`AuthenticationFilter` 的枚举注释），代码上
+    // role 1/2/3 走完前缀检查就落到函数末尾 `return true` —— 于是**任何已登录用户**
+    // 都能 `POST /users/add`（body 自带 role ⇒ 建出管理员）、`PUT /users/update/{别人的id}`、
+    // `GET /users/by-username/{n}`（回原始实体含 BCrypt 哈希）。
+    //
+    // ⚠️ 网关那道闸**不是网络边界**：user-service 的 8082 在本机可直连，直连时
+    // 网关的 `X-Role`/`X-User-Id` 请求头可以随便伪造。所以这里**只认
+    // `JwtAuthenticationFilter` 从已验签 JWT 声明写进 SecurityContext 的东西**：
+    // 用户名（principal name）与 `ROLE_<role>` 权限。
+
+    /** 当前请求者是否管理员。 */
+    private boolean currentUserIsAdmin() {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        return auth != null && auth.getAuthorities().stream()
+                .anyMatch(a -> "ROLE_4".equals(a.getAuthority()));
+    }
+
+    /**
+     * 当前请求者的 {@code users.id}；未认证或用户名查无此人返回 null。
+     *
+     * <p>**不读 `X-User-Id` 请求头** —— 直连本服务时它可以随便伪造。
+     */
+    private Long currentUserId() {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth == null || auth.getName() == null) {
+            return null;
+        }
+        User me = userService.getByUsername(auth.getName());
+        return me != null ? me.getId() : null;
+    }
+
+    /** 管理员，或 {@code targetUserId} 就是本人。 */
+    private boolean isAdminOrSelf(Long targetUserId) {
+        if (currentUserIsAdmin()) {
+            return true;
+        }
+        Long me = currentUserId();
+        boolean ok = me != null && me.equals(targetUserId);
+        if (!ok) {
+            log.warn("拒绝非本人/非管理员的账号操作: caller={}, target={}", me, targetUserId);
+        }
+        return ok;
+    }
+
     /**
      * 获取用户列表
      */
@@ -44,6 +93,9 @@ public class UserController {
             @RequestParam(defaultValue = "1") Integer page,
             @RequestParam(defaultValue = "10") Integer size,
             @RequestParam(required = false) Integer role) {
+        if (!currentUserIsAdmin()) {
+            return ApiResponse.forbidden("需要管理员权限");
+        }
         try {
             log.info("Get users request: page={}, size={}, role={}", page, size, role);
             QueryWrapper<User> queryWrapper = new QueryWrapper<>();
@@ -90,6 +142,9 @@ public class UserController {
      */
     @GetMapping("/info/{userId}")
     public ApiResponse<UserDTO> getUserInfo(@PathVariable Long userId) {
+        if (!isAdminOrSelf(userId)) {
+            return ApiResponse.forbidden("只能查看本人的资料");
+        }
         try {
             log.info("Get user info request: {}", userId);
             User user = userService.getById(userId);
@@ -120,6 +175,9 @@ public class UserController {
      */
     @PostMapping("/add")
     public ApiResponse<Long> addUser(@RequestBody User user) {
+        if (!currentUserIsAdmin()) {
+            return ApiResponse.forbidden("需要管理员权限");
+        }
         try {
             log.info("Add user request: {}", user.getUsername());
             boolean saved = userService.save(user);
@@ -148,9 +206,22 @@ public class UserController {
      */
     @PutMapping("/update/{userId}")
     public ApiResponse<String> updateUser(@PathVariable Long userId, @RequestBody User user) {
+        if (!isAdminOrSelf(userId)) {
+            return ApiResponse.forbidden("只能修改本人的资料");
+        }
         try {
             log.info("Update user request: {}", userId);
             user.setId(userId);
+            if (!currentUserIsAdmin()) {
+                // 非管理员改**自己的**资料时，以下字段一律不许动。置 null 即被 MyBatis-Plus 的
+                // NOT_NULL 策略跳过、不会进 SET 子句（`UserServiceImpl.updateById` 对 null 密码
+                // 也不做编码），所以这是"改不动"而不是"改成 null"：
+                //   role / status —— 否则 `PUT /users/update/{自己的id}` 带 {"role":4}
+                //                    就能**自助提权**，而网关拦不住（角色在请求体里，网关不看 body）；
+                //   password      —— 改口令请走 /auth/change-password（那里要求旧密码）。
+                //                    这条路径不验旧密码，放行等于把"改密码要先给旧密码"整层绕掉。
+                user.setRole(null).setStatus(null).setPassword(null);
+            }
             boolean updated = userService.updateById(user);
             if (updated) {
                 return ApiResponse.success("用户已更新");
@@ -168,6 +239,9 @@ public class UserController {
      */
     @DeleteMapping("/delete/{userId}")
     public ApiResponse<String> deleteUser(@PathVariable Long userId) {
+        if (!currentUserIsAdmin()) {
+            return ApiResponse.forbidden("需要管理员权限");
+        }
         try {
             log.info("Delete user request: {}", userId);
             boolean deleted = userService.removeById(userId);
@@ -187,12 +261,20 @@ public class UserController {
      */
     @GetMapping("/by-username/{username}")
     public ApiResponse<User> getUserByUsername(@PathVariable String username) {
+        if (!currentUserIsAdmin()) {
+            return ApiResponse.forbidden("需要管理员权限");
+        }
         try {
             log.info("Get user by username request: {}", username);
             User user = userService.getByUsername(username);
             if (user == null) {
                 return ApiResponse.error(404, "用户不存在");
             }
+            // 不回传口令哈希 —— 这里回的是**整个 User 实体**，password 字段就是库里那串
+            // BCrypt 哈希。与 admin-service 的 `AdminController.getUserById` 同一条规矩：
+            // 一个读接口把凭据材料发给前端，不管前端用不用都是不对的。
+            // 校验口令请走登录接口，不需要读哈希。
+            user.setPassword(null);
             return ApiResponse.success(user);
         } catch (Exception e) {
             log.error("Get user by username failed: {}", e.getMessage());
@@ -205,6 +287,9 @@ public class UserController {
      */
     @GetMapping("/count")
     public ApiResponse<Long> getUserCount(@RequestParam(required = false) Integer role) {
+        if (!currentUserIsAdmin()) {
+            return ApiResponse.forbidden("需要管理员权限");
+        }
         try {
             log.info("Get user count request: role={}", role);
             QueryWrapper<User> queryWrapper = new QueryWrapper<>();
@@ -231,6 +316,9 @@ public class UserController {
      */
     @GetMapping("/{userId}/settings")
     public ApiResponse<UserSettings> getSettings(@PathVariable Long userId) {
+        if (!isAdminOrSelf(userId)) {
+            return ApiResponse.forbidden("只能查看本人的设置");
+        }
         try {
             log.info("Get user settings: userId={}", userId);
             UserSettings settings = userSettingsMapper.selectOne(
@@ -262,6 +350,9 @@ public class UserController {
     @PutMapping("/{userId}/settings")
     public ApiResponse<UserSettings> updateSettings(@PathVariable Long userId,
                                                    @RequestBody UserSettings body) {
+        if (!isAdminOrSelf(userId)) {
+            return ApiResponse.forbidden("只能修改本人的设置");
+        }
         try {
             log.info("Update user settings: userId={}", userId);
             if (userService.getById(userId) == null) {

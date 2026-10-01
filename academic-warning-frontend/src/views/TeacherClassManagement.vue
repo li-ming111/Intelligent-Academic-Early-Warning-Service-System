@@ -255,7 +255,7 @@
               prop="studentId" 
               label="学号" 
               width="180"
-              :align="center"
+              align="center"
             >
               <template #default="{ row }">
                 <span class="student-id">{{ row.studentId }}</span>
@@ -265,7 +265,7 @@
               prop="studentName" 
               label="姓名" 
               width="120"
-              :align="center"
+              align="center"
             >
               <template #default="{ row }">
                 <span class="student-name">{{ row.studentName }}</span>
@@ -274,7 +274,7 @@
             <el-table-column 
               label="班级" 
               width="150"
-              :align="center"
+              align="center"
             >
               <template #default>
                 <el-tag type="success" size="small">{{ currentClass?.name }}</el-tag>
@@ -283,7 +283,7 @@
             <el-table-column 
               label="操作" 
               width="140"
-              :align="center"
+              align="center"
             >
               <template #default="{ row }">
                 <el-button 
@@ -356,7 +356,10 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Search, Warning } from '@element-plus/icons-vue'
+// User 是模板里 `:icon="User"`（学生详情的头像）用的：
+// 之前漏了这个 import，模板里的 User 编译成 _ctx.User = undefined，
+// el-avatar 收到 icon=undefined 就什么都不画 —— 不报错，只是头像空着。
+import { Search, Warning, User } from '@element-plus/icons-vue'
 import { teacherAPI } from '@/api/index'
 
 const activeTab = ref('my-classes')

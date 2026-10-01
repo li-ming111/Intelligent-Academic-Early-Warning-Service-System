@@ -50,6 +50,13 @@ public class AuthenticationFilter implements GlobalFilter, Ordered {
     private static final int ROLE_COLLEGE_ADMIN = 5;
 
     // 白名单：无需 Token 即可访问
+    //
+    // ⚠️ 白名单只解决"网关这一层不查 token"，**不等于下游会放行**：白名单命中的请求
+    //    在网关是直接路过的，不会注入 X-User-Id/X-Role，下游服务的 GatewayAuthFilter
+    //    没头就不建 Authentication，于是撞上各自的 .anyRequest().authenticated() → 403。
+    //    所以往这里加地址时，**必须同时**在下游服务的 SecurityConfig 里 permitAll。
+    //    2026-09-30 实测（college-service 的 PublicDirectoryAccessTest）：
+    //    匿名 GET /api/auth/majors → 下游 403，学院/专业下拉全空、教师/辅导员注册页提交不了。
     private static final List<String> WHITE_LIST = Arrays.asList(
             "/api/auth/login",
             "/api/auth/register/student",
@@ -57,6 +64,10 @@ public class AuthenticationFilter implements GlobalFilter, Ordered {
             "/api/auth/register/counselor",
             "/api/auth/colleges",
             "/api/auth/majors",
+            // 班级目录：注册页（PC/小程序）选班级用。此前只在白名单里挂了名，
+            // 网关有路由、下游没有实现，一直是 404 —— 2026-09-30 才在
+            // college-service 加了 ClassController 并把 /classes/all 设为匿名可达。
+            "/api/auth/classes",
             "/api/auth/courses",
             "/api/colleges/all",
             "/actuator/health",
@@ -69,6 +80,8 @@ public class AuthenticationFilter implements GlobalFilter, Ordered {
     private static final String PREFIX_STUDENT = "/api/students";
     private static final String PREFIX_COUNSELOR = "/api/counselors";
     private static final String PREFIX_COLLEGE_ADMIN = "/api/college-admin";
+    /** 账号前缀。非管理员只放"本人的资料/设置"，其余一律管理员（见 hasPermission 里的那一块）。 */
+    private static final String PREFIX_USERS = "/api/users";
 
     // ==================== 学院管理员的自助账号路径 ====================
     //
@@ -78,19 +91,32 @@ public class AuthenticationFilter implements GlobalFilter, Ordered {
     //
     // 这里只放开"自助"那一小撮，**不是**把 `/api/users/**` 整个前缀放开 ——
     // 那个前缀下面还挂着管理员专用接口：
-    //   /api/users/list、/api/users/add、/api/users/update/{id}、/api/users/delete/{id}
+    //   /api/users/list、/api/users/add、/api/users/delete/{id}、/api/users/count
     //   /api/users/by-username/{name}  ← 直接返回含密码哈希的原始 User 实体
-    // 同理 `/api/auth/**` 也不能整段放开：`/api/auth/register/admin` 能让学院管理员
-    // 自己造一个系统管理员账号，`/api/auth/info/{id}` 也会绕过下面的归属校验。
+    //   /api/users/update/{id}         ← ★ 请求体是完整 User 实体，改别人的 role/status 就是提权
+    // 同理 `/api/auth/**` 也不能整段放开：`/api/auth/register/admin` 能造系统管理员账号，
+    // `/api/auth/info/{id}` 也会绕过下面的归属校验。
 
     /** 改自己的密码。 */
     private static final String AUTH_CHANGE_PASSWORD = "/api/auth/change-password";
     /** 登出 / 刷新 token —— 都属于自助，与角色无关。 */
     private static final Pattern SELF_AUTH_PATTERN =
             Pattern.compile("^/api/auth/(logout|refresh-token)$");
-    /** 账号资料与自助设置，**且 id 必须是自己**（见 hasPermission 里的 userId 比对）。 */
-    private static final Pattern OWN_ACCOUNT_PATTERN =
-            Pattern.compile("^/api/users/(?:info/)?(\\d+)(?:/settings)?$");
+
+    /**
+     * 非管理员的**自助**账号路径：本人的资料 / 本人的设置，且 id 必须等于 token 里的 userId。
+     *
+     * <p>2026-09-30 由 `^/api/users/(?:info/)?(\d+)(?:/settings)?$` **扩到含 `update/`**：
+     * 三个角色的设置页都在用 `PUT /users/update/{自己的id}` 改姓名/邮箱/电话
+     * （`studentAPI|teacherAPI|counselorAPI.updateProfile`），从前这条对非管理员一律 403
+     * —— 也就是"学生改不了自己的邮箱"。扩的是**本人可改的范围**，不是放给别人的范围：
+     * `(\d+)` 仍然必须等于 token 里的 userId，别人的 id 照样 403。
+     *
+     * <p>⚠️ 改自己的 role/status 这条**网关拦不住**（角色在请求体里，网关不看 body），
+     * 由 `user-service` 的 `UserController.updateUser` 剥掉 —— 见那边的注释。
+     */
+    private static final Pattern USER_SELF_PATTERN =
+            Pattern.compile("^/api/users/(?:(?:info|update)/)?(\\d+)(?:/settings)?$");
 
     @Value("${spring.cloud.gateway.jwt.secret:academic-jwt-secret-key-for-academic-warning-system-2026}")
     private String jwtSecret;
@@ -203,7 +229,7 @@ public class AuthenticationFilter implements GlobalFilter, Ordered {
             // 归属校验：路径里的 id 必须等于 token 里的 userId。
             // 缺了这一步，学院管理员就能读**任意**用户的资料与设置
             // （下游 UserController 的 getSettings/updateSettings 不做归属判断）。
-            Matcher m = OWN_ACCOUNT_PATTERN.matcher(path);
+            Matcher m = USER_SELF_PATTERN.matcher(path);
             if (m.matches() && userId != null) {
                 try {
                     return Long.parseLong(m.group(1)) == userId.longValue();
@@ -226,6 +252,47 @@ public class AuthenticationFilter implements GlobalFilter, Ordered {
         }
         if (path.startsWith(PREFIX_COUNSELOR) && role != ROLE_COUNSELOR) {
             return false;
+        }
+
+        // ==================== /api/users/** 的角色门禁 ====================
+        // 从前这一整段对 role 1/2/3 是"不匹配任何受限前缀 → 落到函数末尾 return true"，
+        // 即**任何已登录用户**（含学生）都能（2026-09-30 读码确认，网关这层完全不拦）：
+        //   GET    /api/users/list              全部账号的邮箱/手机号
+        //   POST   /api/users/add               ★ 请求体是完整 User 实体、自带 role
+        //                                         ⇒ **学生直接建出一个系统管理员**
+        //   PUT    /api/users/update/{id}       ★ 改任意账号（含把自己的 role 改成 4 提权）
+        //   DELETE /api/users/delete/{id}       删任意账号
+        //   GET    /api/users/by-username/{n}   原始 User 实体（含 BCrypt 密码哈希）
+        //   GET    /api/users/count             账号总数
+        // 该对非管理员开放的只有"本人的资料 / 本人的设置"，且 id 必须等于 token 里的 userId。
+        // ⚠️ 与 /api/auth/register 那条同理：user-service 没有 GatewayAuthFilter、
+        //    而且是本机可直连的，**网关不是网络边界** —— 那边 UserController 里做了同样的判定。
+        if (path.equals(PREFIX_USERS) || path.startsWith(PREFIX_USERS + "/")) {
+            Matcher m = USER_SELF_PATTERN.matcher(path);
+            if (m.matches() && userId != null) {
+                try {
+                    return Long.parseLong(m.group(1)) == userId.longValue();
+                } catch (NumberFormatException ignored) {
+                    return false;
+                }
+            }
+            log.warn("拒绝非管理员访问 /api/users 管理端点: role={}, path={}", role, path);
+            return false;
+        }
+
+        // 注册端点：白名单只放过 /api/auth/register/{student,teacher,counselor} 三条**自助**路径，
+        // 它们匹配白名单后直接 return，走不到这里。能走到这一行的只剩
+        // /api/auth/register 与 /api/auth/register/admin —— 那是**管理员建账号**，必须 role=4。
+        // 把这一关放在网关，是因为下游 user-service 里没有 GatewayAuthFilter、拿不到调用者角色，
+        // 它的 /auth 段对任何持 token 的人都通（见本文件末尾的 return true）。
+        // 2026-09-30：修掉"任何已登录角色（含学生）POST /api/auth/register/admin 带 role:4
+        // 就能造出系统管理员"。控制器那侧同时改成角色由端点写死，两边都不再信请求体。
+        if (path.startsWith("/api/auth/register")) {
+            boolean allowed = role == ROLE_ADMIN;
+            if (!allowed) {
+                log.warn("拒绝非管理员访问注册端点（管理员专用）: role={}, path={}", role, path);
+            }
+            return allowed;
         }
 
         // RBAC 细粒度校验（有 RBAC 数据时才生效）

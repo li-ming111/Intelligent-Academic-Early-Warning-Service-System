@@ -5,6 +5,8 @@ import com.academic.service.UserService;
 import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.Map;
@@ -20,6 +22,19 @@ import java.util.Map;
 public class AuthController {
 
     private static final Logger log = LoggerFactory.getLogger(AuthController.class);
+
+    // ==================== 注册角色 ====================
+    //
+    // 角色**由端点写死**，绝不从请求体读。
+    // 修复前四个 register 端点都调同一个 userService.register(request)，而那个方法
+    // 从 body 里取 role —— 于是匿名者 POST /api/auth/register/student 带 role:4
+    // 就能造出系统管理员（2026-09-30 实测：建出 users.id=80、role=4）。
+    // 现在每个端点把"自己能创建的角色"作为参数传下去，请求体里的 role 一律作废。
+    private static final int ROLE_STUDENT = 1;
+    private static final int ROLE_TEACHER = 2;
+    private static final int ROLE_COUNSELOR = 3;
+    private static final int ROLE_ADMIN = 4;
+
     private final UserService userService;
 
     /**
@@ -53,9 +68,10 @@ public class AuthController {
     }
 
     /**
-     * 用户注册
+     * 用户注册（通用入口）
      * <p>
-     * 处理用户注册请求，验证并保存用户信息
+     * 处理用户注册请求，验证并保存用户信息。
+     * ⚠️ 该入口**只创建学生**（role=1）：请求体里的 {@code role} 不生效。
      * </p>
      * @param request 注册请求，包含用户信息
      * @return 注册结果
@@ -64,7 +80,8 @@ public class AuthController {
     public ApiResponse<String> register(@RequestBody Object request) {
         try {
             log.info("User register request");
-            String result = userService.register(request);
+            // 通用入口按**最低权限**处理（注册学生）。要更高角色请走各自的端点。
+            String result = userService.register(request, ROLE_STUDENT);
             return ApiResponse.success(result);
         } catch (Exception e) {
             log.error("Register failed: {}", e.getMessage());
@@ -84,7 +101,7 @@ public class AuthController {
     public ApiResponse<String> registerStudent(@RequestBody Object request) {
         try {
             log.info("Student register request");
-            String result = userService.register(request);
+            String result = userService.register(request, ROLE_STUDENT);
             return ApiResponse.success(result);
         } catch (Exception e) {
             log.error("Student register failed: {}", e.getMessage());
@@ -104,7 +121,7 @@ public class AuthController {
     public ApiResponse<String> registerTeacher(@RequestBody Object request) {
         try {
             log.info("Teacher register request");
-            String result = userService.register(request);
+            String result = userService.register(request, ROLE_TEACHER);
             return ApiResponse.success(result);
         } catch (Exception e) {
             log.error("Teacher register failed: {}", e.getMessage());
@@ -124,7 +141,7 @@ public class AuthController {
     public ApiResponse<String> registerCounselor(@RequestBody Object request) {
         try {
             log.info("Counselor register request");
-            String result = userService.register(request);
+            String result = userService.register(request, ROLE_COUNSELOR);
             return ApiResponse.success(result);
         } catch (Exception e) {
             log.error("Counselor register failed: {}", e.getMessage());
@@ -143,13 +160,41 @@ public class AuthController {
     @PostMapping("/register/admin")
     public ApiResponse<String> registerAdmin(@RequestBody Object request) {
         try {
+            // 两道闸，缺一不可：
+            //  ① 网关（`AuthenticationFilter.hasPermission`）要求 role=4 才放行本端点；
+            //  ② 本方法再按 **已验签 token 里的角色**判一次。
+            //
+            // 为什么第 ② 道省不掉：**网关不是网络边界**。user-service 的 8082 在本机可直连，
+            // 而 `SecurityConfig` 只能保证"已认证"——任意角色的 token 都算数，匿名则更早被挡。
+            // 2026-09-30 实测：改前 `/auth/register/**` 是 permitAll，于是**不带任何 token
+            // 直连 :8082/api/auth/register/admin 就能走到业务逻辑**，而本端点建的是
+            // 系统管理员(role=4) —— 等于匿名直连就能提权。现在 SecurityConfig 已把它移出白名单，
+            // 这里再补一次角色判定，双保险。
+            if (!currentUserIsAdmin()) {
+                Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+                log.warn("拒绝非管理员创建管理员账号: principal={}", auth != null ? auth.getName() : "anonymous");
+                return ApiResponse.forbidden("只有管理员能创建管理员账号");
+            }
             log.info("Admin register request");
-            String result = userService.register(request);
+            String result = userService.register(request, ROLE_ADMIN);
             return ApiResponse.success(result);
         } catch (Exception e) {
             log.error("Admin register failed: {}", e.getMessage());
             return ApiResponse.error(e.getMessage());
         }
+    }
+
+    /**
+     * 当前请求者是否管理员。
+     *
+     * <p>依据是 {@code JwtAuthenticationFilter} 从**已验签的 JWT 声明**写进
+     * {@code SecurityContextHolder} 的 {@code ROLE_4} 权限 —— 它来自 token 内容而非请求头，
+     * 所以伪造 {@code X-Role} 改不了它。这是本服务里唯一可信的角色来源。
+     */
+    private boolean currentUserIsAdmin() {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        return auth != null && auth.getAuthorities().stream()
+                .anyMatch(a -> ("ROLE_" + ROLE_ADMIN).equals(a.getAuthority()));
     }
 
     /**

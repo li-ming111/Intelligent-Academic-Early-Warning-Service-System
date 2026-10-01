@@ -8,6 +8,8 @@
       </div>
 
       <el-form :model="form" :rules="rules" ref="formRef" @submit.prevent>
+        <el-alert v-if="collegesError" :title="collegesError" type="error" :closable="false" style="margin-bottom:14px" />
+
         <div class="rg-field">
           <label>工号</label>
           <el-input v-model="form.username" placeholder="请输入工号" maxlength="20" clearable>
@@ -31,9 +33,13 @@
           </div>
           <div class="rg-field" style="flex:2">
             <label>所属学院</label>
-            <el-select v-model="form.collegeId" placeholder="请选择学院" style="width:100%" clearable @change="handleCollegeChange">
+            <el-select v-model="form.collegeId" placeholder="请选择学院" style="width:100%" clearable
+              :loading="collegesLoading" @change="handleCollegeChange">
               <el-option v-for="c in colleges" :key="c.id" :label="c.name" :value="c.id" />
             </el-select>
+            <!-- ⚠️ 同 TeacherRegister：/auth/colleges 每学院 3 次 Feign 调用（4 学院 = 12 次），
+                 下游服务没起时每次都要等重试链（~13 秒）—— 必须让"在加载"看得见。 -->
+            <span v-if="collegesLoading" class="rg-hint dim">正在加载学院列表…</span>
           </div>
         </div>
 
@@ -138,6 +144,8 @@ const router = useRouter()
 const formRef = ref()
 const loading = ref(false)
 const colleges = ref([])
+const collegesError = ref('')
+const collegesLoading = ref(false)
 const form = ref({
   username: '', name: '', gender: '', collegeId: '', department: '', title: '', education: '',
   officeLocation: '', dutyPhone: '', phone: '', email: '', introduction: '',
@@ -163,8 +171,19 @@ const rules = {
 
 const handleCollegeChange = () => {}
 onMounted(async () => {
-  try { const r = await authAPI.getColleges(); colleges.value = r || [] }
-  catch (e) { ElMessage.error('加载学院列表失败') }
+  // 同 TeacherRegister：学院是必填项，拉不到就没人能提交。闪一句 toast 不够，
+  // 要有常驻的横幅把"为什么选不了"说清楚。
+  collegesLoading.value = true
+  try {
+    const r = await authAPI.getColleges()
+    colleges.value = r || []
+    collegesError.value = colleges.value.length ? '' : '学院列表为空，暂时无法注册；请联系管理员检查学院数据'
+  } catch (e) {
+    colleges.value = []
+    collegesError.value = '学院列表加载失败：' + (e.message || '') + '（学院是必填项，加载成功前无法提交注册）'
+  } finally {
+    collegesLoading.value = false
+  }
 })
 
 const handleRegister = () => {
@@ -172,8 +191,10 @@ const handleRegister = () => {
     if (!valid) return
     loading.value = true
     try {
-      await authAPI.registerCounselor({ ...form.value, role: 3 })
-      ElMessage.success('注册成功，请登录')
+      // 不传 role：角色由端点决定（/auth/register/counselor → 3）。
+      await authAPI.registerCounselor({ ...form.value })
+      // 同教师注册：辅导员账号也是 status=0（待审批），当场登录会被拒。
+      ElMessage.success({ message: '注册申请已提交，待管理员审核通过后方可登录', duration: 4000 })
       router.push('/login')
     } catch (e) { ElMessage.error(e.message || '注册失败') }
     finally { loading.value = false }

@@ -1,10 +1,15 @@
 package com.academic.service.impl;
 
+import com.academic.common.entity.CounselorProfile;
+import com.academic.common.entity.TeacherProfile;
 import com.academic.common.entity.User;
+import com.academic.common.entity.UserSettings;
+import com.academic.mapper.RegistrationMapper;
 import com.academic.mapper.UserMapper;
 import com.academic.util.JwtUtil;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -25,12 +30,19 @@ import static org.mockito.Mockito.*;
  * 给一个强转 {@code Map} 的方法 —— 必然抛 ClassCastException，断言"注册成功"永远不可能成立。
  * 因为整个模块的测试源当时编译不过，这些失败长期不可见。现在补齐依赖与桩数据，
  * 让断言真正检验行为。
+ *
+ * <p>2026-09-30 注册这条路径从"只写 users"扩到"users + 角色资料行 + user_settings +
+ * 学院冗余计数"。下面注册相关的用例按**写了哪几张表**逐条钉：只断言返回值的话，
+ * 少建一张 profile 表也照样"绿"（这正是修复前的状态）。
  */
 @ExtendWith(MockitoExtension.class)
 class UserServiceImplTest {
 
     @Mock
     private UserMapper userMapper;
+
+    @Mock
+    private RegistrationMapper registrationMapper;
 
     @Mock
     private PasswordEncoder passwordEncoder;
@@ -40,6 +52,36 @@ class UserServiceImplTest {
 
     @InjectMocks
     private UserServiceImpl userService;
+
+    // ==================== 小工具 ====================
+
+    /** 拼请求体：{@code body("username", "2023020701", "password", "123456")}。*/
+    private static Map<String, Object> body(Object... kv) {
+        Map<String, Object> map = new HashMap<>();
+        for (int i = 0; i + 1 < kv.length; i += 2) {
+            map.put(String.valueOf(kv[i]), kv[i + 1]);
+        }
+        return map;
+    }
+
+    /**
+     * 让 mock 的 {@code insert} 像真 MyBatis-Plus 一样**把自增主键回填到实体上**。
+     *
+     * <p>不这么做的话 {@code user.getId()} 一直是 null，注册会在"账号已写入但未取回主键"
+     * 处停下 —— 那是测试的假象，不是生产行为（真 Mapper 开了 useGeneratedKeys）。
+     */
+    private void stubUserInsertBackfillsId(long id) {
+        when(userMapper.insert(any(User.class))).thenAnswer(inv -> {
+            inv.getArgument(0, User.class).setId(id);
+            return 1;
+        });
+    }
+
+    /** 注册前的公共桩：用户名没被占用、密码能被 encode。*/
+    private void stubFreshRegistration() {
+        when(userMapper.selectOne(any())).thenReturn(null);
+        when(passwordEncoder.encode(anyString())).thenReturn("$2a$10$encoded");
+    }
 
     /** BCrypt 哈希密码 + 账号正常 → 登录成功并下发 token。 */
     @Test
@@ -135,29 +177,270 @@ class UserServiceImplTest {
         assertEquals("账号正在审批中，请等待管理员审核", map.get("message"));
     }
 
-    /** 正常注册 → 落库前密码被加密成 BCrypt 格式。 */
+    /** 正常注册 → 落库前密码被加密成 BCrypt 格式；手机号/邮箱一并落库。 */
     @Test
     void testRegister() {
-        when(userMapper.selectOne(any())).thenReturn(null);
-        when(passwordEncoder.encode("123456")).thenReturn("$2a$10$encoded");
-        when(userMapper.insert(any(User.class))).thenReturn(1);
+        stubFreshRegistration();
+        stubUserInsertBackfillsId(88L);
 
-        Map<String, Object> request = new HashMap<>();
-        request.put("username", "2023020701");
-        request.put("password", "123456");
-        request.put("name", "新同学");
-        request.put("role", 1);
+        Map<String, Object> request = body(
+                "username", "2023020701", "password", "123456", "name", "新同学",
+                "phone", "13800001111", "email", "new@example.com",
+                "role", 4);   // ← 恶意请求体：想自提权成系统管理员
 
-        String result = userService.register(request);
+        // 端点只允许建学生，所以传 1
+        String result = userService.register(request, 1);
 
         // 服务的真实返回值是英文串；全项目没有任何调用方按字符串判断成败，
         // 原测试断言的"注册成功"从来就不是它返回的东西。
         assertEquals("Register successful", result);
 
-        // 明文密码绝不能落库
-        verify(userMapper).insert(argThat(u -> "$2a$10$encoded".equals(u.getPassword())
-                && "2023020701".equals(u.getUsername())
-                && Integer.valueOf(1).equals(u.getStatus())));
+        // 明文密码绝不能落库；**角色必须是调用方传的 1，不是请求体里的 4**。
+        // 这一句就是 2026-09-30 那个提权漏洞（匿名带 role:4 造出管理员）的回归钉子。
+        User saved = capturedUserInsert();
+        assertEquals("$2a$10$encoded", saved.getPassword());
+        assertEquals("2023020701", saved.getUsername());
+        assertEquals(1, saved.getRole());
+        assertEquals(1, saved.getStatus(), "学生注册后应直接可用");
+        // 2026-09-30：这两格从前是**静默丢掉**的（请求体里有，服务不读）
+        assertEquals("13800001111", saved.getPhone());
+        assertEquals("new@example.com", saved.getEmail());
+
+        // 学生必须有档案行，否则登录进去没有任何数据可查
+        verify(registrationMapper).insertStudentProfile(
+                88L, "2023020701", "新同学", null, null, null, null, null);
+    }
+
+    /** 学生只填了专业 → 学院跟着专业走（不能出现"专业属 A 院、学院写 B 院"）。 */
+    @Test
+    void testRegister_studentDerivesCollegeFromMajor() {
+        stubFreshRegistration();
+        stubUserInsertBackfillsId(89L);
+        when(registrationMapper.countMajor(5L)).thenReturn(1);
+        when(registrationMapper.selectMajorCollegeId(5L)).thenReturn(1L);
+        when(registrationMapper.countCollege(1L)).thenReturn(1);
+
+        userService.register(body("username", "2023020702", "password", "123456",
+                "name", "小甲", "majorId", 5, "gender", "男"), 1);
+
+        verify(registrationMapper).insertStudentProfile(
+                89L, "2023020702", "小甲", "男", 1L, 5L, null, null);
+        verify(registrationMapper).increaseCollegeStudentCount(1L);
+    }
+
+    /**
+     * 学生选了班级 → 班名/专业/学院**全部以班级行为准**。
+     *
+     * <p>这三格必须同源：{@code verify_invariants.py} 的 C 组要求
+     * "学生档案的 class_name == class_id 指向的班名"且"专业/学院与他所在班的一致"。
+     */
+    @Test
+    void testRegister_studentClassRowIsAuthoritative() {
+        stubFreshRegistration();
+        stubUserInsertBackfillsId(90L);
+        when(registrationMapper.selectClassRow(1L))
+                .thenReturn(Map.of("id", 1L, "name", "计科2306班", "college_id", 1L, "major_id", 5L));
+        when(registrationMapper.countCollege(1L)).thenReturn(1);
+
+        userService.register(body("username", "2023020703", "password", "123456",
+                "name", "小乙", "classId", 1), 1);
+
+        ArgumentCaptor<String> className = ArgumentCaptor.forClass(String.class);
+        verify(registrationMapper).insertStudentProfile(
+                eq(90L), eq("2023020703"), eq("小乙"), isNull(), eq(1L), eq(5L), eq(1L), className.capture());
+        assertEquals("计科2306班", className.getValue(), "class_name 必须写成班级行里的名字");
+    }
+
+    /** 请求体里的专业与所选班级矛盾 → 明确拒绝，不静默改写。 */
+    @Test
+    void testRegister_studentClassMajorConflictRejected() {
+        stubFreshRegistration();
+        stubUserInsertBackfillsId(91L);
+        when(registrationMapper.selectClassRow(1L))
+                .thenReturn(Map.of("id", 1L, "name", "计科2306班", "college_id", 1L, "major_id", 5L));
+
+        IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
+                () -> userService.register(body("username", "2023020704", "password", "123456",
+                        "classId", 1, "majorId", 9), 1));
+        assertEquals("所选班级不属于所选专业", e.getMessage());
+        verify(registrationMapper, never()).insertStudentProfile(any(), any(), any(), any(), any(), any(), any(), any());
+    }
+
+    /** 班级不存在 → 拒绝（留着会造出指向不存在班级的档案）。 */
+    @Test
+    void testRegister_studentClassNotFoundRejected() {
+        stubFreshRegistration();
+        stubUserInsertBackfillsId(92L);
+        when(registrationMapper.selectClassRow(7L)).thenReturn(null);
+
+        IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
+                () -> userService.register(body("username", "2023020705", "password", "123456", "classId", 7), 1));
+        assertEquals("所选班级不存在: 7", e.getMessage());
+    }
+
+    @Test
+    void testRegister_studentCollegeNotFoundRejected() {
+        stubFreshRegistration();
+        stubUserInsertBackfillsId(93L);
+        when(registrationMapper.countCollege(3L)).thenReturn(0);
+
+        IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
+                () -> userService.register(body("username", "2023020706", "password", "123456", "collegeId", 3), 1));
+        assertEquals("所选学院不存在: 3", e.getMessage());
+    }
+
+    /** 学号（= student_profile.student_id）有唯一约束，被占用时给人话而不是 500。 */
+    @Test
+    void testRegister_studentIdAlreadyHasProfileRejected() {
+        stubFreshRegistration();
+        stubUserInsertBackfillsId(94L);
+        when(registrationMapper.countStudentProfileByStudentId("2023020707")).thenReturn(1);
+
+        IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
+                () -> userService.register(body("username", "2023020707", "password", "123456"), 1));
+        assertEquals("该学号已有学生档案: 2023020707", e.getMessage());
+    }
+
+    /**
+     * 前端把 id 传成非数字（小程序未选时给的是空串，选中时给字符串，PC 给数字）
+     * → 明确报错，**绝不静默当没填**。
+     */
+    @Test
+    void testRegister_nonNumericIdRejected() {
+        stubFreshRegistration();
+        stubUserInsertBackfillsId(95L);
+
+        IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
+                () -> userService.register(body("username", "2023020708", "password", "123456",
+                        "collegeId", "abc"), 1));
+        assertEquals("字段 collegeId 必须是数字: abc", e.getMessage());
+    }
+
+    /** 空串（前端"未选择"的形状）算没填，不该报错。 */
+    @Test
+    void testRegister_blankIdsTreatedAsAbsent() {
+        stubFreshRegistration();
+        stubUserInsertBackfillsId(96L);
+
+        userService.register(body("username", "2023020709", "password", "123456",
+                "name", "小丙", "collegeId", "", "majorId", "", "classId", ""), 1);
+
+        verify(registrationMapper).insertStudentProfile(
+                96L, "2023020709", "小丙", null, null, null, null, null);
+        verify(registrationMapper, never()).selectClassRow(any());
+    }
+
+    /**
+     * 教师：`teacher_profile.college_id` 是 NOT NULL → 没有学院就**拒绝注册**，
+     * 而不是建一个查不到任何班级/课程的"空教师"。
+     */
+    @Test
+    void testRegister_teacherRequiresCollege() {
+        stubFreshRegistration();
+        stubUserInsertBackfillsId(97L);
+
+        IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
+                () -> userService.register(body("username", "10086", "password", "123456", "name", "王老师"), 2));
+        assertEquals("教师注册必须选择所属学院", e.getMessage());
+        verify(registrationMapper, never()).insertTeacherProfile(any());
+        verify(registrationMapper, never()).increaseCollegeTeacherCount(any());
+    }
+
+    /** 教师：建档案 + 学院教师数 +1，且**状态是待审批**。 */
+    @Test
+    void testRegister_teacherCreatesProfilePendingApproval() {
+        stubFreshRegistration();
+        stubUserInsertBackfillsId(98L);
+        when(registrationMapper.countCollege(1L)).thenReturn(1);
+
+        userService.register(body("username", "10086", "password", "123456", "name", "王老师",
+                "collegeId", 1, "phone", "13900002222", "email", "w@example.com"), 2);
+
+        assertEquals(0, capturedUserInsert().getStatus(), "教师注册后应是待审批(0)");
+        ArgumentCaptor<TeacherProfile> cap = ArgumentCaptor.forClass(TeacherProfile.class);
+        verify(registrationMapper).insertTeacherProfile(cap.capture());
+        assertEquals(98L, cap.getValue().getUserId());
+        assertEquals("王老师", cap.getValue().getName());
+        assertEquals(1L, cap.getValue().getCollegeId());
+        verify(registrationMapper).increaseCollegeTeacherCount(1L);
+    }
+
+    /**
+     * 辅导员：建档案（编号用账号名兜）、办公信息进 {@code user_settings}，
+     * **不写** {@code counselor_profiles.office_location/duty_phone}（那两列没有读者，
+     * 办公信息的真源是 user_settings）。
+     */
+    @Test
+    void testRegister_counselorCreatesProfileAndOfficeSettings() {
+        stubFreshRegistration();
+        stubUserInsertBackfillsId(99L);
+        when(registrationMapper.countCollege(2L)).thenReturn(1);
+
+        userService.register(body("username", "C99", "password", "123456", "name", "李辅导",
+                "collegeId", 2, "gender", "女", "department", "学工处", "title", "讲师",
+                "education", "硕士", "introduction", "带 6 个班",
+                "officeLocation", "3 号楼 201", "dutyPhone", "0451-88880000",
+                "phone", "13700003333", "email", "li@example.com"), 3);
+
+        assertEquals(0, capturedUserInsert().getStatus(), "辅导员注册后应是待审批(0)");
+
+        ArgumentCaptor<CounselorProfile> cap = ArgumentCaptor.forClass(CounselorProfile.class);
+        verify(registrationMapper).insertCounselorProfile(cap.capture());
+        CounselorProfile p = cap.getValue();
+        assertEquals(99L, p.getUserId());
+        assertEquals("C99", p.getCounselorId(), "表单没填编号时用账号名兜");
+        assertEquals("C99", p.getStaffId());
+        assertEquals("李辅导", p.getName());
+        assertEquals("女", p.getGender());
+        assertEquals(2L, p.getCollegeId());
+        assertEquals("学工处", p.getDepartment());
+        assertEquals("讲师", p.getTitle());
+        assertEquals("硕士", p.getEducation());
+        assertEquals("带 6 个班", p.getIntroduction());
+        assertEquals(1, p.getStatus());
+
+        ArgumentCaptor<UserSettings> sCap = ArgumentCaptor.forClass(UserSettings.class);
+        verify(registrationMapper).insertUserSettings(sCap.capture());
+        assertEquals(99L, sCap.getValue().getUserId());
+        assertEquals("3 号楼 201", sCap.getValue().getOfficeLocation());
+        assertEquals("0451-88880000", sCap.getValue().getOfficePhone());
+    }
+
+    /** 辅导员没填办公信息 → 不建空的 user_settings 行。 */
+    @Test
+    void testRegister_counselorWithoutOfficeInfoCreatesNoSettingsRow() {
+        stubFreshRegistration();
+        stubUserInsertBackfillsId(100L);
+
+        userService.register(body("username", "C100", "password", "123456", "name", "赵辅导"), 3);
+
+        verify(registrationMapper).insertCounselorProfile(any());
+        verify(registrationMapper, never()).insertUserSettings(any());
+    }
+
+    /** 管理员（端点已限定 role=4 才能调）不建资料行，且直接可用。 */
+    @Test
+    void testRegister_adminCreatesNoProfileRow() {
+        stubFreshRegistration();
+        stubUserInsertBackfillsId(101L);
+
+        userService.register(body("username", "admin2", "password", "123456", "name", "新管理员"), 4);
+
+        assertEquals(1, capturedUserInsert().getStatus(), "管理员注册后直接可用");
+        verifyNoInteractions(registrationMapper);
+    }
+
+    /** 角色不合法（含刻意排除的 5=学院管理员）时必须拒绝，且一行不写。 */
+    @Test
+    void testRegister_roleNotAllowed() {
+        Map<String, Object> request = new HashMap<>();
+        request.put("username", "2023020709");
+        request.put("password", "123456");
+
+        assertThrows(IllegalArgumentException.class, () -> userService.register(request, 5));
+        assertThrows(IllegalArgumentException.class, () -> userService.register(request, 9));
+        assertThrows(IllegalArgumentException.class, () -> userService.register(request, null));
+        verify(userMapper, never()).insert(any(User.class));
     }
 
     @Test
@@ -166,7 +449,11 @@ class UserServiceImplTest {
         request.put("username", "2023020702");
         request.put("password", "123");
 
-        assertEquals("密码长度至少为6位", userService.register(request));
+        // 失败**抛异常**，不再靠返回值表达失败 —— 返回值那条路会被 controller
+        // 无条件包成 ApiResponse.success(...)，业务失败在响应里就成了 success:true。
+        IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
+                () -> userService.register(request, 1));
+        assertEquals("密码长度至少为6位", e.getMessage());
         verify(userMapper, never()).insert(any(User.class));
     }
 
@@ -178,8 +465,17 @@ class UserServiceImplTest {
         request.put("username", "2023020703");
         request.put("password", "123456");
 
-        assertEquals("用户名已存在", userService.register(request));
+        IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
+                () -> userService.register(request, 1));
+        assertEquals("用户名已存在", e.getMessage());
         verify(userMapper, never()).insert(any(User.class));
+    }
+
+    /** 取回 {@code users} 那一行的入参（断言"到底写了什么"）。*/
+    private User capturedUserInsert() {
+        ArgumentCaptor<User> cap = ArgumentCaptor.forClass(User.class);
+        verify(userMapper).insert(cap.capture());
+        return cap.getValue();
     }
 
     /** 取用户信息：查得到就返回脱敏后的 Map，查不到返回 null。 */

@@ -1,6 +1,10 @@
 package com.academic.service.impl;
 
+import com.academic.common.entity.CounselorProfile;
+import com.academic.common.entity.TeacherProfile;
 import com.academic.common.entity.User;
+import com.academic.common.entity.UserSettings;
+import com.academic.mapper.RegistrationMapper;
 import com.academic.mapper.UserMapper;
 import com.academic.service.UserService;
 import com.academic.util.JwtUtil;
@@ -10,11 +14,13 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Primary;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 @Slf4j
 @Service
@@ -22,11 +28,14 @@ import java.util.Map;
 public class UserServiceImpl implements UserService {
 
     private final UserMapper userMapper;
+    private final RegistrationMapper registrationMapper;
     private final PasswordEncoder passwordEncoder;
     private final JwtUtil jwtUtil;
 
-    public UserServiceImpl(UserMapper userMapper, PasswordEncoder passwordEncoder, JwtUtil jwtUtil) {
+    public UserServiceImpl(UserMapper userMapper, RegistrationMapper registrationMapper,
+                           PasswordEncoder passwordEncoder, JwtUtil jwtUtil) {
         this.userMapper = userMapper;
+        this.registrationMapper = registrationMapper;
         this.passwordEncoder = passwordEncoder;
         this.jwtUtil = jwtUtil;
     }
@@ -220,42 +229,315 @@ public class UserServiceImpl implements UserService {
         }
     }
 
+    /**
+     * register 允许写入的角色。
+     * 刻意**不含 5（学院管理员）**：那是管理员在后台单独开通的角色，
+     * 不该出现在任何自助注册路径上。
+     */
+    private static final Set<Integer> REGISTER_ALLOWED_ROLES = Set.of(1, 2, 3, 4);
+
+    private static final int ROLE_STUDENT = 1;
+    private static final int ROLE_TEACHER = 2;
+    private static final int ROLE_COUNSELOR = 3;
+    private static final int ROLE_ADMIN = 4;
+
+    /**
+     * 自助注册。
+     *
+     * <h3>2026-09-30：这条路径以前只写 {@code users} 一张表</h3>
+     * <p>改之前这里只做三件事：读 {@code username/password/name}、插一行 {@code users}、
+     * 返回成功。于是：
+     * <ul>
+     *   <li>表单上填的**手机号/邮箱/学院/专业/班级全部被丢掉**（请求体里有，没人读）；</li>
+     *   <li>**不建任何 profile 行** —— 学生注册成功后能登录，但成绩/预警/课表/班级
+     *       全部按 {@code student_profile.id} 取数，一个都查不到，登录进去是一座空城；</li>
+     *   <li>教师/辅导员同理（{@code teacher_profile} / {@code counselor_profiles} 缺行）。</li>
+     * </ul>
+     * <p>活库的种子数据把这个洞盖住了：24 个 role=1 的账号**每个都有** profile 行
+     * （都是种子直接造的），所以"自己注册一个学生试试"才会露馅。
+     *
+     * <h3>现在写哪几张表（全部在同一个事务里）</h3>
+     * <ol>
+     *   <li>{@code users} —— 账号 + 手机号 + 邮箱；</li>
+     *   <li>角色资料行：{@code student_profile} / {@code teacher_profile} / {@code counselor_profiles}；</li>
+     *   <li>{@code user_settings} —— **只在注册表单填了办公信息时**（辅导员有，学生没有）；</li>
+     *   <li>{@code colleges.student_count|teacher_count} —— 冗余计数列，见
+     *       {@link RegistrationMapper#increaseCollegeStudentCount}。</li>
+     * </ol>
+     * <p>任何一步失败都整体回滚：宁可"注册失败"，也不要留一个只有账号没有资料的半截账号
+     * （那正是这次要修的缺陷）。
+     *
+     * <h3>status 由角色决定</h3>
+     * <p>学生与管理员直接 {@code status=1} 可用；**教师/辅导员 {@code status=0} 待审批**，
+     * 由管理员在「用户管理」页点"审批通过"（{@code AdminUsers.vue} 的待审批 tag + 审批通过按钮）
+     * 之后才能登录 —— 登录侧一直在按 status 判（{@code login} 里 {@code status=0} 会回
+     * 「账号正在审批中，请等待管理员审核」），只是从前**没有任何路径产出 status=0 的账号**，
+     * 那条审批链是个没有源头的摆设。
+     */
     @Override
-    public String register(Object request) {
+    @Transactional(rollbackFor = Exception.class)
+    public String register(Object request, Integer role) {
+        log.info("User register, role={}", role);
+
+        if (!(request instanceof Map)) {
+            throw new IllegalArgumentException("注册请求格式不正确");
+        }
+        @SuppressWarnings("unchecked")
+        Map<String, Object> reqMap = (Map<String, Object>) request;
+        String username = str(reqMap, "username");
+        String password = str(reqMap, "password");
+        String name = str(reqMap, "name");
+
+        // ★ 角色只认调用方传进来的那个。请求体里的 role 一概不读 ——
+        //   这一行是 2026-09-30 堵掉"匿名者自提权成管理员"的关键，别改回去。
+        //   读了会无声无息，所以这里显式记一条 WARN（不拒绝请求，只让它在日志里可见）。
+        if (reqMap.containsKey("role")) {
+            log.warn("注册请求体里的 role 被忽略（角色由端点决定，防止自提权）: body.role={}, 实际使用 role={}",
+                    reqMap.get("role"), role);
+        }
+
+        if (role == null || !REGISTER_ALLOWED_ROLES.contains(role)) {
+            throw new IllegalArgumentException("不允许注册为该角色: " + role);
+        }
+        if (username == null || username.isEmpty()) {
+            throw new IllegalArgumentException("用户名不能为空");
+        }
+        if (password == null || password.length() < 6) {
+            throw new IllegalArgumentException("密码长度至少为6位");
+        }
+
+        User existingUser = getByUsername(username);
+        if (existingUser != null) {
+            throw new IllegalArgumentException("用户名已存在");
+        }
+
+        User user = new User()
+                .setUsername(username)
+                .setPassword(password)   // 明文交给 save()，它统一加密（非 $2a$ 前缀就 encode）
+                .setName(name != null ? name : username)
+                .setPhone(str(reqMap, "phone"))
+                .setEmail(str(reqMap, "email"))
+                .setRole(role)
+                .setStatus(statusForRole(role));
+
+        save(user);
+        // save() 走 MyBatis-Plus insert，主键会回填到 user.id；没有它下面的 profile 无从挂起。
+        if (user.getId() == null) {
+            throw new IllegalStateException("账号已写入但未取回主键，无法继续建档");
+        }
+
+        if (role == ROLE_STUDENT) {
+            createStudentProfile(user, reqMap);
+        } else if (role == ROLE_TEACHER) {
+            createTeacherProfile(user, reqMap);
+        } else if (role == ROLE_COUNSELOR) {
+            createCounselorProfile(user, reqMap);
+        }
+        // 管理员(4) 不建资料行：CollegeAdminProfile/admin 侧没有对应表结构上的必填来源，
+        // 与 admin-service 的建号口径一致（那边也只给学生/辅导员补 profile）。
+
+        log.info("User registered successfully: {} (role={}, status={}, profileCreated={})",
+                username, role, user.getStatus(), role != ROLE_ADMIN);
+        return "Register successful";
+    }
+
+    /**
+     * 注册后的初始状态。
+     *
+     * <p>学生与管理员直接可用；教师/辅导员需要管理员审批（0=待审批，见
+     * {@code AdminUsers.vue} 的状态语义：0 待审批 / 1 正常 / 2 已锁定）。
+     */
+    private int statusForRole(int role) {
+        return (role == ROLE_STUDENT || role == ROLE_ADMIN) ? 1 : 0;
+    }
+
+    /** 学生档案。{@code student_profile.user_id} / {@code student_id} 都有唯一约束。*/
+    private void createStudentProfile(User user, Map<String, Object> reqMap) {
+        String studentId = user.getUsername();   // 学号即账号名（活库里 24 个学生都是这么存的）
+
+        if (registrationMapper.countStudentProfileByStudentId(studentId) > 0) {
+            throw new IllegalArgumentException("该学号已有学生档案: " + studentId);
+        }
+
+        Long classId = idOf(reqMap, "classId");
+        Long majorId = idOf(reqMap, "majorId");
+        Long collegeId = idOf(reqMap, "collegeId");
+        String className = null;
+
+        if (classId != null) {
+            // 选了班就以**班级行**为准：班名、专业、学院全从它取。
+            // 学生档案的 class_name/class_id、major_id/college_id 必须自洽
+            // （verify_invariants.py C 组），从两处分别取值迟早对不上。
+            Map<String, Object> cls = registrationMapper.selectClassRow(classId);
+            if (cls == null) {
+                throw new IllegalArgumentException("所选班级不存在: " + classId);
+            }
+            className = asString(cls.get("name"));
+            Long clsMajorId = asLong(cls.get("major_id"));
+            Long clsCollegeId = asLong(cls.get("college_id"));
+            if (majorId != null && clsMajorId != null && !majorId.equals(clsMajorId)) {
+                throw new IllegalArgumentException("所选班级不属于所选专业");
+            }
+            if (collegeId != null && clsCollegeId != null && !collegeId.equals(clsCollegeId)) {
+                throw new IllegalArgumentException("所选班级不属于所选学院");
+            }
+            majorId = clsMajorId != null ? clsMajorId : majorId;
+            collegeId = clsCollegeId != null ? clsCollegeId : collegeId;
+        } else if (majorId != null) {
+            // 只给了专业：学院必须跟着专业走，否则档案里的专业和学院会互相打架。
+            requireExists(registrationMapper.countMajor(majorId) > 0, "所选专业不存在: " + majorId);
+            Long majorCollegeId = registrationMapper.selectMajorCollegeId(majorId);
+            if (majorCollegeId != null) {
+                collegeId = majorCollegeId;
+            }
+        }
+
+        if (collegeId != null) {
+            requireExists(registrationMapper.countCollege(collegeId) > 0, "所选学院不存在: " + collegeId);
+        }
+
+        registrationMapper.insertStudentProfile(user.getId(), studentId,
+                user.getName(), str(reqMap, "gender"), collegeId, majorId, classId, className);
+        if (collegeId != null) {
+            registrationMapper.increaseCollegeStudentCount(collegeId);
+        }
+        log.info("Student profile created: userId={}, studentId={}, classId={}", user.getId(), studentId, classId);
+    }
+
+    /**
+     * 教师档案。
+     *
+     * <p>{@code teacher_profile.college_id} 是 NOT NULL —— 拿不到就**明确拒绝注册**，
+     * 而不是建一个没有学院的教师（那样他在教师端看不到任何班级/课程，也查不出原因）。
+     * 这与 {@code admin-service.createProfileIfNeeded} 的口径不同：那边是"管理员建号、
+     * 表单里没有学院，所以不建 profile"，这边是"本人注册、表单里学院是必填"。
+     */
+    private void createTeacherProfile(User user, Map<String, Object> reqMap) {
+        Long collegeId = idOf(reqMap, "collegeId");
+        if (collegeId == null) {
+            throw new IllegalArgumentException("教师注册必须选择所属学院");
+        }
+        requireExists(registrationMapper.countCollege(collegeId) > 0, "所选学院不存在: " + collegeId);
+
+        TeacherProfile profile = new TeacherProfile();
+        profile.setUserId(user.getId());
+        profile.setName(user.getName());
+        profile.setCollegeId(collegeId);
+        profile.setTitle(str(reqMap, "title"));
+        registrationMapper.insertTeacherProfile(profile);
+        registrationMapper.increaseCollegeTeacherCount(collegeId);
+        log.info("Teacher profile created: userId={}, collegeId={}", user.getId(), collegeId);
+    }
+
+    /**
+     * 辅导员档案 + 办公信息。
+     *
+     * <p>编号列（{@code counselor_id} / {@code staff_id}）优先用表单里填的，没填就用账号名兜
+     * （与 admin-service 建号时"编号用用户名兜"同一个思路；活库里 counselor_id 无唯一约束，
+     * 但同一批数据里它就是工号，用账号名最不容易撞）。
+     *
+     * <p>办公地点/值班电话写进 {@code user_settings}（办公信息的真源），**不写**
+     * {@code counselor_profiles.office_location/duty_phone} —— 那两列全仓没有 Java 读者，
+     * 写了就是第二个数据源。
+     */
+    private void createCounselorProfile(User user, Map<String, Object> reqMap) {
+        Long collegeId = idOf(reqMap, "collegeId");
+        if (collegeId != null) {
+            requireExists(registrationMapper.countCollege(collegeId) > 0, "所选学院不存在: " + collegeId);
+        }
+
+        String counselorId = str(reqMap, "counselorId");
+        if (counselorId == null) {
+            counselorId = user.getUsername();
+        }
+        String staffId = str(reqMap, "staffId");
+        if (staffId == null) {
+            staffId = user.getUsername();
+        }
+
+        CounselorProfile profile = new CounselorProfile();
+        profile.setUserId(user.getId());
+        profile.setCounselorId(counselorId);
+        profile.setStaffId(staffId);
+        profile.setName(user.getName());
+        profile.setGender(str(reqMap, "gender"));
+        profile.setPhone(user.getPhone());
+        profile.setEmail(user.getEmail());
+        profile.setCollegeId(collegeId);
+        profile.setDepartment(str(reqMap, "department"));
+        profile.setTitle(str(reqMap, "title"));
+        profile.setEducation(str(reqMap, "education"));
+        profile.setIntroduction(str(reqMap, "introduction"));
+        profile.setStatus(1);
+        registrationMapper.insertCounselorProfile(profile);
+
+        String officeLocation = str(reqMap, "officeLocation");
+        String officePhone = str(reqMap, "dutyPhone");
+        if (officeLocation != null || officePhone != null) {
+            UserSettings settings = new UserSettings();
+            settings.setUserId(user.getId());
+            settings.setOfficeLocation(officeLocation);
+            settings.setOfficePhone(officePhone);
+            registrationMapper.insertUserSettings(settings);
+        }
+        log.info("Counselor profile created: userId={}, collegeId={}, settingsRow={}",
+                user.getId(), collegeId, officeLocation != null || officePhone != null);
+    }
+
+    // ==================== 请求体取值的小工具 ====================
+    //
+    // 为什么要专门写这几个：注册请求体是前端拼的 JSON，同一格在不同端是不同类型 ——
+    // PC 端 el-select 给的是数字，小程序给的是 `''`（未选）或 `'3'`（字符串）。
+    // 直接 `(Long) reqMap.get("collegeId")` 除了数字以外全炸 ClassCastException；
+    // 而"炸"在这里表现为 500 + 一句看不懂的话。取值一律走下面几个方法：
+    // 空白 → null（视为没填），填了但不是数字 → **明确报错**，绝不静默当没填
+    // （静默丢弃正是这次要修的缺陷类型）。
+
+    /** 取字符串：null / 空白都算没填。*/
+    private static String str(Map<String, Object> reqMap, String key) {
+        Object v = reqMap.get(key);
+        if (v == null) {
+            return null;
+        }
+        String s = v.toString().trim();
+        return s.isEmpty() ? null : s;
+    }
+
+    /** 取 id：空白算没填；非空白必须是数字，否则报错。*/
+    private static Long idOf(Map<String, Object> reqMap, String key) {
+        String s = str(reqMap, key);
+        if (s == null) {
+            return null;
+        }
         try {
-            log.info("User register");
-            
-            Map<String, Object> reqMap = (Map<String, Object>) request;
-            String username = reqMap.get("username") != null ? reqMap.get("username").toString() : null;
-            String password = reqMap.get("password") != null ? reqMap.get("password").toString() : null;
-            String name = reqMap.get("name") != null ? reqMap.get("name").toString() : null;
-            Integer role = reqMap.get("role") != null ? Integer.parseInt(reqMap.get("role").toString()) : 1;
+            return Long.valueOf(s);
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException("字段 " + key + " 必须是数字: " + s);
+        }
+    }
 
-            if (username == null || username.isEmpty()) {
-                return "用户名不能为空";
-            }
-            if (password == null || password.length() < 6) {
-                return "密码长度至少为6位";
-            }
+    private static String asString(Object v) {
+        return v != null ? v.toString() : null;
+    }
 
-            User existingUser = getByUsername(username);
-            if (existingUser != null) {
-                return "用户名已存在";
-            }
+    /** 从 SQL 结果里取 Long（不同驱动可能给 Integer/BigInteger）。*/
+    private static Long asLong(Object v) {
+        if (v == null) {
+            return null;
+        }
+        if (v instanceof Number n) {
+            return n.longValue();
+        }
+        try {
+            return Long.valueOf(v.toString());
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
 
-            User user = new User()
-                    .setUsername(username)
-                    .setPassword(password)
-                    .setName(name != null ? name : username)
-                    .setRole(role)
-                    .setStatus(1);
-
-            save(user);
-            log.info("User registered successfully: {}", username);
-            return "Register successful";
-        } catch (Exception e) {
-            log.error("Register failed: {}", e.getMessage());
-            throw e;
+    private static void requireExists(boolean exists, String message) {
+        if (!exists) {
+            throw new IllegalArgumentException(message);
         }
     }
 

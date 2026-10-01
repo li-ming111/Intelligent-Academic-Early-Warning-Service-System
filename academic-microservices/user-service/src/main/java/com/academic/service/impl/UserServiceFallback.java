@@ -68,8 +68,10 @@ public class UserServiceFallback implements UserService {
     }
 
     @Override
-    public String register(Object request) {
-        return "注册服务暂时不可用，请稍后重试";
+    public String register(Object request, Integer role) {
+        // 降级时**抛异常**，不返回字符串 —— 返回的字符串会被 controller 包成
+        // ApiResponse.success(...)，于是"服务不可用"在响应里变成 success:true（修复前的形状）。
+        throw new IllegalStateException("注册服务暂时不可用，请稍后重试");
     }
 
     @Override

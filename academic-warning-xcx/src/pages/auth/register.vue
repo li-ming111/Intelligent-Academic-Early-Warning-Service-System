@@ -131,7 +131,22 @@ const roles = [
 
 const colleges = ref([])
 const majors = ref([])
-const classes = ref([])
+/** 该学院的全部班级（原始列表）。 */
+const allClasses = ref([])
+/**
+ * 供选择器使用的班级列表 = 原始列表按**已选专业**过滤。
+ *
+ * <p>后端的班级目录只支持按学院过滤（{@code /auth/classes?collegeId=}），一个学院
+ * 下挂着好几个专业的班（实测：学院 1 有 5 个班，分属 2 个专业）。如果照原样塞进
+ * "请先选专业"这个选择器，学生选了 A 专业仍能选到 B 专业的班 —— 后端校验会回
+ * 「所选班级不属于所选专业」，而页面上根本看不出为什么。这里按 majorId 过一遍，
+ * 让选择器里出现的就是合法选项。
+ */
+const classes = computed(() => {
+  const mid = form.value.majorId
+  if (!mid) return []
+  return allClasses.value.filter(c => String(c.majorId) === String(mid))
+})
 
 const collegeNames = computed(() => colleges.value.map(c => c.name))
 const majorNames = computed(() => majors.value.map(m => m.name))
@@ -153,6 +168,10 @@ const selectedClassName = computed(() => {
 const selectRole = (role) => {
   selectedRole.value = role
   form.value = { username: '', password: '', name: '', phone: '', email: '', collegeId: '', majorId: '', classId: '', titleIdx: -1 }
+  // 换角色时把上一个角色带出来的目录也清掉：留着的话，切到教师后"专业/班级"虽然不显示，
+  // 但 majors/allClasses 仍是上个角色的数据，学院一改就会把旧列表当新的用。
+  majors.value = []
+  allClasses.value = []
   errorMsg.value = ''
   successMsg.value = ''
 }
@@ -163,8 +182,9 @@ const onCollegeChange = (e) => {
   form.value.majorId = ''
   form.value.classId = ''
   majors.value = []
-  classes.value = []
+  allClasses.value = []
   if (c) {
+    // 专业与班级都按学院取；班级要等专业选定后才出现在选择器里（见 classes 计算属性）。
     loadMajors(c.id)
     loadClasses(c.id)
   }
@@ -174,8 +194,6 @@ const onMajorChange = (e) => {
   const m = majors.value[e.detail.value]
   form.value.majorId = m?.id || ''
   form.value.classId = ''
-  classes.value = []
-  if (m) loadClasses(form.value.collegeId)
 }
 
 const onClassChange = (e) => {
@@ -204,7 +222,6 @@ const handleRegister = async () => {
     if (selectedRole.value === 'student') {
       await apiClient.registerStudent({
         ...base,
-        studentId: form.value.username,
         collegeId: form.value.collegeId,
         majorId: form.value.majorId,
         classId: form.value.classId
@@ -223,7 +240,12 @@ const handleRegister = async () => {
       })
     }
 
-    successMsg.value = '注册成功，即将跳转登录页...'
+    // 学生注册完 status=1（直接可用）；教师/辅导员是 status=0（待管理员审批），
+    // 当场登录会被回「账号正在审批中，请等待管理员审核」。三种角色说同一句
+    // "注册成功，即将跳转登录页"就是让老师白跑一趟登录页。
+    successMsg.value = selectedRole.value === 'student'
+      ? '注册成功，即将跳转登录页...'
+      : '注册申请已提交，待管理员审核通过后方可登录'
     errorMsg.value = ''
     setTimeout(() => { uni.redirectTo({ url: '/pages/auth/login' }) }, 1500)
   } catch (error) {
@@ -233,19 +255,38 @@ const handleRegister = async () => {
   }
 }
 
+// ⚠️ 三个 load* 从前都是"catch 掉、只留一行 console.error 或干脆置空"：
+//    接口挂了 / 404 / 403 的时候，用户看到的是"下拉框是空的、点了没反应"，
+//    控制台里才有原因，手机上连控制台都没有。现在一律把失败写成页面上可见的
+//    红字 —— 宁可难看，也不要让人对着一个空选择器猜。
 const loadColleges = async () => {
-  try { const d = await apiClient.getColleges(); colleges.value = d || [] }
-  catch (e) { console.error('学院加载失败:', e) }
+  try {
+    const d = await apiClient.getColleges()
+    colleges.value = d || []
+    if (!colleges.value.length) errorMsg.value = '学院列表为空，无法注册，请联系管理员'
+  } catch (e) {
+    colleges.value = []
+    errorMsg.value = '学院列表加载失败：' + (e.message || '') + '（学院是必选项）'
+  }
 }
 const loadMajors = async (collegeId) => {
-  try { const d = await apiClient.getMajorsByCollege(collegeId); majors.value = d || [] }
-  catch (e) { console.error('专业加载失败:', e) }
+  try {
+    const d = await apiClient.getMajorsByCollege(collegeId)
+    majors.value = d || []
+    if (!majors.value.length) errorMsg.value = '该学院下暂无专业数据'
+  } catch (e) {
+    majors.value = []
+    errorMsg.value = '专业列表加载失败：' + (e.message || '')
+  }
 }
 const loadClasses = async (collegeId) => {
   try {
     const d = await apiClient.getClasses(collegeId)
-    classes.value = d || []
-  } catch (e) { classes.value = [] }
+    allClasses.value = d || []
+  } catch (e) {
+    allClasses.value = []
+    errorMsg.value = '班级列表加载失败：' + (e.message || '') + '（可以先不选班级，稍后在个人资料里补）'
+  }
 }
 
 onMounted(() => { loadColleges() })

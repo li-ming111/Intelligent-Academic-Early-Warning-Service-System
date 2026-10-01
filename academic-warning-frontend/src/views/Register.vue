@@ -26,6 +26,14 @@
         </div>
 
         <div class="rg-field">
+          <label>班级</label>
+          <el-select v-model="form.classId" placeholder="按学号带出学院后可选" style="width:100%" clearable>
+            <el-option v-for="c in classes" :key="c.id" :label="c.name" :value="c.id" />
+          </el-select>
+          <span class="rg-hint dim">不选也能注册，但班级排名/班级名单等会没有数据；可稍后在个人资料里补</span>
+        </div>
+
+        <div class="rg-field">
           <label>姓名</label>
           <el-input v-model="form.name" placeholder="请输入真实姓名" clearable>
             <template #prefix><el-icon><User /></el-icon></template>
@@ -86,27 +94,65 @@ import { User, Lock, Phone, Message, Postcard, School } from '@element-plus/icon
 const router = useRouter()
 const form = ref({
   studentId: '', majorName: '', collegeName: '', majorId: null, collegeId: null,
-  name: '', username: '', password: '123456', phone: '', email: ''
+  classId: null,
+  name: '', password: '123456', phone: '', email: ''
 })
 const loading = ref(false), errorMessage = ref(''), successMessage = ref('')
+const classes = ref([])
 
 const isValidPhone = computed(() => /^\d{11}$/.test(form.value.phone))
 const isValidEmail = computed(() => /@/.test(form.value.email) && /\./.test(form.value.email))
 
+// 目录（学院/专业/班级）必须走 /auth/*：那是**登录前可达**的公开目录接口。
+// 从前这里打的是 /admin/majors 与 /admin/colleges/{id} —— 管理员接口，
+// 注册页还没有 token，网关直接 401，catch 里只写一句"（加载失败）"，
+// 于是"专业"这一格永远是失败态，majorId/collegeId 也永远是 null。
+let directoryPromise = null
+const loadDirectory = () => {
+  if (!directoryPromise) {
+    directoryPromise = Promise.all([
+      apiClient.get('/auth/majors'),
+      apiClient.get('/auth/colleges')
+    ]).then(([majors, colleges]) => ({ majors: majors || [], colleges: colleges || [] }))
+      .catch(e => { directoryPromise = null; throw e })
+  }
+  return directoryPromise
+}
+
 const onStudentIdChange = async () => {
-  if (form.value.studentId.length !== 10) { form.value.majorName = ''; form.value.collegeName = ''; return }
+  form.value.classId = null
+  classes.value = []
+  if (form.value.studentId.length !== 10) {
+    form.value.majorName = ''; form.value.collegeName = ''
+    form.value.majorId = null; form.value.collegeId = null
+    return
+  }
   try {
-    const majors = await apiClient.get('/admin/majors')
-    if (majors) {
-      const majorCode = form.value.studentId.substring(4, 6)
-      const major = majors.find(m => m.code === majorCode)
-      if (major) {
-        form.value.majorName = major.name; form.value.majorId = major.id
-        const college = await apiClient.get(`/admin/colleges/${major.collegeId}`)
-        if (college) { form.value.collegeName = college.name; form.value.collegeId = major.collegeId }
-      } else { form.value.majorName = '（未找到匹配专业）'; form.value.collegeName = '' }
+    const { majors, colleges } = await loadDirectory()
+    // 学号第 5-6 位是专业代码（2023020616 → "02" → 计算机科学与技术）
+    const majorCode = form.value.studentId.substring(4, 6)
+    const major = majors.find(m => String(m.code) === majorCode)
+    if (!major) {
+      form.value.majorName = '（未找到匹配专业）'; form.value.collegeName = ''
+      form.value.majorId = null; form.value.collegeId = null
+      return
     }
-  } catch (e) { form.value.majorName = '（加载失败）' }
+    form.value.majorName = major.name
+    form.value.majorId = major.id
+    form.value.collegeId = major.collegeId
+    const college = colleges.find(c => c.id === major.collegeId)
+    form.value.collegeName = college ? college.name : ''
+    // 班级按学院过滤（选填；取不到就留空，不阻塞注册）
+    try {
+      classes.value = await apiClient.get(`/auth/classes?collegeId=${major.collegeId}`) || []
+    } catch (e) {
+      classes.value = []
+      errorMessage.value = '班级列表加载失败：' + (e.message || '') + '（可以先不选班级继续注册）'
+    }
+  } catch (e) {
+    form.value.majorName = '（加载失败）'; form.value.collegeName = ''
+    form.value.majorId = null; form.value.collegeId = null
+  }
 }
 
 const handleRegister = async () => {
@@ -118,9 +164,19 @@ const handleRegister = async () => {
   if (!isValidEmail.value) { errorMessage.value = '请输入有效的邮箱地址'; return }
   loading.value = true
   try {
+    // ⚠️ 键名必须是 username：后端的注册接口只读 username/password/name/phone/email
+    //    （学号即账号名，档案里的 student_id 也用它的值），从前这里发的是 studentId，
+    //    后端读不到 → 一律回"用户名不能为空"，也就是说**这个页面从来没能注册成功过**。
+    //    majorId/collegeId/classId 从前也算了出来却没发，档案里因此没有学院/专业/班级。
     await apiClient.post('/auth/register/student', {
-      studentId: form.value.studentId, name: form.value.name,
-      password: form.value.password, phone: form.value.phone, email: form.value.email
+      username: form.value.studentId,
+      name: form.value.name,
+      password: form.value.password,
+      phone: form.value.phone,
+      email: form.value.email,
+      majorId: form.value.majorId,
+      collegeId: form.value.collegeId,
+      classId: form.value.classId
     })
     successMessage.value = '注册成功！即将跳转到登录页...'
     setTimeout(() => router.push('/login'), 1200)
