@@ -52,6 +52,18 @@ public class Score {
     /** 学分（连表查询，非数据库字段） */
     @TableField(exist = false)
     private java.math.BigDecimal credits;
+
+    /**
+     * 授课教师姓名（连表查询，非数据库字段）。
+     *
+     * <p>2026-10-01 第二十一轮加：小程序学生端成绩卡上有一处「课程名 · 学分 · 教师 · 学期」，
+     * 其中的 {@code teacherName} 一直没有来源 ⇒ 那个分隔点与名字恒不显示。
+     * 来源是 {@code courses.teacher_id → users.id}（实测 courses.teacher_id 与
+     * {@code teacher_profile.user_id} 10/10 一致、与 {@code teacher_profile.id} 0/10，
+     * 即它存的是 users.id，不是教师档案主键）。
+     */
+    @TableField(exist = false)
+    private String teacherName;
     
     @TableField("modified_by")
     private Long modifiedBy;

@@ -287,9 +287,84 @@ public class StudentServiceImpl implements StudentService {
             bm.put("semesterLabel", semesterLabel(semester, studentNo));
             bm.put("studentGpa", BigDecimal.valueOf(gpa != null ? gpa : 0)
                     .setScale(2, RoundingMode.HALF_UP));
+
+            // 2026-10-01 第二十一轮: 前端这张表还要 classAvgGpa / majorAvgGpa /
+            // classRank / classTotal / coursesPassed / coursesFailed 六个 key, 而本方法
+            // 原来一个都不给 ⇒ 三列恒 `--`、「通过/挂科」恒「0过/0挂」。
+            // ⚠️ 不能读 benchmark_analysis: 那张表**有这些列但零行**(无任何写入方)。
+            // 所以按 scores 实算, 均值/名次/人数都从同一个"同学期同班 GPA 行集"里取,
+            // 保证分子分母同源(此前班级均分与班级排名各算各的就是这么打架的)。
+            if (sp != null && sp.getClassId() != null) {
+                List<Map<String, Object>> peers = scoreMapper.selectSemesterClassGpas(profileId, semester);
+                bm.put("classAvgGpa", avgGpaOf(peers));
+                bm.put("classRank", rankInGpas(peers, profileId, gpa));
+                bm.put("classTotal", countWithGpa(peers));
+            }
+            if (sp != null && sp.getMajorId() != null) {
+                List<Map<String, Object>> majors = scoreMapper.selectSemesterMajorGpas(profileId, semester);
+                bm.put("majorAvgGpa", avgGpaOf(majors));
+                bm.put("majorRank", rankInGpas(majors, profileId, gpa));
+                bm.put("majorTotal", countWithGpa(majors));
+            }
+            Map<String, Object> cs = scoreMapper.selectSemesterCourseStats(profileId, semester);
+            int totalCourses = cs != null ? intValue(cs.get("totalCourses")) : 0;
+            int failedCourses = cs != null ? intValue(cs.get("failedCourses")) : 0;
+            bm.put("coursesPassed", totalCourses - failedCourses);
+            bm.put("coursesFailed", failedCourses);
             result.add(bm);
         }
         return result;
+    }
+
+    /** 一组"学生-GPA"行的平均值（跳过 GPA 为 null 的学生，与 STUDENT_GPA 的 NULL 语义一致）。 */
+    private static BigDecimal avgGpaOf(List<Map<String, Object>> rows) {
+        List<Double> gpas = gpasOf(rows);
+        if (gpas.isEmpty()) {
+            return null;
+        }
+        double sum = 0;
+        for (Double g : gpas) {
+            sum += g;
+        }
+        return BigDecimal.valueOf(sum / gpas.size()).setScale(2, RoundingMode.HALF_UP);
+    }
+
+    /** 名次 = 比我 GPA 高的人数 + 1；自己不在名单里（该学期无成绩）时返回 null，不伪造名次。 */
+    private static Integer rankInGpas(List<Map<String, Object>> rows, Long profileId, Double myGpa) {
+        if (myGpa == null) {
+            return null;
+        }
+        int better = 0;
+        for (Map<String, Object> row : rows) {
+            Double g = gpaOf(row);
+            if (g != null && g > myGpa) {
+                better++;
+            }
+        }
+        return better + 1;
+    }
+
+    /** 参与比较的人数（GPA 非空者）。 */
+    private static int countWithGpa(List<Map<String, Object>> rows) {
+        return gpasOf(rows).size();
+    }
+
+    private static List<Double> gpasOf(List<Map<String, Object>> rows) {
+        List<Double> gpas = new ArrayList<>();
+        if (rows != null) {
+            for (Map<String, Object> row : rows) {
+                Double g = gpaOf(row);
+                if (g != null) {
+                    gpas.add(g);
+                }
+            }
+        }
+        return gpas;
+    }
+
+    private static Double gpaOf(Map<String, Object> row) {
+        Object v = row != null ? row.get("gpa") : null;
+        return v instanceof Number ? ((Number) v).doubleValue() : null;
     }
 
     /**
@@ -692,6 +767,12 @@ public class StudentServiceImpl implements StudentService {
      * <p>{@code status} 返回数值（0 未开始 / 1 进行中 / 2 已完成），与库中一致，
      * 小程序端就是按数值判断的；同时给出 {@code statusText} 供直接展示。
      * 表里没有"计划标题"列，故 title 用固定名称、正文放在 content/description。
+     *
+     * <p>⚠️ 2026-10-01 第二十一轮：表 {@code assistance_plans} 的列只有
+     * {@code id/counselor_id/student_id/content/status/created_at/updated_at/progress} ——
+     * **没有 course_id、没有 start_date/end_date**。所以"目标课程/计划开始/计划结束"这三项
+     * 在库层面**没有数据源**，学生端页面对应三块已删（不是补一个编出来的值）。
+     * 「辅导教师」补的是 {@code counselorName}（{@code counselor_id} = users.id）。
      */
     @Override
     public Object getAssistancePlans(Long studentId) {
@@ -701,6 +782,9 @@ public class StudentServiceImpl implements StudentService {
             return Collections.emptyList();
         }
         List<Map<String, Object>> plans = new ArrayList<>();
+        // 2026-10-01 第二十一轮: 前端要显示「辅导教师」, 原来那个 key 后端从来不 put。
+        // 姓名在 users 表(counselor_id 就是 users.id), 按 id 缓存避免每行一次查询。
+        Map<Long, String> nameCache = new HashMap<>();
         for (AssistancePlan plan : assistancePlanMapper.selectByStudentId(profileId)) {
             Map<String, Object> p = new HashMap<>();
             p.put("id", plan.getId());
@@ -711,6 +795,10 @@ public class StudentServiceImpl implements StudentService {
             p.put("statusText", planStatusText(plan.getStatus()));
             p.put("progress", plan.getProgress() != null ? plan.getProgress() : 0);
             p.put("counselorId", plan.getCounselorId());
+            if (plan.getCounselorId() != null) {
+                p.put("counselorName", nameCache.computeIfAbsent(plan.getCounselorId(),
+                        assistancePlanMapper::selectCounselorName));
+            }
             p.put("createdAt", plan.getCreatedAt());
             p.put("updatedAt", plan.getUpdatedAt());
             plans.add(p);
@@ -777,8 +865,15 @@ public class StudentServiceImpl implements StudentService {
             suggestions.add(sug);
         }
         if (suggestions.isEmpty()) {
+            // 2026-10-01 第二十一轮: 兜底这一条原来只 put id/content/priority, 而学生端页面
+            // 是无条件渲染 `s.courseName` 与 `<score-cell :score="s.score">` 的 ⇒ 这一行会
+            // 显示空白课程名 + 一个 undefined 的分数格。这里把 key 补齐为 null(不是编一个课程名),
+            // 页面按 v-if 守卫, 只显示正文。
             Map<String, Object> sug = new HashMap<>();
             sug.put("id", id);
+            sug.put("courseId", null);
+            sug.put("courseName", null);
+            sug.put("score", null);
             sug.put("content", "当前各科成绩均在关注线以上，建议参加更多实践项目提升动手能力");
             sug.put("priority", "low");
             suggestions.add(sug);
@@ -1835,10 +1930,31 @@ public class StudentServiceImpl implements StudentService {
         m.put("description", a.getDescription());
         m.put("attachments", a.getAttachments());
         m.put("status", a.getStatus());
+        // 2026-10-01 第二十一轮: 学生端「预警」页的申诉卡读的是 courseName/submittedAt 与
+        // 字符串 status('pending'/'approved'/'rejected') —— 三者后端从来不给, 于是课程名与
+        // 时间恒空白, 而状态标签**恒落到 else 分支显示「已驳回」**(待处理的申诉被标成已驳回)。
+        // 这里补 courseName(course_id 是真实关联)与 statusText; 前端改用数值口径。
+        if (a.getCourseId() != null) {
+            m.put("courseName", scoreAppealMapper.selectCourseName(a.getCourseId()));
+        }
+        m.put("statusText", appealStatusText(a.getStatus()));
         m.put("reply", a.getReply());
         m.put("createdAt", a.getCreatedAt() != null ? a.getCreatedAt().toString() : null);
         m.put("updatedAt", a.getUpdatedAt() != null ? a.getUpdatedAt().toString() : null);
         return m;
+    }
+
+    /** 申诉状态码 → 展示文案。0 待处理 / 1 已通过 / 2 已驳回 / 3 已撤回。 */
+    private static String appealStatusText(Integer status) {
+        if (status == null) {
+            return "待处理";
+        }
+        return switch (status) {
+            case 1 -> "已通过";
+            case 2 -> "已驳回";
+            case 3 -> "已撤回";
+            default -> "待处理";
+        };
     }
 
     private Map<String, Object> notificationToMap(Notification n) {

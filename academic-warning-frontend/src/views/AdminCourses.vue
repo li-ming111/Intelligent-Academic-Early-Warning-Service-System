@@ -46,14 +46,22 @@
         </el-table-column>
         <el-table-column label="授课教师" width="120">
           <template #default="{ row }">
-            {{ teacherMap[row.teacherId] || '教师'+row.teacherId || '--' }}
+            <!-- `'教师'+row.teacherId` 恒为真（null 会拼成字符串 "教师null"），
+                 所以后面那个 '--' 兜底永远轮不到。改成先判 id 有没有值。 -->
+            {{ teacherMap[row.teacherId] || (row.teacherId ? '教师' + row.teacherId : '--') }}
           </template>
         </el-table-column>
         <el-table-column label="操作" width="180" fixed="right">
           <template #default="{ row }">
+            <!-- 2026-10-01 第二十一轮删 `:disabled="row.isSystem"`：
+                 `courses` 表的列只有 id/code/name/credits/type/description/module_id/
+                 score_template/teacher_id/created_at/updated_at，全仓 Java 里也没有
+                 isSystem 任何一处 —— 这个 key 恒为 undefined ⇒ 绑定恒为 false，
+                 按钮永远可点。它不拦任何东西，只是让人以为"内置课不可删"。
+                 要真做这层保护得先有那一列，现在只把假的删掉。 -->
             <div class="action-buttons">
-              <el-button type="primary" size="small" @click="openEditDialog(row)" :disabled="row.isSystem">编辑</el-button>
-              <el-button type="danger" size="small" @click="handleDelete(row)" :disabled="row.isSystem">删除</el-button>
+              <el-button type="primary" size="small" @click="openEditDialog(row)">编辑</el-button>
+              <el-button type="danger" size="small" @click="handleDelete(row)">删除</el-button>
             </div>
           </template>
         </el-table-column>

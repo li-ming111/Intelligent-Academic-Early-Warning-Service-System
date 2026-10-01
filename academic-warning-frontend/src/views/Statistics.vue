@@ -41,7 +41,10 @@
                 <i class="el-icon-warning"></i>
               </div>
               <div class="stat-info">
-                <div class="stat-label">最高成绩</div>
+                <!-- 这两张卡读的是 highestGPA/lowestGPA（学期绩点接口的 studentGpa，
+                     取值 0-5），原标签写「最高成绩／最低成绩」会把 3.6 读成"考了 3.6 分"。
+                     成绩的分档看下面的分布统计。 -->
+                <div class="stat-label">最高绩点</div>
                 <div class="stat-value">{{ statistics.highestGPA || 0 }}</div>
               </div>
             </div>
@@ -53,7 +56,7 @@
                 <i class="el-icon-close"></i>
               </div>
               <div class="stat-info">
-                <div class="stat-label">最低成绩</div>
+                <div class="stat-label">最低绩点</div>
                 <div class="stat-value">{{ statistics.lowestGPA || 0 }}</div>
               </div>
             </div>
@@ -69,9 +72,9 @@
         <el-row :gutter="20">
           <el-col :xs="24" :sm="12" :md="6">
             <div class="distribution-item">
-              <div class="distribution-label">优秀（≥85）</div>
+              <div class="distribution-label">优秀（≥90）</div>
               <div class="distribution-bar">
-                <div class="distribution-fill" style="background-color: #67c23a; width: 80%"></div>
+                <div class="distribution-fill" style="background-color: #67c23a" :style="{ width: distWidth(statistics.excellentCount) }"></div>
               </div>
               <div class="distribution-count">{{ statistics.excellentCount || 0 }}门</div>
             </div>
@@ -79,9 +82,9 @@
 
           <el-col :xs="24" :sm="12" :md="6">
             <div class="distribution-item">
-              <div class="distribution-label">良好（75-84）</div>
+              <div class="distribution-label">良好（80-89）</div>
               <div class="distribution-bar">
-                <div class="distribution-fill" style="background-color: #409eff; width: 60%"></div>
+                <div class="distribution-fill" style="background-color: #409eff" :style="{ width: distWidth(statistics.goodCount) }"></div>
               </div>
               <div class="distribution-count">{{ statistics.goodCount || 0 }}门</div>
             </div>
@@ -89,9 +92,9 @@
 
           <el-col :xs="24" :sm="12" :md="6">
             <div class="distribution-item">
-              <div class="distribution-label">及格（60-74）</div>
+              <div class="distribution-label">及格（60-79）</div>
               <div class="distribution-bar">
-                <div class="distribution-fill" style="background-color: #e6a23c; width: 40%"></div>
+                <div class="distribution-fill" style="background-color: #e6a23c" :style="{ width: distWidth(statistics.passCount) }"></div>
               </div>
               <div class="distribution-count">{{ statistics.passCount || 0 }}门</div>
             </div>
@@ -99,9 +102,9 @@
 
           <el-col :xs="24" :sm="12" :md="6">
             <div class="distribution-item">
-              <div class="distribution-label">不及格（<60）</div>
+              <div class="distribution-label">不及格（&lt;60）</div>
               <div class="distribution-bar">
-                <div class="distribution-fill" style="background-color: #f56c6c; width: 20%"></div>
+                <div class="distribution-fill" style="background-color: #f56c6c" :style="{ width: distWidth(statistics.failCount) }"></div>
               </div>
               <div class="distribution-count">{{ statistics.failCount || 0 }}门</div>
             </div>
@@ -114,12 +117,15 @@
 
       <div class="statistics-section">
         <h3 class="section-title">预警统计</h3>
+        <!-- 三类预警的进度条原先写死 80 / 50 / 30，与各自的条数无关；
+             另外下面饼图的图例写「蓝色预警」（Level=1 的口径是低风险档），
+             这一块却写「绿色预警」—— 同页两个名字指同一档，这里统一成「蓝色预警」。 -->
         <el-row :gutter="20">
           <el-col :xs="24" :sm="8">
             <div class="warning-item high">
               <div class="warning-level">红色预警</div>
               <div class="warning-count">{{ statistics.highWarningCount || 0 }}</div>
-              <el-progress :percentage="80" color="#f56c6c" :show-text="false"></el-progress>
+              <el-progress :percentage="warnWidth(statistics.highWarningCount)" color="#f56c6c" :show-text="false"></el-progress>
             </div>
           </el-col>
 
@@ -127,15 +133,15 @@
             <div class="warning-item medium">
               <div class="warning-level">黄色预警</div>
               <div class="warning-count">{{ statistics.mediumWarningCount || 0 }}</div>
-              <el-progress :percentage="50" color="#e6a23c" :show-text="false"></el-progress>
+              <el-progress :percentage="warnWidth(statistics.mediumWarningCount)" color="#e6a23c" :show-text="false"></el-progress>
             </div>
           </el-col>
 
           <el-col :xs="24" :sm="8">
             <div class="warning-item low">
-              <div class="warning-level">绿色预警</div>
+              <div class="warning-level">蓝色预警</div>
               <div class="warning-count">{{ statistics.lowWarningCount || 0 }}</div>
-              <el-progress :percentage="30" color="#67c23a" :show-text="false"></el-progress>
+              <el-progress :percentage="warnWidth(statistics.lowWarningCount)" color="#409eff" :show-text="false"></el-progress>
             </div>
           </el-col>
         </el-row>
@@ -176,19 +182,27 @@
         <el-table :data="paginatedCourseScores" stripe class="score-table">
           <el-table-column prop="courseName" label="课程名称" width="200" show-overflow-tooltip></el-table-column>
           <el-table-column prop="semester" label="学期" width="150" align="center"></el-table-column>
-          <el-table-column prop="score" label="成绩" width="100" align="center">
+          <el-table-column prop="scoreTotal" label="成绩" width="100" align="center">
             <template #default="{ row }">
-              <el-tag :type="getScoreTagType(row.score)">
-                {{ row.score }}
+              <el-tag :type="getScoreTagType(row.scoreTotal)">
+                {{ row.scoreTotal }}
               </el-tag>
             </template>
           </el-table-column>
-          <el-table-column prop="credits" label="学分" width="100" align="center"></el-table-column>
+          <el-table-column label="学分" width="100" align="center">
+            <template #default="{ row }">
+              {{ row.credits === null || row.credits === undefined ? '—' : row.credits }}
+            </template>
+          </el-table-column>
+          <!-- 趋势 = 本门课「最近一次」与「上一次」成绩之差（重修才能比出来）。
+               原先的配色把上升画成红色、下降画成绿色 —— 那是预警的语义（涨=变差），
+               成绩涨是好事，这里改成上升绿、下降红。 -->
           <el-table-column prop="trend" label="趋势" width="80" align="center">
             <template #default="{ row }">
-              <el-icon v-if="row.trend === 'up'" style="color: #f56c6c"><ArrowUp /></el-icon>
-              <el-icon v-else-if="row.trend === 'down'" style="color: #67c23a"><ArrowDown /></el-icon>
-              <span v-else style="color: #909399">→</span>
+              <el-icon v-if="row.trend === 'up'" style="color: #67c23a"><ArrowUp /></el-icon>
+              <el-icon v-else-if="row.trend === 'down'" style="color: #f56c6c"><ArrowDown /></el-icon>
+              <span v-else-if="row.trend === 'flat'" style="color: #909399">→</span>
+              <span v-else style="color: #c0c4cc" title="只有一次作答，没有可比对象">—</span>
             </template>
           </el-table-column>
         </el-table>
@@ -229,6 +243,7 @@ const statistics = ref({
   lowWarningCount: 0,
   semesterTrend: [],
   courseScores: [],
+  courseTotal: 0,
 });
 
 const currentPage = ref(1);
@@ -262,26 +277,51 @@ const fetchStatistics = async () => {
     const history = arrayOf(histRes)
     const warnings = arrayOf(warnRes)
 
-    // 每门课只保留最新一次已录入的成绩：重修记录与期末未录入的行都不参与统计
-    const byCourse = new Map()
+    // 每门课的全部有效作答（期末已录入），按 (semester, id) 降序 —— 与后端权威口径
+    // ScoreCaliber.LATEST_VALID_SCORE 的 `ORDER BY semester DESC, id DESC` 同一个序，
+    // 于是 [0] 就是该课的"最新成绩"，[1] 是它的上一次作答（重修记录）。
+    //
+    // 表里原来只有 courseName / scoreTotal / semester 三个 key，而模板读的是
+    // `row.score` / `row.credits` / `row.trend` —— 三个都取不到值：成绩与学分两列
+    // 每行空白，趋势列因为 undefined 不等于 'up'/'down' 而**每行都画出"→"**，
+    // 连从没重修过的课也显示"持平"。这里把三个 key 都按真实数据补上。
+    const attemptsByCourse = new Map()
     scores.forEach(s => {
       const score = toNumber(s.scoreTotal)
       if (score === null) return
       const key = s.courseId ?? s.courseName
-      const prev = byCourse.get(key)
-      if (!prev || (toNumber(s.semester) || 0) >= (toNumber(prev.semester) || 0)) {
-        byCourse.set(key, s)
-      }
+      const list = attemptsByCourse.get(key) || []
+      list.push({
+        courseName: s.courseName,
+        scoreTotal: score,
+        credits: toNumber(s.credits),   // courses.credits，未关联到课程时为 null
+        semester: s.semester,
+        id: toNumber(s.id) || 0,
+      })
+      attemptsByCourse.set(key, list)
     })
-    const courses = Array.from(byCourse.values()).map(s => ({
-      courseName: s.courseName,
-      scoreTotal: toNumber(s.scoreTotal),
-      semester: s.semester,
-    }))
+    const courses = []
+    attemptsByCourse.forEach(list => {
+      list.sort((a, b) => ((toNumber(b.semester) || 0) - (toNumber(a.semester) || 0)) || (b.id - a.id))
+      const latest = list[0]
+      // 只有一次作答 ⇒ 没有可比对象，趋势是**未知**（null），不是"持平"。
+      // 模板对 null 显示 '—'，对真正的持平才显示 '→'。
+      let trend = null
+      if (list.length > 1) {
+        const diff = latest.scoreTotal - list[1].scoreTotal
+        trend = diff > 0 ? 'up' : (diff < 0 ? 'down' : 'flat')
+      }
+      courses.push({ ...latest, trend })
+    })
 
     const bucket = (lo, hi) => courses.filter(c => c.scoreTotal >= lo && c.scoreTotal < hi).length
     const gpas = history.map(h => toNumber(h.studentGpa)).filter(v => v !== null)
     const currentGpa = toNumber(dash.gpa)
+
+    const excellentCount = bucket(90, Infinity)
+    const goodCount = bucket(80, 90)
+    const failCount = dash.failedCoursesCount || 0
+    const passCount = Math.max(0, courses.length - excellentCount - goodCount - failCount)
 
     // 学期趋势：GPA 来自历史绩点接口，均分由该学期已录入成绩求得
     const scoreBySemester = new Map()
@@ -311,16 +351,20 @@ const fetchStatistics = async () => {
       averageGPA: gpas.length ? +(gpas.reduce((a, b) => a + b, 0) / gpas.length).toFixed(2) : 0,
       highestGPA: gpas.length ? Math.max(...gpas) : 0,
       lowestGPA: gpas.length ? Math.min(...gpas) : 0,
-      excellentCount: bucket(90, Infinity),
-      goodCount: bucket(80, 90),
-      // "及格"与"不及格"互斥且合计等于总门数；不及格取后端权威值而非前端数行
-      failCount: dash.failedCoursesCount || 0,
-      passCount: Math.max(0, courses.length - (dash.failedCoursesCount || 0)),
+      excellentCount: excellentCount,
+      goodCount: goodCount,
+      // 四档互斥且合计 = 总门数。不及格取后端权威值（不前端数行），
+      // 及格取余数 —— 原来写的是 `courses.length - 挂科数`，把"优秀""良好"又数了一遍，
+      // 四档相加比总门数还大；而模板上的标签（≥85 / 75-84 / 60-74）与代码里的
+      // 90 / 80 边界也对不上。现在统一到后端 ScoreCaliber.SCORE_LEVEL_CASE 的边界上。
+      failCount: failCount,
+      passCount: passCount,
       highWarningCount: warnCount(3),
       mediumWarningCount: warnCount(2),
       lowWarningCount: warnCount(1),
       semesterTrend,
       courseScores: courses,
+      courseTotal: courses.length,
     }
 
     // 初始化图表
@@ -494,6 +538,28 @@ const refreshData = () => {
   fetchStatistics();
   ElMessage.success('数据已刷新');
 };
+
+/**
+ * 分布条宽度 = 该档门数占已出成绩总门数的百分比。
+ * 原先是写死的 80/60/40/20%，与旁边那个数字无关 —— 0 门的档位也画着 20% 的条，
+ * 而"优秀 0 门 + 满格绿条"正是答辩时最容易被问住的一帧。
+ */
+const distWidth = (count) => {
+  const total = statistics.value.courseTotal || 0
+  const n = Number(count) || 0
+  if (total <= 0) return '0%'
+  return `${Math.min(100, Math.round((n / total) * 100))}%`
+}
+
+/** 预警档占比（三类合计为分母），同样替换掉写死的 80/50/30%。 */
+const warnWidth = (count) => {
+  const total = (Number(statistics.value.highWarningCount) || 0)
+    + (Number(statistics.value.mediumWarningCount) || 0)
+    + (Number(statistics.value.lowWarningCount) || 0)
+  const n = Number(count) || 0
+  if (total <= 0) return 0
+  return Math.round((n / total) * 100)
+}
 
 // 获取成绩标签类型
 const getScoreTagType = (score) => {

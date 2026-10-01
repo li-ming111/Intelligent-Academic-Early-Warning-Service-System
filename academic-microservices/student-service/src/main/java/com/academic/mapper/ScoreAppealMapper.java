@@ -33,4 +33,14 @@ public interface ScoreAppealMapper extends BaseMapper<ScoreAppeal> {
 
     @Update("UPDATE score_appeals SET status = 3, updated_at = NOW() WHERE id = #{id} AND student_id = #{studentId}")
     int withdrawAppeal(@Param("id") Long id, @Param("studentId") Long studentId);
+
+    /**
+     * 申诉对应的课程名。
+     *
+     * <p>2026-10-01 第二十一轮加：{@code score_appeals.course_id} 是真实关联，但
+     * {@code appealToMap} 只 put 了 courseId，学生端「预警」页的申诉卡渲染的却是
+     * {@code a.courseName} ⇒ 有申诉时「课程」恒空白。
+     */
+    @Select("SELECT c.name FROM courses c WHERE c.id = #{courseId}")
+    String selectCourseName(@Param("courseId") Long courseId);
 }

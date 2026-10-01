@@ -168,6 +168,18 @@ public class CounselorController {
             // 班级列表
             if (counselorId != null) {
                 dashboard.put("classes", classInfoMapper.getClassesByCounselorIdMap(counselorId));
+                // 2026-10-01 第二十一轮: 首页每张班级卡片上的「严重/中度/轻度」徽章读的是
+                // warnByClass[classId].red/yellow/blue —— 后端原来完全不返回这个 key ⇒ 恒「正常」。
+                // 这里按班级把预警分等级装成 map（前端按 classId 取），只含"有预警的班"。
+                Map<String, Map<String, Object>> warnByClass = new HashMap<>();
+                for (Map<String, Object> row : warningMapper.getWarningLevelCountByClass(counselorId)) {
+                    Map<String, Object> lv = new HashMap<>();
+                    lv.put("red", intOf(row.get("redCount")));
+                    lv.put("yellow", intOf(row.get("yellowCount")));
+                    lv.put("blue", intOf(row.get("blueCount")));
+                    warnByClass.put(String.valueOf(row.get("classId")), lv);
+                }
+                dashboard.put("warnByClass", warnByClass);
                 // 最近预警
                 List<Long> counselorClassIds = classInfoMapper.getClassesByCounselorIdMap(counselorId)
                     .stream().map(c -> (Long) c.get("id")).collect(Collectors.toList());
@@ -874,6 +886,13 @@ public class CounselorController {
                     : 0);
             creditData.put("excellentClasses", excellentClasses);
             creditData.put("lowClasses", lowClasses);
+            // 2026-10-01 第二十一轮: 前端「班级总数」「整体达标率」两个盒子读的是
+            // totalClasses / overallAchievementRate —— 后端从来不给这两个 key ⇒ 恒 0 / 恒 0%。
+            // 两者都能从上面已经算好的数直接得出, 不需要任何新查询。
+            creditData.put("totalClasses", classMonitors.size());
+            creditData.put("overallAchievementRate", gradedStudents > 0
+                    ? Math.round((double) achievementStudents / gradedStudents * 1000) / 10.0
+                    : 0);
             creditData.put("classMonitors", classMonitors);
             return ApiResponse.success(creditData);
         } catch (Exception e) {

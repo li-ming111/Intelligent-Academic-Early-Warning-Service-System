@@ -45,10 +45,18 @@
               <div class="cari-body">
                 <div class="cari-top">
                   <span class="cari-name">{{ r.className }}</span>
-                  <span class="cari-val" :class="r.improvementRate>0?'up':'down'">{{ r.creditRate }}分</span>
+                  <span class="cari-val" :class="rateClass(r.creditRate)">{{ r.creditRate }}分</span>
                 </div>
                 <div class="cari-bar"><div class="carib-fill" :style="{width:r.creditRate+'%',background:r.creditRate>=80?'#16a34a':r.creditRate>=60?'#3b82f6':'#ef4444'}"></div></div>
-                <div class="cari-meta">{{ r.studentCount }}人 · <span :class="r.improvementRate>0?'up':'down'">{{ r.improvementRate>0?'+':'' }}{{ r.improvementRate }}%</span></div>
+                <!-- 2026-10-01 第二十一轮删：这里原来还跟着一个 `±improvementRate%`
+                     （绿↑/红↓）。`/counselors/credit-achievement-ranking` 返回的行里
+                     根本没有 improvementRate 这个 key（它来自 getClassScoreStatsByCounselorId，
+                     列是 class_id/name/student_count/graded_student_count/…/achievement_rate/
+                     score_count/avg_score），`item.improvementRate||0` 于是恒 0 ⇒
+                     每个班都显示一个**红色的 "0%"**，看着像"全校零改善"。
+                     班级达标率的环比要另立口径（比哪两个学期？上学期没数据算不算？），
+                     没定下来之前不编数，先只显示真实的人数。 -->
+                <div class="cari-meta">{{ r.studentCount }}人</div>
               </div>
             </div>
           </div>
@@ -81,6 +89,14 @@ const getCid = () => localStorage.getItem('counselorId') || getUserId()
 onMounted(async () => { await loadData() })
 onUnmounted(() => { wc?.dispose(); ec?.dispose(); tc?.dispose() })
 
+/** 达标率配色，与下面那条进度条同一套阈值（≥80 绿 / ≥60 蓝 / 其余红）。 */
+function rateClass(rate) {
+  const n = Number(rate) || 0
+  if (n >= 80) return 'up'
+  if (n >= 60) return 'mid'
+  return 'down'
+}
+
 async function loadData() {
   try {
     const cid = getCid(); if (!cid) return
@@ -105,7 +121,9 @@ async function loadData() {
     const rdList = Array.isArray(rd) ? rd : (rd.list || rd.ranking || [])
     classRanking.value = rdList.map((item, i) => ({
       ranking: i+1, className: item.className||item.name||'未知', studentCount: item.studentCount||item.score_count||0,
-      creditRate: Math.min(100, Math.round(parseFloat(item.achievementRate||item.avg_score||0))), improvementRate: item.improvementRate||0
+      // `||` 会让 0 门成绩的班级回落到 avg_score 冒充达标率（0 是假值）。用 ?? 区分
+      // "字段是 0"和"字段不存在"。后端这一列就是 achievement_rate，没有别名。
+      creditRate: Math.min(100, Math.round(parseFloat(item.achievementRate ?? item.avg_score ?? 0)))
     }))
     stats.classCount = classRanking.value.length
     if (rdList.length) { const t = rdList.reduce((s,it)=>s+Math.min(100,parseFloat(it.achievementRate||it.avg_score||0)),0); stats.creditAchievementRate=Math.round(t/rdList.length) }
@@ -195,7 +213,7 @@ function renderTrend(data) {
 .cari-body { flex: 1; min-width: 0; }
 .cari-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
 .cari-name { font-size: 13px; font-weight: 500; color: #1e293b; }
-.cari-val { font-size: 13px; font-weight: 700; } .cari-val.up { color: #16a34a; } .cari-val.down { color: #ef4444; }
+.cari-val { font-size: 13px; font-weight: 700; } .cari-val.up { color: #16a34a; } .cari-val.mid { color: #3b82f6; } .cari-val.down { color: #ef4444; }
 .cari-bar { height: 5px; background: #f1f5f9; border-radius: 3px; overflow: hidden; margin-bottom: 3px; }
 .carib-fill { height: 100%; border-radius: 3px; transition: width .5s; }
 .cari-meta { font-size: 11px; color: #94a3b8; } .cari-meta .up { color: #16a34a; } .cari-meta .down { color: #ef4444; }

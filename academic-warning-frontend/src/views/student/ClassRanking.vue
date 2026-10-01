@@ -30,9 +30,9 @@
           :class="[getRankClass(index), { 'is-current': member.isCurrent }]"
         >
           <div class="rank-badge">
-            <span class="rank-number">{{ member.rank }}</span>
+            <span class="rank-number">{{ member.rank === null ? '—' : member.rank }}</span>
           </div>
-          
+
           <div class="member-details">
             <div class="member-name-section">
               <h3 class="member-name">{{ member.name }}</h3>
@@ -44,17 +44,19 @@
           <div class="member-scores">
             <div class="score-item">
               <span class="score-label">GPA</span>
-              <span class="score-value">{{ member.gpa.toFixed(2) }}</span>
+              <span class="score-value">{{ fmtGpa(member.gpa) }}</span>
             </div>
             <div class="score-item">
               <span class="score-label">学分</span>
-              <span class="score-value">{{ member.credits }}</span>
+              <span class="score-value">{{ fmtCredits(member.credits) }}</span>
             </div>
           </div>
 
-          <div class="status-badge">
-            <el-tag :type="getStatusType(member.status)">{{ member.status }}</el-tag>
-          </div>
+          <!-- 2026-10-01 第二十一轮删：这里原来挂着一枚 `{{ member.status }}` 标签
+               （优秀/良好/及格/警告）。班级榜响应的行只有 profileId/studentNo/
+               studentName/className/gpa/gradedCredits，没有 status ⇒ 每行渲染出一个
+               灰色空标签，getStatusType 的映射表也没有任何输入能命中。
+               GPA 分档是另立口径的事（几分为优秀？），没定之前不编，先删。 -->
         </div>
       </div>
     </div>
@@ -63,8 +65,10 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
+import { ElMessage } from 'element-plus'
 import { studentAPI } from '@/api/index'
 import { getUserId } from '@/utils/userUtils'
+import { toClassMembers, fmtGpa, fmtCredits } from '@/utils/classRanking'
 
 const sortBy = ref('rank')
 const members = ref([])
@@ -77,19 +81,44 @@ const sortOptions = [
 ]
 
 // 排序成员
+// 缺值（GPA / 学分可能为 null）一律排到最后，不参与减法比较 —— `null - 3` 会变成 -3
+// 而不是"更小"，把没成绩的同学排到榜首。
 const sortedMembers = computed(() => {
-  let sorted = [...members.value]
-  
+  const sorted = [...members.value]
+
   if (sortBy.value === 'gpa') {
-    sorted.sort((a, b) => b.gpa - a.gpa)
+    sorted.sort((a, b) => numDesc(a.gpa, b.gpa))
   } else if (sortBy.value === 'credits') {
-    sorted.sort((a, b) => b.credits - a.credits)
+    sorted.sort((a, b) => numDesc(a.credits, b.credits))
   } else {
-    sorted.sort((a, b) => a.rank - b.rank)
+    sorted.sort((a, b) => numAsc(a.rank, b.rank))
   }
-  
+
   return sorted
 })
+
+/** 数值升序；null/undefined 恒排最后（名次越小越靠前）。 */
+function numAsc(a, b) {
+  const na = typeof a === 'number' ? a : null
+  const nb = typeof b === 'number' ? b : null
+  if (na === null && nb === null) return 0
+  if (na === null) return 1
+  if (nb === null) return -1
+  return na - nb
+}
+
+/**
+ * 数值降序；null/undefined 恒排最后。
+ * 不能写成 `-numAsc(a, b)` —— 那样会把"缺值排最后"翻成"缺值排最前"。
+ */
+function numDesc(a, b) {
+  const na = typeof a === 'number' ? a : null
+  const nb = typeof b === 'number' ? b : null
+  if (na === null && nb === null) return 0
+  if (na === null) return 1
+  if (nb === null) return -1
+  return nb - na
+}
 
 // 获取排名样式
 const getRankClass = (index) => {
@@ -111,33 +140,25 @@ const getStatusType = (status) => {
 }
 
 // 加载班级排名
+//
+// ⚠️ 2026-10-01 第二十一轮改：`/students/class-ranking/{uid}` 回的是
+// `{studentId, classId, semester, rank, total, list[]}` —— 一个**对象**，全班同学在 `list` 里。
+// 原实现断言 `Array.isArray(response) && response.length > 0`，恒为假 ⇒ 榜单永远空，
+// 而 `total` / 自己的 `rank` 这些真值也跟着被丢掉。映射统一走 `@/utils/classRanking`。
 const loadClassRanking = async () => {
   loading.value = true
   try {
     const userId = getUserId()
-    console.log('[ClassRanking] 获取 userId...', userId)
-    console.log('[ClassRanking] localStorage.userId:', localStorage.getItem('userId'))
-    console.log('[ClassRanking] 所有 localStorage:', JSON.parse(JSON.stringify(localStorage)))
-    
     if (!userId) {
-      console.error('[ClassRanking] 无法获取用户ID，localStorage中的userId为:', localStorage.getItem('userId'))
+      console.error('[ClassRanking] 无法获取用户ID')
       return
     }
 
-    console.log('[ClassRanking] 即将调用API: /students/class-ranking/' + userId)
     const response = await studentAPI.getClassRankingList(userId)
-    console.log('[ClassRanking] API完整响应:', JSON.stringify(response))
-    
-    if (response && Array.isArray(response) && response.length > 0) {
-      members.value = response
-      console.log('[ClassRanking] 班级排名已加载:', members.value.length, '条数据')
-      console.log('[ClassRanking] 数据内容:', members.value)
-    } else {
-      console.warn('[ClassRanking] 返回数据为空或格式不正确:', response)
-    }
+    members.value = toClassMembers(response)
   } catch (error) {
-    console.error('[ClassRanking] 加载班级排名异常:', error.message, error)
-    console.error('错误详情:', error)
+    console.error('[ClassRanking] 加载班级排名异常:', error)
+    ElMessage.error(error?.message ? `加载班级排名失败：${error.message}` : '加载班级排名失败')
   } finally {
     loading.value = false
   }

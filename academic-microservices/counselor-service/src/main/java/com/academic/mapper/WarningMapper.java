@@ -50,4 +50,23 @@ public interface WarningMapper extends BaseMapper<AcademicWarning> {
           + " WHERE sp.class_id IN (SELECT cl.id FROM classes cl WHERE cl.counselor_id = #{counselorId}) "
           + " GROUP BY sp.class_id")
     List<Map<String, Object>> getWarningCountByClass(@Param("counselorId") Long counselorId);
+
+    /**
+     * 辅导员名下**按班级、按等级**的预警数。
+     * 列：{@code classId} / {@code redCount}(等级≥3) / {@code yellowCount}(=2) / {@code blueCount}(=1)。
+     *
+     * <p>2026-10-01 第二十一轮加：辅导员首页每个班级卡片上的「严重/中度/轻度」徽章读的是
+     * {@code warnByClass[classId].red/yellow/blue}，而 {@code /counselors/dashboard/{userId}}
+     * 从来不返回 {@code warnByClass} ⇒ 每班恒显示「正常」。仪表盘上只有**汇总**的
+     * {@code redWarnings/yellowWarnings/blueWarnings}，没有按班拆开的版本。
+     */
+    @Select("SELECT sp.class_id AS classId, "
+          + "       SUM(CASE WHEN aw.warning_level >= 3 THEN 1 ELSE 0 END) AS redCount, "
+          + "       SUM(CASE WHEN aw.warning_level = 2 THEN 1 ELSE 0 END) AS yellowCount, "
+          + "       SUM(CASE WHEN aw.warning_level = 1 THEN 1 ELSE 0 END) AS blueCount "
+          + "  FROM academic_warning aw "
+          + "  JOIN student_profile sp ON sp.id = aw.student_id "
+          + " WHERE sp.class_id IN (SELECT cl.id FROM classes cl WHERE cl.counselor_id = #{counselorId}) "
+          + " GROUP BY sp.class_id")
+    List<Map<String, Object>> getWarningLevelCountByClass(@Param("counselorId") Long counselorId);
 }

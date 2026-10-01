@@ -27,22 +27,24 @@
       <div v-else class="members-grid">
         <div v-for="member in filteredMembers" :key="member.id" class="member-card">
           <div class="member-header">
-            <div class="member-avatar">{{ member.name.charAt(0) }}</div>
-            <div class="member-rank">{{ member.rank }}</div>
+            <div class="member-avatar">{{ (member.name || '?').charAt(0) }}</div>
+            <!-- 名次口径：GPA 严格高于该生的人数 + 1（并列同名次），与后端的班级名次同一套 -->
+            <div class="member-rank">{{ member.rank === null ? '未排名' : '第 ' + member.rank + ' 名' }}</div>
           </div>
           <div class="member-info">
-            <h3>{{ member.name }}</h3>
+            <h3>{{ member.name }}<span v-if="member.isCurrent" class="self-tag">你</span></h3>
             <p class="student-id">{{ member.studentId }}</p>
-            <p class="major">{{ member.major }}</p>
+            <!-- 原模板这里还有一行 `{{ member.major }}`：班级榜响应里没有专业字段，
+                 每张卡都是空白行。删掉，不留空行 -->
           </div>
           <div class="member-stats">
             <div class="stat-item">
               <span class="label">GPA</span>
-              <span class="value">{{ member.gpa.toFixed(2) }}</span>
+              <span class="value">{{ fmtGpa(member.gpa) }}</span>
             </div>
             <div class="stat-item">
               <span class="label">学分</span>
-              <span class="value">{{ member.credits }}</span>
+              <span class="value">{{ fmtCredits(member.credits) }}</span>
             </div>
           </div>
         </div>
@@ -54,8 +56,10 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { Search } from '@element-plus/icons-vue'
+import { ElMessage } from 'element-plus'
 import { studentAPI } from '@/api/index'
 import { getUserId } from '@/utils/userUtils'
+import { toClassMembers, fmtGpa, fmtCredits } from '@/utils/classRanking'
 
 const searchQuery = ref('')
 const classIdentifier = ref('班级成员')
@@ -68,40 +72,39 @@ const filteredMembers = computed(() => {
     return members.value
   }
   const query = searchQuery.value.toLowerCase()
-  return members.value.filter(member => 
-    member.name.toLowerCase().includes(query) || 
-    member.studentId.includes(query)
+  return members.value.filter(member =>
+    (member.name || '').toLowerCase().includes(query) ||
+    (member.studentId || '').toLowerCase().includes(query)
   )
 })
 
 // 加载班级成员
+//
+// ⚠️ 2026-10-01 第二十一轮改：从前这里调 `/students/class-members/{uid}` 并断言
+// `Array.isArray(response)` —— 而那个端点回的是一个**对象**（本人的班级摘要，
+// 实现是 `return getClassInfo(uid)`），断言恒为假 ⇒ 页面永远"暂无班级成员数据"，
+// 拿到的那份摘要被无声丢掉。全班同学在 `/students/class-ranking/{uid}` 的 `list` 里，
+// 这里改读它（字段映射统一放在 `@/utils/classRanking`，与排行榜页共用一份）。
 const loadClassMembers = async () => {
   loading.value = true
   try {
     const userId = getUserId()
-    console.log('[ClassMembers] 获取 userId...', userId)
-    console.log('[ClassMembers] localStorage.userId:', localStorage.getItem('userId'))
-    console.log('[ClassMembers] 所有 localStorage:', JSON.parse(JSON.stringify(localStorage)))
-    
     if (!userId) {
-      console.error('[ClassMembers] 无法获取用户ID，localStorage中的userId为:', localStorage.getItem('userId'))
+      console.error('[ClassMembers] 无法获取用户ID')
       return
     }
-    
-    console.log('[ClassMembers] 即将调用API: /students/class-members/' + userId)
-    const response = await studentAPI.getClassMembersList(userId)
-    console.log('[ClassMembers] API完整响应:', JSON.stringify(response))
-    
-    if (response && Array.isArray(response) && response.length > 0) {
-      members.value = response
-      console.log('[ClassMembers] 班级成员已加载:', members.value.length, '条数据')
-      console.log('[ClassMembers] 数据内容:', members.value)
-    } else {
-      console.warn('[ClassMembers] 返回数据为空或格式不正确:', response)
+
+    const response = await studentAPI.getClassRankingList(userId)
+    const list = toClassMembers(response)
+    members.value = list
+    if (list.length && list[0].className) {
+      classIdentifier.value = list[0].className
     }
   } catch (error) {
-    console.error('[ClassMembers] 加载班级成员异常:', error.message, error)
-    console.error('错误详情:', error)
+    // 后端返回 code!==200 时拦截器会 reject（reject 出来的已经是后端那句话），
+    // 原实现只 console.error 不提示，页面上只看得到"暂无数据"，分不清是空还是坏了。
+    console.error('[ClassMembers] 加载班级成员异常:', error)
+    ElMessage.error(error?.message ? `加载班级成员失败：${error.message}` : '加载班级成员失败')
   } finally {
     loading.value = false
   }
@@ -218,6 +221,18 @@ onMounted(() => {
   font-size: 16px;
   color: #2c3e50;
   font-weight: 600;
+}
+
+.self-tag {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 10px;
+  background: #667eea;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 500;
+  vertical-align: middle;
 }
 
 .student-id {

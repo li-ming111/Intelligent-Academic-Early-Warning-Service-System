@@ -817,6 +817,11 @@ public class AdminController {
                 userMap.put("role", user.getRole());
                 userMap.put("status", user.getStatus());
                 userMap.put("createdAt", user.getCreatedAt());
+                // 2026-10-01 第二十一轮: 小程序「账号详情」有「手机」与「最近改动」两行,
+                // 读的是 phone / updatedAt, 而这里从前只给到 createdAt ⇒ 手机恒 '--'、
+                // 最近改动恒空。users 表这两列都在, 直接带上, 不用前端去猜。
+                userMap.put("phone", user.getPhone());
+                userMap.put("updatedAt", user.getUpdatedAt());
 
                 enhanceUserProfile(user, userMap);
                 enhancedUsers.add(userMap);
@@ -1013,6 +1018,9 @@ public class AdminController {
                 // classes/majors/student_profile/teacher_profile/counselor_profiles/college_admin_profile),
                 // 按"本学院教师任教"间接算会得到 学院1=10/其余=0 的退化结果 ⇒ 该列已从页面删除。
                 item.put("classCount", getClassCount(college.getId()));
+                // 2026-10-01 第二十一轮: 小程序「学院详情」的「创建时间」读 createdAt,
+                // 这里从前不给 ⇒ 那一行恒空。colleges.created_at 是真实列。
+                item.put("createdAt", college.getCreatedAt());
                 resultList.add(item);
             }
             
@@ -1161,6 +1169,10 @@ public class AdminController {
             courseMap.put("teacherId", course.getTeacherId());
             courseMap.put("createdAt", course.getCreatedAt());
             courseMap.put("updatedAt", course.getUpdatedAt());
+            // 2026-10-01 第二十一轮: 小程序「课程详情」的「说明」读 description,
+            // 这个 Map 里从前没有这个 key ⇒ 恒 '--'。courses.description 是真实列,
+            // PC 的 AdminCourses 也一直在编辑它。
+            courseMap.put("description", course.getDescription());
             result.add(courseMap);
         }
         return result;

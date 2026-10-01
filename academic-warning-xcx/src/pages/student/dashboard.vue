@@ -92,9 +92,13 @@
               class="suggest-row"
               :class="{ 'suggest-row--divided': i > 0 }"
             >
+              <!-- 2026-10-01 第二十一轮: 后端 /students/suggestions 的**兜底分支**(该生没有
+                   低于关注线的课时)只给 content/priority, 没有 courseName/score ⇒ 这一行会
+                   显示空白课程名 + undefined 分数格。后端已把 key 补成 null, 这里加守卫。 -->
               <view class="suggest-row__head">
-                <text class="suggest-row__course">{{ s.courseName }}</text>
-                <view class="suggest-row__score">
+                <text v-if="s.courseName" class="suggest-row__course">{{ s.courseName }}</text>
+                <text v-else class="suggest-row__course">综合建议</text>
+                <view v-if="s.score !== null && s.score !== undefined" class="suggest-row__score">
                   <score-cell :score="s.score" />
                   <text class="suggest-row__score-label">分</text>
                 </view>

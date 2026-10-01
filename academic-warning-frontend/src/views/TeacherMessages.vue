@@ -37,12 +37,17 @@
     <div class="tmsg-list" v-if="pagedMessages.length">
       <div v-for="(m, i) in pagedMessages" :key="m.id" class="tmsg-card" :class="{ unread: m.status === 0 }" :style="{ animationDelay: i * 0.04 + 's' }">
         <div class="tmc-bar" :class="m.status === 0 ? 'unread' : ''"></div>
+        <!-- 2026-10-01 第二十一轮: 原来读 m.senderName —— 后端 /teachers/messages/{uid}
+             是拿 feedback 表拼的, 而 **feedback 表根本没有学生外键/姓名列**
+             (只有 id/teacher_id/category/content/reply/status/create_time/update_time),
+             Feedback 实体的 studentId/studentName 也都是 @TableField(exist=false)
+             ⇒ 发送者恒「学生」、头像首字恒「学」。这是数据模型决定的, 不是接口漏字段。 -->
         <div class="tmc-avatar">
-          {{ (m.senderName || '学').charAt(0) }}
+          学
         </div>
         <div class="tmc-body" @click="toggleExpand(m.id)">
           <div class="tmcb-top">
-            <span class="tmcb-name">{{ m.senderName || '学生' }}</span>
+            <span class="tmcb-name">学生</span>
             <span class="tmcb-tag" :class="typeCls(m.type)">{{ typeLbl(m.type) }}</span>
             <span class="tmcb-dot" v-if="m.status === 0"></span>
           </div>
@@ -70,7 +75,7 @@
     </div>
 
     <!-- 回复弹窗 -->
-    <el-dialog v-model="replyVisible" :title="'回复 ' + (replyTarget?.senderName || '学生')" width="460px" destroy-on-close>
+    <el-dialog v-model="replyVisible" title="回复学生反馈" width="460px" destroy-on-close>
       <div class="tm-reply-prev" v-if="replyTarget">
         <span class="trp-label">原始消息</span>
         <p class="trp-text">{{ replyTarget.content }}</p>

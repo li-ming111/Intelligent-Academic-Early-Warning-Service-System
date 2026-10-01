@@ -33,9 +33,11 @@
 
       <el-table :data="assistancePlans" stripe style="width: 100%">
         <el-table-column prop="studentName" label="学生" width="100" align="center"></el-table-column>
-        <el-table-column prop="title" label="计划标题" min-width="150" show-overflow-tooltip></el-table-column>
-        <el-table-column label="目标" min-width="200" show-overflow-tooltip>
-          <template #default="{ row }">{{ row.target || '学分提升' }}</template>
+        <!-- 原先是「计划标题」+「目标」两列，两列读的其实是**同一个** `content` 字段
+             （标题是 content 的前 30 字，目标是 content 全文，还带一个 '学分提升' 的
+             编造兜底串）。合并成一列，内容只出现一次。 -->
+        <el-table-column label="帮扶内容" min-width="320" show-overflow-tooltip>
+          <template #default="{ row }">{{ row.content || '（未填写）' }}</template>
         </el-table-column>
         <el-table-column label="进度" min-width="180">
           <template #default="{ row }">
@@ -49,11 +51,10 @@
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="200" fixed="right">
+        <el-table-column label="操作" width="160" fixed="right">
           <template #default="{ row }">
             <el-button type="primary" size="small" link @click="editPlan(row)">编辑</el-button>
             <el-button type="warning" size="small" link @click="updateProgress(row)">更新进度</el-button>
-            <el-button type="info" size="small" link @click="viewEffectiveness(row)">查看效果</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -65,14 +66,8 @@
         <el-form-item label="学生">
           <el-input :value="editForm.studentName" disabled></el-input>
         </el-form-item>
-        <el-form-item label="计划标题">
-          <el-input v-model="editForm.title" placeholder="输入计划标题"></el-input>
-        </el-form-item>
-        <el-form-item label="目标">
-          <el-input v-model="editForm.target" type="textarea" rows="2" placeholder="输入目标"></el-input>
-        </el-form-item>
-        <el-form-item label="措施">
-          <el-input v-model="editForm.measures" type="textarea" rows="3" placeholder="输入具体措施"></el-input>
+        <el-form-item label="帮扶内容">
+          <el-input v-model="editForm.content" type="textarea" rows="4" placeholder="输入帮扶措施与目标"></el-input>
         </el-form-item>
         <el-form-item label="状态">
           <el-select v-model="editForm.status">
@@ -104,15 +99,13 @@
       </template>
     </el-dialog>
 
-    <!-- 效果查看对话框 -->
-    <el-dialog v-model="effectivenessDialogVisible" title="帮扶效果" width="600px">
-      <div v-if="effectiveness" class="effectiveness-content">
-        <p><strong>学分提升:</strong> {{ effectiveness.creditIncrease }}分</p>
-        <p><strong>成绩改善:</strong> {{ effectiveness.scoreImprovement }}%</p>
-        <p><strong>预警状态:</strong> {{ effectiveness.warningStatus }}</p>
-        <p><strong>完成度:</strong> {{ effectiveness.completionRate }}%</p>
-      </div>
-    </el-dialog>
+    <!-- 2026-10-01 第二十一轮删：「查看效果」对话框。
+         它弹出的四项里有三项是写死的常量 —— 学分提升 1.5 分、成绩改善 15%、
+         预警状态「已解除」（只有完成度取自当前计划）。库里的 `assistance_evaluations`
+         是**学生**对计划的评价（content/score/effectiveness），既不是"学分提升"也不是
+         "预警解除"，而且活库 0 行 —— 这个"效果"没有任何可算的来源。
+         "预警状态：已解除"尤其危险：它是凭计划 id 现编的一句承诺。
+         （若日后要做，口径应是"计划创建后该生预警状态的变化"，那要先定清楚再写。） -->
   </div>
 </template>
 
@@ -121,6 +114,7 @@ import { ref, onMounted, computed } from 'vue'
 import { ElMessage } from 'element-plus'
 import { counselorAPI } from '@/api/index'
 import { getUserId } from '@/utils/userUtils'
+import { toNumber } from '@/utils/score'
 
 const stats = ref({
   totalPlans: 0,
@@ -131,14 +125,15 @@ const stats = ref({
 const assistancePlans = ref([])
 const editDialogVisible = ref(false)
 const progressDialogVisible = ref(false)
-const effectivenessDialogVisible = ref(false)
 
+// `assistance_plans` 表只有 id/counselor_id/student_id/content/status/created_at/
+// updated_at/progress 八列，没有"标题/目标/措施"三个字段。原来表单拆成三格，
+// 保存时 title 与 measures 被丢弃、target 写进 content —— 即"改了标题和措施看着像成功，
+// 其实一个字节都没写"。这里收敛成与列一一对应的内容+状态。
 const editForm = ref({
   id: '',
   studentName: '',
-  title: '',
-  target: '',
-  measures: '',
+  content: '',
   status: 'initiated'
 })
 
@@ -147,8 +142,6 @@ const progressForm = ref({
   notes: ''
 })
 const currentPlanId = ref(null)
-
-const effectiveness = ref(null)
 
 const customColor = computed(() => {
   return [
@@ -206,10 +199,13 @@ const loadAssistancePlans = async () => {
         id: p.id,
         studentId: sid,
         studentName: studentMap[sid] || p.studentName || p.student_name || '未知',
-        title: p.title || (p.content ? p.content.substring(0, 30) : '帮扶计划'),
-        target: p.target || p.content || '暂无目标',
-        measures: p.measures || p.content || '',
-        progressPercentage: p.progressPercentage || (status === 'completed' ? 100 : status === 'in_progress' ? 50 : 0),
+        content: p.content || '',
+        // 进度读的是**真实列** `progress`（实体字段名也是 progress）。
+        // 原来读的是 `p.progressPercentage` —— 后端从来不返回这个 key，
+        // 于是每一行都掉进 `|| ` 后面的兜底分支：按状态猜 0 / 50 / 100。
+        // 辅导员把进度拖到 80，列表里照样显示 50（因为状态是"进行中"）。
+        // 用 toNumber 而不是 `||`：progress 真的是 0 时要保留 0。
+        progressPercentage: toNumber(p.progress ?? p.progressPercentage) ?? 0,
         status: status
       }
     })
@@ -250,7 +246,7 @@ const savePlan = async () => {
       id: editForm.value.id,
       studentId: editForm.value.studentId,
       counselorId: editForm.value.counselorId || editForm.value.counselor_id,
-      content: editForm.value.target || editForm.value.content || '',
+      content: editForm.value.content || '',
       status: statusToInt(editForm.value.status)
     }
     await counselorAPI.updateAssistancePlan(editForm.value.id, payload)
@@ -271,33 +267,17 @@ const updateProgress = (row) => {
 
 const saveProgress = async () => {
   try {
-    const progress = progressForm.value.progress || 0
-    let status = 'initiated'
-    if (progress >= 100) status = 'completed'
-    else if (progress > 0) status = 'in_progress'
-    if (currentPlanId.value) {
-      await counselorAPI.updatePlanProgress(currentPlanId.value, { status })
-    }
+    if (!currentPlanId.value) return
+    // 只把**进度**交给后端。状态不用前端另算再单独发一次 ——
+    // `/progress` 会自己同步（0→未开始 / 100→已完成 / 其余→进行中，
+    // 见 AssistancePlanServiceImpl.updatePlanProgress），两边各算一次必然分叉。
+    await counselorAPI.updatePlanProgress(currentPlanId.value, progressForm.value.progress || 0)
     ElMessage.success('进度已更新')
     progressDialogVisible.value = false
     await loadAssistancePlans()
   } catch (error) {
     console.error('更新进度失败:', error)
-    ElMessage.error('更新失败')
-  }
-}
-
-const viewEffectiveness = async (row) => {
-  try {
-    effectiveness.value = {
-      creditIncrease: 1.5,
-      scoreImprovement: 15,
-      warningStatus: '已解除',
-      completionRate: row.progressPercentage
-    }
-    effectivenessDialogVisible.value = true
-  } catch (error) {
-    console.error('获取效果数据失败:', error)
+    ElMessage.error(error?.message ? `更新失败：${error.message}` : '更新失败')
   }
 }
 
@@ -365,11 +345,4 @@ const formatStatus = (status) => {
   color: #333;
 }
 
-.effectiveness-content {
-  line-height: 1.8;
-}
-
-.effectiveness-content p {
-  margin: 10px 0;
-}
 </style>

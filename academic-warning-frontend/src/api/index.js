@@ -83,8 +83,11 @@ export const studentAPI = {
     return apiClient.get(`/students/suggestions/${userId}`)
   },
   updatePlanProgress: (planId, progress) => {
-    // 实际接口在 counselor-service: PATCH /counselors/assistance-plans/{id}/status
-    return apiClient.patch(`/counselors/assistance-plans/${planId}/status`, { status: progress })
+    // 2026-10-01 第二十一轮修：原来打的是 `/status` 且把**百分比**塞进 status 字段。
+    // counselor-service 的 `/status` 只认 0/1/2 与状态名（见 AssistancePlanServiceImpl
+    // .parseStatus），传 50 会被判非法 → 400「无法识别的帮扶计划状态: 50」。
+    // 进度有专门的 `/progress`，且它会顺带把状态同步成 0/1/2。
+    return apiClient.patch(`/counselors/assistance-plans/${planId}/progress`, { progress })
   },
   // ========== 班级信息 ==========
   getClassInfo: (studentId) => {
@@ -542,8 +545,12 @@ export const counselorAPI = {
   deleteAssistancePlan: (id) => {
     return apiClient.delete(`/counselors/assistance-plans/${id}`)
   },
-  updatePlanProgress: (planId, data) => {
-    return apiClient.patch(`/counselors/assistance-plans/${planId}/status`, data)
+  updatePlanProgress: (planId, progress) => {
+    // 2026-10-01 第二十一轮修：原来打的是 `/status`。调用方传进来的是进度百分比
+    // （CounselorAssistance.vue 的滑杆）或者一个 {status} 对象，两种都存不进进度列：
+    // 前者被 parseStatus 判为非法值、后者根本没经过 `/progress`。
+    // 小程序端（`services/api.js`）一直是对的：PATCH `/progress` + `{progress}`。
+    return apiClient.patch(`/counselors/assistance-plans/${planId}/progress`, { progress })
   },
   // ============= 成绩跟踪API =============
   getClassScores: (counselorId, classId) => {

@@ -41,7 +41,15 @@ public interface ClassInfoMapper extends BaseMapper<ClassInfo> {
 
     /**
      * 根据班级ID获取学生列表
+     *
+     * <p>⚠️ 2026-10-01 第二十一轮修: 原 SQL 写的是 {@code sp.phone}, 而
+     * {@code student_profile} **根本没有 phone 列**(实测 `SHOW COLUMNS FROM student_profile`
+     * 只 13 列, 无 phone; `Student.phone` 在实体上也是 `@TableField(exist = false)`)。
+     * ⇒ 这条查询**每次必然** `ERROR 1054 Unknown column 'sp.phone'`, 于是依赖它的三个端点
+     * ({@code /counselors/classes/{id}/students}、{@code /detail}、{@code /warnings})
+     * 全部返回 `ApiResponse.serverError`(HTTP 200 + body.code 500) —— 辅导员端「我的班级」
+     * 的花名册恒空、「班主任/辅导员」恒「未指派/无」。手机号在 **users** 表上(35/35 有值)。
      */
-    @Select("SELECT sp.student_id as studentId, u.name as studentName, sp.gender, sp.phone FROM student_profile sp JOIN users u ON sp.user_id = u.id WHERE sp.class_id = #{classId}")
+    @Select("SELECT sp.student_id as studentId, u.name as studentName, sp.gender, u.phone FROM student_profile sp JOIN users u ON sp.user_id = u.id WHERE sp.class_id = #{classId}")
     List<Map<String, Object>> getStudentsByClassIdMap(@Param("classId") Long classId);
 }

@@ -28,13 +28,12 @@
                   placeholder="输入消息内容"
                 ></el-input>
               </el-form-item>
-              <el-form-item label="消息等级">
-                <el-radio-group v-model="newMessage.level">
-                  <el-radio value="info">信息</el-radio>
-                  <el-radio value="warning">警告</el-radio>
-                  <el-radio value="danger">危急</el-radio>
-                </el-radio-group>
-              </el-form-item>
+              <!-- 2026-10-01 第二十一轮删：「消息等级」(信息/警告/危急) 这个单选框。
+                   它只绑到 newMessage.level，而这个 key 到不了库里任何一列 ——
+                   广播走 /api/messages/broadcast，后端只读 title/content/targetRole；
+                   定向走 /api/messages/send，只读 userId/content/type。messages 表
+                   唯一的等级类字段是 `type`(1=广播/3=预警)，与「信息/警告/危急」不是一回事。
+                   选它等于什么也没选，所以删控件 + 删那一列，改显示真实存在的 `type`。 -->
               <el-form-item label="发送范围">
                 <el-radio-group v-model="newMessage.target">
                   <el-radio value="all">全部用户</el-radio>
@@ -84,18 +83,20 @@
               <el-table-column prop="id" label="消息ID" width="100" sortable />
               <el-table-column prop="title" label="标题" min-width="150"></el-table-column>
               <el-table-column prop="content" label="内容" min-width="250"></el-table-column>
-              <el-table-column prop="level" label="等级" width="100">
+              <!-- 2026-10-01 第二十一轮改：这两列原来读 `row.level` / `row.target`，
+                   而 `/admin/messages/list` 回的是裸 Message 实体（只有 id/senderId/
+                   receiverId/title/content/type/status/createdAt），两个 key 恒 undefined。
+                   三元的 else 分支于是**每行都渲染成**「危急」+「指定用户」——
+                   不是空白（空白还看得见是缺数据），是把编造的值画得跟真的一样。
+                   改成真实存在的 `type` 与 `receiverId`。 -->
+              <el-table-column prop="type" label="类型" width="110">
                 <template #default="{ row }">
-                  <el-tag
-                    :type="row.level === 'info' ? 'info' : (row.level === 'warning' ? 'warning' : 'danger')"
-                  >
-                    {{ row.level === 'info' ? '信息' : (row.level === 'warning' ? '警告' : '危急') }}
-                  </el-tag>
+                  <el-tag :type="messageTypeTag(row.type)">{{ messageTypeName(row.type) }}</el-tag>
                 </template>
               </el-table-column>
-              <el-table-column prop="target" label="目标" width="120">
+              <el-table-column prop="receiverId" label="接收人" width="140">
                 <template #default="{ row }">
-                  <el-tag type="success">{{ row.target === 'all' ? '全部用户' : '指定用户' }}</el-tag>
+                  {{ receiverName(row.receiverId) }}
                 </template>
               </el-table-column>
               <el-table-column prop="createdAt" label="发送时间" width="180" sortable></el-table-column>
@@ -324,7 +325,6 @@ const batchDeleteCount = ref(0)
 const newMessage = ref({
   title: '',
   content: '',
-  level: 'info',
   target: 'all',
   user_ids: []
 })
@@ -369,6 +369,34 @@ const subscribeToMessages = async () => {
   } catch (error) {
     console.error('[AdminMessages] 订阅失败:', error)
   }
+}
+
+// 消息类型文案。`messages.type` 是唯一存在的等级类字段，取值只有三处写入方：
+//   1 —— message-service 广播时显式 setType(1)（`MessageController.sendBroadcast`）
+//   3 —— 预警通知 setType(3)（`WarningNotificationServiceImpl`）
+//   其他/0 —— 普通消息
+// 不认识的取值原样报出来，不猜（原来那列把不认识的一律当"危急"）。
+const messageTypeName = (type) => {
+  if (type === 1) return '广播通知'
+  if (type === 3) return '预警通知'
+  if (type === 0 || type === null || type === undefined) return '普通消息'
+  return `未知(${type})`
+}
+
+const messageTypeTag = (type) => {
+  if (type === 1) return 'warning'
+  if (type === 3) return 'danger'
+  return 'info'
+}
+
+// 接收人姓名。广播是**逐用户写一行**（每个人自己的 receiver_id），所以同一标题会在
+// 列表里出现 N 行 —— 这一列就是为了让"N 行"读得懂，而不是让人以为消息重复了。
+// 名字从已加载的 /admin/users/all 里按 id 找；找不到就诚实地回落到 id，不编名字。
+const receiverName = (receiverId) => {
+  if (receiverId === null || receiverId === undefined) return '—'
+  const u = users.value.find(item => item.id === receiverId)
+  if (!u) return `用户 #${receiverId}`
+  return u.name || u.username || `用户 #${receiverId}`
 }
 
 // 处理新消息
@@ -640,7 +668,6 @@ const resetMessageForm = () => {
   newMessage.value = {
     title: '',
     content: '',
-    level: 'info',
     target: 'all',
     user_ids: []
   }

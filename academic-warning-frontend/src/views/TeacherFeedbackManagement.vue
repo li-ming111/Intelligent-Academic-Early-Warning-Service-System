@@ -27,7 +27,10 @@
             <svg viewBox="0 0 24 24" fill="none" stroke="#16a34a" stroke-width="2" width="14" height="14"><polyline points="9 10 4 15 9 20"/><path d="M20 4v7a4 4 0 01-4 4H4"/></svg>
             <span>{{ f.reply }}</span>
           </div>
-          <div class="tfc-time">{{ fmtDate(f.createdAt) }}</div>
+          <!-- 2026-10-01 第二十一轮: 原来读 f.createdAt —— 后端 /feedbacks/{tid}/list 返回的是
+               Feedback 实体, 时间字段叫 **createTime**(实体上根本没有 createdAt) ⇒ 恒 '--'。
+               姊妹页 TeacherFeedback.vue 用的就是 f.createTime。 -->
+          <div class="tfc-time">{{ fmtDate(f.createTime) }}</div>
         </div>
         <div class="tfc-right">
           <el-button size="small" type="primary" v-if="f.status==='pending'" @click="openReply(f)">回复</el-button>
@@ -76,7 +79,10 @@ async function loadData() {
   try {
     const tid = localStorage.getItem('teacherId') || getUserId() || '9'
     const r = await teacherAPI.getFeedbackList(tid)
-    if (Array.isArray(r)) feedbacks.value = r.map(f => ({ ...f, status: f.status || (f.reply ? 'replied' : 'pending') }))
+    // 2026-10-01 第二十一轮: 原来是 `f.status || (...)` —— 后端 status 是数值,
+    // 0=未回复 / 1=已回复(见 FeedbackMapper.replyFeedback 的 `SET status = 1`),
+    // 而 0 是 falsy ⇒ 恰好落进兜底分支才没出错。这里改成按数值判定, 不再靠巧合。
+    if (Array.isArray(r)) feedbacks.value = r.map(f => ({ ...f, status: f.status === 1 ? 'replied' : 'pending' }))
   } catch(e) { console.error('加载反馈失败', e) }
 }
 

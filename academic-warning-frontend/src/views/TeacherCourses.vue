@@ -149,6 +149,7 @@ import { ElMessage } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
 import { teacherAPI } from '@/api/index'
 import { getUserId } from '@/utils/userUtils'
+import { toNumber, PASS_LINE } from '@/utils/score'
 
 const activeTab = ref('courses')
 const courseList = ref([])
@@ -249,21 +250,39 @@ async function loadData() {
     else if (enrollRes?.code === 200 && enrollRes?.data) allEnrollments = enrollRes.data
 
     const courseMap = new Map()
-    assignedCourses.forEach(c => { courseMap.set(c.id, { courseId: c.id, courseName: c.name || '课程' + c.id, credits: c.credits || 2, type: c.type || '必修', className: '--', enrollmentCount: 0, passRate: '--', rating: '--', students: [] }) })
+    // `rating` 这个 key 从头到尾没有任何一列、也没有任何模板读它，2026-10-01 第二十一轮删。
+    assignedCourses.forEach(c => { courseMap.set(c.id, { courseId: c.id, courseName: c.name || '课程' + c.id, credits: c.credits || 2, type: c.type || '必修', className: '--', enrollmentCount: 0, passRate: '--', students: [] }) })
     allEnrollments.forEach(e => {
       const cid = e.courseId; if (!cid) return
-      if (!courseMap.has(cid)) courseMap.set(cid, { courseId: cid, courseName: e.courseName || '课程' + cid, credits: e.credits || 2, type: e.type || '选修', className: e.className || '--', enrollmentCount: 0, passRate: '--', rating: '--', students: [] })
+      if (!courseMap.has(cid)) courseMap.set(cid, { courseId: cid, courseName: e.courseName || '课程' + cid, credits: e.credits || 2, type: e.type || '选修', className: e.className || '--', enrollmentCount: 0, passRate: '--', students: [] })
       const c = courseMap.get(cid); c.enrollmentCount++; c.students.push(e)
     })
+
+    // 逐门课算「及格率」与「班级」。这两格原先在两条分支里都被写死成 '--'，
+    // 于是卡片上「及格率 -- / 班级 --」永远如此，与旁边真实的选课人数并存 ——
+    // 看着像"数据还没加载"，其实是根本没人算。数据就在这批选课记录里
+    // （每行都带 score 与 className，见 TeacherController#getEnrollments 的两条分支）。
+    courseMap.forEach(c => {
+      const classNames = [...new Set(c.students.map(s => s.className).filter(Boolean))]
+      c.className = classNames.length ? classNames.join('、') : '--'
+      // 用 toNumber 而不是 `score >= 60`：未录入的分数是字符串 '待录入'，
+      // `'待录入' >= 60` 是 false，会被当成"没及格"混进分母，把及格率压下去。
+      const graded = c.students.map(s => toNumber(s.score)).filter(v => v !== null)
+      c.passRate = graded.length
+        ? Math.round(graded.filter(v => v >= PASS_LINE).length / graded.length * 100) + '%'
+        : '--'
+    })
+
     courseList.value = [...courseMap.values()]
     stats.total = courseList.value.length
     stats.students = courseList.value.reduce((s, c) => s + c.enrollmentCount, 0)
-    const hasScores = allEnrollments.filter(e => e.score !== undefined && e.score !== null)
-    if (hasScores.length) {
-      stats.pass = Math.round(hasScores.filter(e => e.score >= 60).length / hasScores.length * 100)
-      stats.avgRating = (hasScores.reduce((s, e) => s + e.score, 0) / hasScores.length).toFixed(1)
+    // 同上一处：只统计**真的录了分**的选课记录，'待录入' 不算及格也不算不及格。
+    const gradedAll = allEnrollments.map(e => toNumber(e.score)).filter(v => v !== null)
+    if (gradedAll.length) {
+      stats.pass = Math.round(gradedAll.filter(v => v >= PASS_LINE).length / gradedAll.length * 100)
+      stats.avgRating = (gradedAll.reduce((s, v) => s + v, 0) / gradedAll.length).toFixed(1)
     }
- 
+
   } catch (e) { console.error(e) }
 }
 

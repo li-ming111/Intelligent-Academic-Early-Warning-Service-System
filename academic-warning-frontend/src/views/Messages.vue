@@ -33,21 +33,25 @@
 
     <!-- 消息列表 -->
     <div class="msg-list" v-if="filtered.length">
-      <div v-for="(m, i) in filtered" :key="m.id" class="msg-card" :class="{ unread: m.status === 0 }" :style="{ animationDelay: i * 0.04 + 's' }" @click="viewDetail(m)">
-        <div class="mc-bar" :class="m.status === 0 ? 'unread' : ''"></div>
-        <div class="mc-avatar" :style="{ background: avatarColors[(m.senderName || '系').charCodeAt(0) % avatarColors.length] }">
-          {{ (m.senderName || m.teacherName || '系').charAt(0) }}
+      <div v-for="(m, i) in filtered" :key="m.id" class="msg-card" :class="{ unread: m.isRead === 0 }" :style="{ animationDelay: i * 0.04 + 's' }" @click="viewDetail(m)">
+        <div class="mc-bar" :class="m.isRead === 0 ? 'unread' : ''"></div>
+        <!-- 2026-10-01 第二十一轮: 这几处原读 m.status / m.senderName / m.teacherName / m.reply,
+             而后端 /students/messages/{uid} 走 notificationToMap, 只给
+             id/userId/title/content/type/warningId/pushChannel/**isRead**/createdAt
+             ⇒ 未读高亮与未读圆点永不出现、"已回复"永不显示。发送者在这张表上不存在
+             (通知都是系统生成的), 故直接写"系统"。 -->
+        <div class="mc-avatar" :style="{ background: avatarColors['系统'.charCodeAt(0) % avatarColors.length] }">
+          系
         </div>
         <div class="mc-body">
           <div class="mcb-top">
-            <span class="mcb-sender">{{ m.senderName || m.teacherName || '系统' }}</span>
+            <span class="mcb-sender">系统</span>
             <span class="mcb-type" :class="typeClass(m.type)">{{ typeLabel(m.type) }}</span>
-            <span class="mcb-unread" v-if="m.status === 0"></span>
+            <span class="mcb-unread" v-if="m.isRead === 0"></span>
           </div>
           <p class="mcb-content">{{ m.content }}</p>
           <div class="mcb-meta">
             <span class="mcb-time">{{ fmtTime(m.createdAt) }}</span>
-            <span class="mcb-reply" v-if="m.reply">已回复</span>
           </div>
         </div>
       </div>
@@ -64,7 +68,7 @@
       <div v-if="selectedMsg" class="msg-det">
         <div class="md-item">
           <span class="md-label">发送者</span>
-          <span class="md-val">{{ selectedMsg.senderName || selectedMsg.teacherName || '系统' }}</span>
+          <span class="md-val">系统</span>
         </div>
         <div class="md-item">
           <span class="md-label">类型</span>
@@ -77,10 +81,6 @@
         <div class="md-block">
           <span class="md-label">内容</span>
           <div class="md-text">{{ selectedMsg.content }}</div>
-        </div>
-        <div class="md-block" v-if="selectedMsg.reply">
-          <span class="md-label">回复</span>
-          <div class="md-text reply">{{ selectedMsg.reply }}</div>
         </div>
       </div>
     </el-dialog>
@@ -131,14 +131,14 @@ const avatarColors = ['#e0e7ff|#4f46e5', '#dbeafe|#2563eb', '#dcfce7|#16a34a', '
 
 const filterTabs = computed(() => [
   { key: 'all', label: '全部', count: messages.value.length },
-  { key: 'unread', label: '未读', count: messages.value.filter(m => m.status === 0).length },
-  { key: 'read', label: '已读', count: messages.value.filter(m => m.status === 1 || m.status === 2).length }
+  { key: 'unread', label: '未读', count: messages.value.filter(m => m.isRead === 0).length },
+  { key: 'read', label: '已读', count: messages.value.filter(m => m.isRead !== 0).length }
 ])
 
 const filtered = computed(() => {
   let list = [...messages.value]
-  if (filter.value === 'unread') list = list.filter(m => m.status === 0)
-  if (filter.value === 'read') list = list.filter(m => m.status === 1 || m.status === 2)
+  if (filter.value === 'unread') list = list.filter(m => m.isRead === 0)
+  if (filter.value === 'read') list = list.filter(m => m.isRead !== 0)
   return list.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0))
 })
 

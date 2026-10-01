@@ -22,6 +22,9 @@ public class StudentServiceImpl extends ServiceImpl<StudentMapper, Student> impl
     @Autowired
     private ClassInfoMapper classInfoMapper;
 
+    @Autowired
+    private com.academic.mapper.ScoreMapper scoreMapper;
+
     @Override
     public List<Student> getByCounselorId(Long counselorId) {
         // 通过 classes.counselor_id 查询辅导员管辖班级的学生
@@ -51,6 +54,32 @@ public class StudentServiceImpl extends ServiceImpl<StudentMapper, Student> impl
         for (Student s : students) {
             String cn = classIdToName.get(s.getClassId());
             if (cn != null) s.setClassName(cn);
+        }
+
+        // 2026-10-01 第二十一轮: 详情弹窗要显示的「获取学分 / GPA」三个字段也不在
+        // student_profile 表上（学分绩点都从 scores 现算），这里一次批量查询后填进去。
+        // 查不到的学生保持 null，前端按 '--' 显示 —— 不编值。
+        if (!students.isEmpty()) {
+            Map<Long, Map<String, Object>> stats = new java.util.HashMap<>();
+            for (Map<String, Object> row : scoreMapper.getStudentCreditStatsByCounselorId(counselorId)) {
+                Object pid = row.get("profile_id");
+                if (pid != null) {
+                    stats.put(((Number) pid).longValue(), row);
+                }
+            }
+            for (Student s : students) {
+                Map<String, Object> row = stats.get(s.getId());
+                if (row == null) continue;
+                Object earned = row.get("earned_credits");
+                Object attempted = row.get("attempted_credits");
+                Object gpa = row.get("gpa");
+                if (earned instanceof Number) s.setCredits(((Number) earned).doubleValue());
+                if (attempted instanceof Number) s.setRequiredCredits(((Number) attempted).intValue());
+                if (gpa instanceof Number) {
+                    s.setGpa(java.math.BigDecimal.valueOf(((Number) gpa).doubleValue())
+                            .setScale(2, java.math.RoundingMode.HALF_UP).doubleValue());
+                }
+            }
         }
         return students;
     }

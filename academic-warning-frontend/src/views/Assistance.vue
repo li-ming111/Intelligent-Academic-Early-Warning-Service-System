@@ -22,7 +22,7 @@
 
     <!-- 计划列表 -->
     <div class="plans-grid" v-if="plans.length > 0">
-      <div v-for="p in plans" :key="p.id" class="plan-card" :class="{ completed: p.status === '已完成' }">
+      <div v-for="p in plans" :key="p.id" class="plan-card" :class="{ completed: p.statusCode === 2 }">
         <!-- 卡片头部 -->
         <div class="plan-top">
           <div class="plan-title-row">
@@ -32,19 +32,20 @@
           <div class="plan-sub">{{ p.description }}</div>
         </div>
 
-        <!-- 信息区 -->
+        <!-- 信息区。
+             2026-10-01 第二十一轮: 原来这三块读 courseName/teacherName/startDate —— 后端从来不返回,
+             而且 assistance_plans 表**根本没有** course_id / start_date / end_date 列(只有
+             counselor_id/student_id/content/status/created_at/updated_at/progress),
+             即"目标课程/计划开始"在库层面没有数据源 ⇒ 这三块删掉, 换成真有的两个:
+             辅导辅导员(counselorName, counselor_id 就是 users.id)与创建时间。 -->
         <div class="plan-info">
-          <div class="pi-item" v-if="p.courseName">
-            <svg viewBox="0 0 24 24" fill="none" stroke="#a1a1aa" stroke-width="2" width="14" height="14"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg>
-            <span>{{ p.courseName }}</span>
-          </div>
-          <div class="pi-item" v-if="p.teacherName">
+          <div class="pi-item" v-if="p.counselorName">
             <svg viewBox="0 0 24 24" fill="none" stroke="#a1a1aa" stroke-width="2" width="14" height="14"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-            <span>{{ p.teacherName }}</span>
+            <span>{{ p.counselorName }}</span>
           </div>
-          <div class="pi-item" v-if="p.startDate">
+          <div class="pi-item" v-if="p.createdAt">
             <svg viewBox="0 0 24 24" fill="none" stroke="#a1a1aa" stroke-width="2" width="14" height="14"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
-            <span>{{ p.startDate }}</span>
+            <span>{{ formatDate(p.createdAt) }}</span>
           </div>
         </div>
 
@@ -80,10 +81,9 @@
           <el-tag :type="statusType(detailPlan.status)">{{ detailPlan.status }}</el-tag>
         </div>
         <div class="det-grid">
-          <div class="dg-item"><label>目标课程</label><span>{{ detailPlan.courseName || '--' }}</span></div>
-          <div class="dg-item"><label>辅导教师</label><span>{{ detailPlan.teacherName || '--' }}</span></div>
-          <div class="dg-item"><label>计划开始</label><span>{{ detailPlan.startDate || '--' }}</span></div>
-          <div class="dg-item"><label>计划结束</label><span>{{ detailPlan.endDate || '进行中' }}</span></div>
+          <div class="dg-item"><label>辅导辅导员</label><span>{{ detailPlan.counselorName || '--' }}</span></div>
+          <div class="dg-item"><label>创建时间</label><span>{{ formatDate(detailPlan.createdAt) || '--' }}</span></div>
+          <div class="dg-item"><label>最近更新</label><span>{{ formatDate(detailPlan.updatedAt) || '--' }}</span></div>
           <div class="dg-item full"><label>计划描述</label><span>{{ detailPlan.description }}</span></div>
         </div>
         <el-divider />
@@ -141,27 +141,30 @@ async function loadPlans() {
       plans.value = res.map(p => ({
         ...p,
         title: p.title || p.description || '学业帮扶计划',
-        status: translateStatus(p.status),
+        // 2026-10-01 第二十一轮: 原来只有 translateStatus(p.status), 而它只认字符串
+        // ('进行中'/'已完成'), 后端给的却是**数值** 0/1/2 ⇒ 1、2 都落到兜底「未开始」,
+        // 于是 4 条计划全显示「未开始」、「进行中/已完成」计数恒 0。
+        // 后端本来就给了 statusText, 优先用它; statusCode 留给计数与样式判断。
+        status: p.statusText || translateStatus(p.status),
+        statusCode: p.status,
         progress: p.progress || 0,
-        courseName: p.courseName || '',
-        teacherName: p.teacherName || '',
-        startDate: formatDate(p.startDate),
-        endDate: formatDate(p.endDate)
+        counselorName: p.counselorName || ''
       }))
     }
   } catch (e) { console.error('加载帮扶计划失败', e) }
 }
 
-const activeCount = computed(() => plans.value.filter(p => p.status === '进行中').length)
-const doneCount = computed(() => plans.value.filter(p => p.status === '已完成').length)
+const activeCount = computed(() => plans.value.filter(p => p.statusCode === 1).length)
+const doneCount = computed(() => plans.value.filter(p => p.statusCode === 2).length)
 const avgProgress = computed(() => {
   if (!plans.value.length) return 0
   return Math.round(plans.value.reduce((s, p) => s + (p.progress || 0), 0) / plans.value.length)
 })
 
 function translateStatus(s) {
-  if (s === 'in_progress' || s === '进行中') return '进行中'
-  if (s === 'completed' || s === '已完成') return '已完成'
+  // 兜底：后端 status 是数值 0/1/2（也有服务间传字符串的历史写法，两者都认）
+  if (s === 1 || s === '1' || s === 'in_progress' || s === '进行中') return '进行中'
+  if (s === 2 || s === '2' || s === 'completed' || s === '已完成') return '已完成'
   return '未开始'
 }
 function statusType(s) {

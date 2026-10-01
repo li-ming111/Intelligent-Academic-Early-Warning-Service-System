@@ -27,4 +27,16 @@ public interface AssistancePlanMapper extends BaseMapper<AssistancePlan> {
     @Select("SELECT * FROM assistance_plans WHERE student_id = #{studentId} "
           + "ORDER BY updated_at DESC, id DESC")
     List<AssistancePlan> selectByStudentId(@Param("studentId") Long profileId);
+
+    /**
+     * 计划的辅导辅导员姓名。
+     *
+     * <p>⚠️ 2026-10-01 第二十一轮加：{@code assistance_plans.counselor_id} 存的是
+     * **{@code users.id}** —— 实测 4/4 行都能 {@code JOIN users u ON ap.counselor_id = u.id}。
+     * **别拿 {@code counselor_profiles.id} 去 JOIN**：那张表只有 1 行(id=1)，而计划里的
+     * counselor_id 全是 53，匹配不上；{@code counselor_profiles.counselor_id} 是 'C53'
+     * 这种**工号字符串**，不是数字外键。
+     */
+    @Select("SELECT u.name FROM users u WHERE u.id = #{counselorId}")
+    String selectCounselorName(@Param("counselorId") Long counselorId);
 }

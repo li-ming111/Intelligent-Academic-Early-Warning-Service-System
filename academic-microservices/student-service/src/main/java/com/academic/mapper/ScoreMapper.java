@@ -33,11 +33,13 @@ public interface ScoreMapper extends BaseMapper<Score> {
     @Select("SELECT s.id, s.course_id, s.student_id, s.semester, s.year, "
           + "s.regular_score, s.final_score, s.score_total, s.grade, s.grade_point, "
           + "s.created_at, s.updated_at, "
-          + "c.name as course_name, c.credits as credits "
+          + "c.name as course_name, c.credits as credits, u.name as teacher_name "
           + "FROM scores s LEFT JOIN courses c ON s.course_id = c.id "
+          + "LEFT JOIN users u ON u.id = c.teacher_id "
           + "WHERE s.student_id = #{studentId} AND s.year IS NOT NULL AND s.semester IS NOT NULL "
           + "ORDER BY s.created_at DESC")
-    @Results({@Result(column = "course_name", property = "courseName"), @Result(column = "credits", property = "credits")})
+    @Results({@Result(column = "course_name", property = "courseName"), @Result(column = "credits", property = "credits"),
+              @Result(column = "teacher_name", property = "teacherName")})
     List<Score> selectByStudentId(String studentId);
 
     /**
@@ -50,11 +52,13 @@ public interface ScoreMapper extends BaseMapper<Score> {
     @Select("SELECT s.id, s.course_id, s.student_id, s.semester, s.year, "
           + "s.regular_score, s.final_score, s.score_total, s.grade, s.grade_point, "
           + "s.created_at, s.updated_at, "
-          + "c.name as course_name, c.credits as credits "
+          + "c.name as course_name, c.credits as credits, u.name as teacher_name "
           + "FROM scores s LEFT JOIN courses c ON s.course_id = c.id "
+          + "LEFT JOIN users u ON u.id = c.teacher_id "
           + "WHERE s.student_id = #{studentId} AND s.semester = #{semester} "
           + "ORDER BY s.created_at DESC")
-    @Results({@Result(column = "course_name", property = "courseName"), @Result(column = "credits", property = "credits")})
+    @Results({@Result(column = "course_name", property = "courseName"), @Result(column = "credits", property = "credits"),
+              @Result(column = "teacher_name", property = "teacherName")})
     List<Score> selectByStudentIdAndSemester(@org.apache.ibatis.annotations.Param("studentId") String studentId,
                                                @org.apache.ibatis.annotations.Param("semester") Integer semester);
 
@@ -168,4 +172,46 @@ public interface ScoreMapper extends BaseMapper<Score> {
           + " WHERE sp.major_id = (SELECT sp2.major_id FROM student_profile sp2 WHERE sp2.id = #{studentId}) "
           + "   AND v.course_id = #{courseId}")
     Double calcMajorAvgScoreOfCourse(@Param("studentId") Long profileId, @Param("courseId") Long courseId);
+
+    // ------------------------------------------------------------------
+    // 2026-10-01 第二十一轮：历史对标表（每学期一行）的对比列。
+    //
+    // 这些列表 benchmark_analysis 里**有列但零行**（无任何写入方），所以不能读快照，
+    // 只能按 scores 实算。返回"同班/同专业同学在该学期的 GPA 行"，均值/名次/人数
+    // 全部在 Java 侧从同一个结果集里算 —— 保证分子分母同源（此前班级均分与班级排名
+    // 分别由两套公式算，互相打架就是这个原因）。
+    // 口径与 calcSemesterGpa 一致：只算该学期**期末已录入**的成绩。
+    // ------------------------------------------------------------------
+
+    /** 某学期同班同学的学分加权 GPA。参数是 student_profile.id（班级由该生档案决定）。 */
+    @Select("SELECT v.student_id AS profileId, " + ScoreCaliber.GPA_EXPR + " AS gpa "
+          + " FROM scores v LEFT JOIN courses c ON c.id = v.course_id "
+          + " JOIN student_profile sp ON sp.id = v.student_id "
+          + " WHERE v.semester = #{semester} AND v.final_score IS NOT NULL "
+          + "   AND sp.class_id = (SELECT sp2.class_id FROM student_profile sp2 WHERE sp2.id = #{studentId}) "
+          + " GROUP BY v.student_id")
+    List<Map<String, Object>> selectSemesterClassGpas(@Param("studentId") Long profileId,
+                                                      @Param("semester") Integer semester);
+
+    /** 某学期同专业同学的学分加权 GPA。 */
+    @Select("SELECT v.student_id AS profileId, " + ScoreCaliber.GPA_EXPR + " AS gpa "
+          + " FROM scores v LEFT JOIN courses c ON c.id = v.course_id "
+          + " JOIN student_profile sp ON sp.id = v.student_id "
+          + " WHERE v.semester = #{semester} AND v.final_score IS NOT NULL "
+          + "   AND sp.major_id = (SELECT sp2.major_id FROM student_profile sp2 WHERE sp2.id = #{studentId}) "
+          + " GROUP BY v.student_id")
+    List<Map<String, Object>> selectSemesterMajorGpas(@Param("studentId") Long profileId,
+                                                      @Param("semester") Integer semester);
+
+    /**
+     * 某学生某学期的门数与挂科门数（只算期末已录入的）。
+     * 列：totalCourses / failedCourses。口径与 {@link ScoreCaliber#ONE_STUDENT_STATS} 一致，只是限定学期。
+     */
+    @Select("SELECT COUNT(*) AS totalCourses, "
+          + "       SUM(CASE WHEN v.score_total < " + ScoreCaliber.PASS_LINE + " THEN 1 ELSE 0 END) AS failedCourses "
+          + "  FROM scores v "
+          + " WHERE v.student_id = #{studentId} AND v.semester = #{semester} "
+          + "   AND v.final_score IS NOT NULL")
+    Map<String, Object> selectSemesterCourseStats(@Param("studentId") Long profileId,
+                                                  @Param("semester") Integer semester);
 }

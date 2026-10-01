@@ -66,9 +66,12 @@
           <span class="ap-course">{{ a.courseName }}</span>
           <span class="ap-reason">{{ a.reason }}</span>
         </div>
+        <!-- 2026-10-01 第二十一轮: 这里原来判 a.status==='pending'/'approved' —— 后端给的是**数值**
+             0/1/2/3, 三个字符串判断全不成立 ⇒ 状态标签**恒走 else 显示「已驳回」**(待处理的申诉
+             被标成已驳回); 时间读的是 a.submittedAt, 后端只有 createdAt(现已补 statusText)。 -->
         <div class="ap-meta">
-          <el-tag size="small" :type="a.status==='pending'?'warning':a.status==='approved'?'success':'danger'">{{ a.status==='pending'?'待处理':a.status==='approved'?'已通过':'已驳回' }}</el-tag>
-          <span class="ap-time">{{ a.submittedAt }}</span>
+          <el-tag size="small" :type="appealStatusType(a.status)">{{ a.statusText || appealStatusName(a.status) }}</el-tag>
+          <span class="ap-time">{{ formatDate(a.createdAt) }}</span>
         </div>
       </div>
     </div>
@@ -201,6 +204,19 @@ function formatDate(d) {
   if (!d) return '--'
   const s = String(d).replace('T', ' ').substring(0, 16)
   return s
+}
+// 申诉状态：后端 status 是数值 0 待处理 / 1 已通过 / 2 已驳回 / 3 已撤回（与 Appeals.vue 同口径）。
+function appealStatusName(s) {
+  if (s === 1) return '已通过'
+  if (s === 2) return '已驳回'
+  if (s === 3) return '已撤回'
+  return '待处理'
+}
+function appealStatusType(s) {
+  if (s === 1) return 'success'
+  if (s === 2) return 'danger'
+  if (s === 3) return 'info'
+  return 'warning'
 }
 function extractCourseName(desc) {
   if (!desc) return ''

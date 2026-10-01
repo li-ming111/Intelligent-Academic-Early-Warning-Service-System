@@ -41,15 +41,15 @@
             <div v-for="clazz in searchResults" :key="clazz.id" class="result-card">
               <div class="result-header">
                 <h4>{{ clazz.name }}</h4>
-                <el-tag :type="clazz.hasTeacher ? 'warning' : 'success'">{{ clazz.hasTeacher ? '已有辅导员' : '无辅导员' }}</el-tag>
+                <el-tag :type="clazz.hasCounselor ? 'warning' : 'success'">{{ clazz.hasCounselor ? '已有辅导员' : '无辅导员' }}</el-tag>
               </div>
               <div class="result-info">
                 <p><span class="label">学生数：</span>{{ clazz.studentCount }}</p>
-                <p><span class="label">辅导员管理：</span>{{ clazz.hasTeacher ? '是' : '否' }}</p>
+                <p><span class="label">辅导员管理：</span>{{ clazz.hasCounselor ? '是' : '否' }}</p>
               </div>
               <div class="result-actions">
-                <el-button type="primary" @click="openApplyDialog(clazz)" :disabled="clazz.hasTeacher">
-                  {{ clazz.hasTeacher ? '已有辅导员管理' : '申请管理' }}
+                <el-button type="primary" @click="openApplyDialog(clazz)" :disabled="clazz.hasCounselor">
+                  {{ clazz.hasCounselor ? '已有辅导员管理' : '申请管理' }}
                 </el-button>
               </div>
             </div>
@@ -210,7 +210,11 @@ const searchClasses = async () => {
 }
 const loadClasses = async (showAll = false) => {
   loading.value = true
-  try { const r = await counselorAPI.searchClasses(''); const all = Array.isArray(r) ? r : (r?.data || []); searchResults.value = showAll ? all : all.filter(c => !c.hasTeacher); searchPerformed.value = true } catch (e) { ElMessage.error('加载失败') }
+  // 2026-10-01 第二十一轮: 这里原来读 c.hasTeacher —— counselor-service 的 SQL 别名是
+  // **hasCounselor**(ClassInfoMapper.searchClassesMap), 所以 hasTeacher 恒 undefined,
+  // `!undefined` 恒 true ⇒ 「只看无辅导员班级」实际返回**全部班级**;上面那几处 :disabled 也永不禁用。
+  // (teacher-service 的同名接口返回的**才是** hasTeacher —— TeacherClassManagement.vue 是对的。)
+  try { const r = await counselorAPI.searchClasses(''); const all = Array.isArray(r) ? r : (r?.data || []); searchResults.value = showAll ? all : all.filter(c => !c.hasCounselor); searchPerformed.value = true } catch (e) { ElMessage.error('加载失败') }
   finally { loading.value = false }
 }
 const loadAllClasses = async () => {

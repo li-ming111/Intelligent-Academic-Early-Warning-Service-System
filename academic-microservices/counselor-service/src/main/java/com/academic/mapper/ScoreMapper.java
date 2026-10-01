@@ -29,14 +29,21 @@ import java.util.Map;
 @Mapper
 public interface ScoreMapper extends BaseMapper<Score> {
 
-    /** 成绩行的统一列清单，别名与前端约定一致。 */
+    /**
+     * 成绩行的统一列清单，别名与前端约定一致。
+     *
+     * <p>2026-10-01 第二十一轮补 {@code sp.student_id AS student_no}：辅导员「成绩管理」页的
+     * 「学号」列读的是 {@code student_no}，而这里原来只给了 {@code student_name}
+     * ⇒ 该列每行空白（同表其余 5 列正常）。注意 {@code student_profile} 有**两个** id 概念：
+     * 表主键 {@code id}（成绩表的外键）与学号 {@code student_id}，这里要的是后者。
+     */
     String SCORE_COLUMNS =
             "v.id AS id, v.student_id AS student_id, v.course_id AS course_id, "
           + "v.score_total AS score_total, v.semester AS semester, "
           + "v.regular_score AS regular_score, v.final_score AS final_score, "
           + "v.grade AS grade, v.grade_point AS grade_point, v.created_at AS created_at, "
           + ScoreCaliber.SCORE_LEVEL_CASE + " AS score_level, "
-          + "sp.name AS student_name, sp.class_name AS class_name, "
+          + "sp.name AS student_name, sp.student_id AS student_no, sp.class_name AS class_name, "
           + "c.name AS course_name, c.credits AS credits, c.type AS type";
 
     /** 科目表 + 学生档案的统一 JOIN，各查询复用。 */
@@ -185,4 +192,25 @@ public interface ScoreMapper extends BaseMapper<Score> {
           + " JOIN student_profile sp ON sp.id = g.student_id "
           + " WHERE sp.class_id = #{classId} AND g.gpa IS NOT NULL")
     Double getClassAvgGpa(@Param("classId") Long classId);
+
+    /**
+     * 辅导员名下每名学生的学分与绩点（第二十一轮加，供「我的学生」详情弹窗）。
+     * 列：{@code profile_id} / {@code earned_credits}(通过课程学分) /
+     * {@code attempted_credits}(已修课程学分, 作分母) / {@code gpa}(学分加权)。
+     *
+     * <p>和 {@link #getInsufficientCreditStudents} 的区别：那个只返回**有挂科**的学生
+     * (HAVING fail_count &gt; 0)，这个返回全部学生 —— 详情弹窗对每个人都可能打开。
+     * GPA 用 {@link ScoreCaliber#GPA_EXPR}，与班级均分/排名同源。
+     */
+    @Select("SELECT sp.id AS profile_id, "
+          + "  COALESCE(SUM(CASE WHEN v.score_total >= " + ScoreCaliber.PASS_LINE
+          + "                    AND c.credits IS NOT NULL THEN c.credits ELSE 0 END), 0) AS earned_credits, "
+          + "  COALESCE(SUM(CASE WHEN c.credits IS NOT NULL THEN c.credits ELSE 0 END), 0) AS attempted_credits, "
+          + "  " + ScoreCaliber.GPA_EXPR + " AS gpa "
+          + "FROM student_profile sp "
+          + "JOIN classes cl ON cl.id = sp.class_id AND cl.counselor_id = #{counselorId} "
+          + "LEFT JOIN " + ScoreCaliber.LATEST_VALID_SCORE + " v ON v.student_id = sp.id "
+          + "LEFT JOIN courses c ON c.id = v.course_id "
+          + "GROUP BY sp.id")
+    List<Map<String, Object>> getStudentCreditStatsByCounselorId(@Param("counselorId") Long counselorId);
 }

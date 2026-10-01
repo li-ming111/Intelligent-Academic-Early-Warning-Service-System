@@ -176,7 +176,10 @@
               <div v-for="(s,i) in suggestions.slice(0,3)" :key="s.id" class="sug-item" :style="{ animationDelay: i*0.1+'s' }">
                 <div class="si-dot" :class="'pri-' + (s.priority || 'medium')"></div>
                 <div class="si-content">
-                  <div class="si-title">{{ s.title }}</div>
+                  <!-- 2026-10-01 第二十一轮: 原来渲染 {{ s.title }} —— 后端 /students/suggestions
+                       两个分支都从不 put `title`(给的是 courseId/courseName/score/content/priority,
+                       兜底分支只有 content/priority) ⇒ 标题行恒空白。改读真实存在的 courseName。 -->
+                  <div class="si-title">{{ s.courseName || '学习建议' }}</div>
                   <div class="si-text">{{ s.content }}</div>
                 </div>
               </div>
