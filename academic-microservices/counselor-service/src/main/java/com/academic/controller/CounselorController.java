@@ -1445,11 +1445,17 @@ public class CounselorController {
             int totalWarnings = 0, highLevel = 0, mediumLevel = 0, lowLevel = 0, handledCount = 0, pendingCount = 0;
             if (students != null) {
                 for (Map<String, Object> student : students) {
-                    String studentId = (String) student.get("studentId");
-                    if (studentId != null) {
+                    // 2026-10-01 第二十一轮修: 这里原用的是 `student.get("studentId")` ——
+                    // 那是 `student_profile.student_id`, 即**学号字符串**(如 '2023020701'),
+                    // 而 `academic_warning.student_id` 是 **bigint 且存 `student_profile.id`**
+                    // (实测按 profile.id 匹配 4/4、按学号 0/4;`WHERE student_id='2023020701'`
+                    // 在 MySQL 里把字符串转成数字比较, **不报错、静默返回 0 行**)
+                    // ⇒ 本端点从前**恒返回全 0**。现改用同一查询新带的 profileId。
+                    Object profileId = student.get("profileId");
+                    if (profileId != null) {
                         com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<com.academic.common.entity.AcademicWarning> qw =
                             new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<>();
-                        qw.eq("student_id", studentId);
+                        qw.eq("student_id", profileId);
                         List<com.academic.common.entity.AcademicWarning> warns = warningMapper.selectList(qw);
                         if (warns != null) {
                             for (com.academic.common.entity.AcademicWarning w : warns) {

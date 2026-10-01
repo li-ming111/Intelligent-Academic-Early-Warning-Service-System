@@ -49,7 +49,13 @@ public interface ClassInfoMapper extends BaseMapper<ClassInfo> {
      * ({@code /counselors/classes/{id}/students}、{@code /detail}、{@code /warnings})
      * 全部返回 `ApiResponse.serverError`(HTTP 200 + body.code 500) —— 辅导员端「我的班级」
      * 的花名册恒空、「班主任/辅导员」恒「未指派/无」。手机号在 **users** 表上(35/35 有值)。
+     *
+     * <p>⚠️ 同时新增 {@code sp.id as profileId}: 这里**两个 id 概念必须分清** ——
+     * {@code studentId}(= {@code student_profile.student_id}, 是**学号字符串** '2023020701')
+     * 是给人看的;{@code profileId}(= {@code student_profile.id}) 才是
+     * {@code academic_warning.student_id} / {@code scores.student_id} 的外键值。
+     * 凡是要拿这个列表回去查这两张表的调用方, **必须用 profileId**。
      */
-    @Select("SELECT sp.student_id as studentId, u.name as studentName, sp.gender, u.phone FROM student_profile sp JOIN users u ON sp.user_id = u.id WHERE sp.class_id = #{classId}")
+    @Select("SELECT sp.student_id as studentId, sp.id as profileId, u.name as studentName, sp.gender, u.phone FROM student_profile sp JOIN users u ON sp.user_id = u.id WHERE sp.class_id = #{classId}")
     List<Map<String, Object>> getStudentsByClassIdMap(@Param("classId") Long classId);
 }

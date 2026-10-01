@@ -255,7 +255,10 @@ function computeFallback(semNumVal) {
     return { courseName: s.courseName || ('课程ID:' + s.courseId), studentScore: Number(s.scoreTotal || 0), classAverage: '--', departmentAverage: '--', rank: '--', totalStudents: '--' }
   })
   bm.gpa = crSum ? (gpaSum / crSum).toFixed(2) : '--'
-  bm.classAvg = '3.00'; bm.deptAvg = '2.90'; bm.rank = 15; bm.total = 100
+  // 2026-10-01 第二十一轮: 原先是 `bm.classAvg='3.00'; bm.deptAvg='2.90'` ——
+  // 这是**写死的常量**冒充统计值。走到这个分支说明「该学期的对标接口没给出数据」,
+  // 那就该显示 '--' 而不是编一个数; 排名同理(原来还写死成 15/100)。
+  bm.classAvg = '--'; bm.deptAvg = '--'; bm.rank = 0; bm.total = 0
   bm.courses = courses
 }
 
@@ -368,7 +371,19 @@ function computeAllSemesters() {
     return { courseName: s.courseName || ('课程ID:' + s.courseId), studentScore: Number(s.scoreTotal || 0), classAverage: '--', departmentAverage: '--' }
   })
   bm.gpa = crSum ? (gpaSum / crSum).toFixed(2) : '--'
-  bm.classAvg = '3.00'; bm.deptAvg = '2.90'
+  // 2026-10-01 第二十一轮: 原先是 `bm.classAvg='3.00'; bm.deptAvg='2.90'` —— 两个写死的常量。
+  // 「全部学期」是这一页的**默认视图**(下拉第一项就是它), 而且本页在 StudentLayout 有导航入口
+  // ⇒ 打开页面看到的就是 3.00 / 2.90, 与下面那张历史表的真实值互相矛盾。
+  // 现在改成取**历史表里各学期的真实值**再平均: 与表格**同源**(表格由后端
+  // classAvgGpa/majorAvgGpa 得来), 某学期后端没给值('--')就跳过, 一个都没有就显示 '--'。
+  // 「全部学期」不排一个总名次(total=0 ⇒ 排名卡显示 '--', 标签是「全部学期」),
+  // 名次仍按学期在下面那张表里逐行给 —— 不合成一个没有定义的"总排名"。
+  const avgOf = (key) => {
+    const vals = historyData.value.map(r => parseFloat(r[key])).filter(v => !isNaN(v))
+    return vals.length ? (vals.reduce((a, b) => a + b, 0) / vals.length).toFixed(2) : '--'
+  }
+  bm.classAvg = avgOf('classAvg')
+  bm.deptAvg = avgOf('deptAvg')
   bm.rank = 0; bm.total = 0
   bm.courses = courses
   nextTick(renderCharts)
