@@ -2,9 +2,6 @@ package com.academic.controller;
 
 import com.academic.common.dto.ApiResponse;
 import com.academic.common.entity.College;
-import com.academic.feign.CounselorServiceClient;
-import com.academic.feign.StudentServiceClient;
-import com.academic.feign.TeacherServiceClient;
 import com.academic.service.CollegeService;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
@@ -17,7 +14,27 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 学院控制器
+ * 学院控制器。
+ *
+ * <p><b>⚠️ 2026-10-01 第十八轮：这里原先对每个学院各发 3 次 Feign 调用
+ * （学生/教师/辅导员计数），已整族删除 —— 那些调用<u>从来没有成功过</u>。</b>
+ *
+ * <p>原因是本模块<b>没有</b> {@code feign.RequestInterceptor}（全仓只有 admin-service
+ * 与 ai-service 有），Feign 请求不带 {@code X-User-Id}/{@code X-Username}/{@code X-Role}；
+ * 下游三个服务都只 {@code permitAll} 了 {@code /actuator/health}、其余
+ * {@code .anyRequest().authenticated()}，无头就不建 Authentication ⇒ 一律 403。
+ * 实测：{@code GET /colleges/all} 每次请求在日志里留下 <b>12 条</b>
+ * {@code [403] during [GET] to [http://student-service/students/count-by-college?collegeId=1]}，
+ * 三个计数恒为 {@code 0}（软件学院真实是 24/5/1）。
+ *
+ * <p><b>别照抄 admin-service 的 RequestInterceptor 来"修"它 —— 在这条路上修不好。</b>
+ * 本控制器唯一的真实调用方是 <b>匿名</b>的注册页（{@code /api/auth/colleges} 在网关
+ * {@code WHITE_LIST} 里，{@code AuthenticationFilter} 命中白名单直接放行、<u>不注入</u>
+ * 身份头），所以拦截器根本无头可抄，加了照样 0。
+ *
+ * <p>这三个计数本来就<b>零读者</b>：四个消费方（PC 三个注册页 + 小程序注册页）只取
+ * {@code id/name/code}。带计数的学院管理页走的是 admin-service 的 {@code /admin/colleges}，
+ * 那边是直接查库（{@code AdminController} 的 {@code studentProfileMapper.selectCount}）。
  */
 @Slf4j
 @RestController
@@ -25,18 +42,9 @@ import java.util.Map;
 public class CollegeController {
 
     private final CollegeService collegeService;
-    private final StudentServiceClient studentServiceClient;
-    private final TeacherServiceClient teacherServiceClient;
-    private final CounselorServiceClient counselorServiceClient;
 
-    public CollegeController(CollegeService collegeService, 
-                            StudentServiceClient studentServiceClient,
-                            TeacherServiceClient teacherServiceClient,
-                            CounselorServiceClient counselorServiceClient) {
+    public CollegeController(CollegeService collegeService) {
         this.collegeService = collegeService;
-        this.studentServiceClient = studentServiceClient;
-        this.teacherServiceClient = teacherServiceClient;
-        this.counselorServiceClient = counselorServiceClient;
     }
 
     /**
@@ -85,10 +93,7 @@ public class CollegeController {
             result.put("name", college.getName());
             result.put("code", college.getCode());
             result.put("description", college.getDescription());
-            result.put("studentCount", getStudentCount(collegeId));
-            result.put("teacherCount", getTeacherCount(collegeId));
-            result.put("counselorCount", getCounselorCount(collegeId));
-            
+
             return ApiResponse.success(result);
         } catch (Exception e) {
             log.error("Get college info failed: {}", e.getMessage());
@@ -188,9 +193,6 @@ public class CollegeController {
                 item.put("name", college.getName());
                 item.put("code", college.getCode());
                 item.put("description", college.getDescription());
-                item.put("studentCount", getStudentCount(college.getId()));
-                item.put("teacherCount", getTeacherCount(college.getId()));
-                item.put("counselorCount", getCounselorCount(college.getId()));
                 resultList.add(item);
             }
             
@@ -216,39 +218,4 @@ public class CollegeController {
         }
     }
 
-    private Long getStudentCount(Long collegeId) {
-        try {
-            ApiResponse<Long> response = studentServiceClient.countByCollege(collegeId);
-            if (response != null && response.getCode() == 200 && response.getData() != null) {
-                return response.getData();
-            }
-        } catch (Exception e) {
-            log.warn("Failed to get student count for college {}: {}", collegeId, e.getMessage());
-        }
-        return 0L;
-    }
-
-    private Long getTeacherCount(Long collegeId) {
-        try {
-            ApiResponse<Long> response = teacherServiceClient.countByCollege(collegeId);
-            if (response != null && response.getCode() == 200 && response.getData() != null) {
-                return response.getData();
-            }
-        } catch (Exception e) {
-            log.warn("Failed to get teacher count for college {}: {}", collegeId, e.getMessage());
-        }
-        return 0L;
-    }
-
-    private Long getCounselorCount(Long collegeId) {
-        try {
-            ApiResponse<Long> response = counselorServiceClient.countByCollege(collegeId);
-            if (response != null && response.getCode() == 200 && response.getData() != null) {
-                return response.getData();
-            }
-        } catch (Exception e) {
-            log.warn("Failed to get counselor count for college {}: {}", collegeId, e.getMessage());
-        }
-        return 0L;
-    }
 }
