@@ -30,9 +30,10 @@
             :loading="collegesLoading">
             <el-option v-for="c in colleges" :key="c.id" :label="c.name" :value="c.id" />
           </el-select>
-          <!-- ⚠️ /auth/colleges 会对每个学院各发起 3 次 Feign 调用（学生/教师/辅导员计数），
-               4 个学院 = 12 次。任何一个下游服务没起来时，每次都要等 Feign 重试链跑完（实测 ~13 秒）
-               —— 学院下拉可能几十秒才出来。带上 loading 至少让它"看起来在加载"而不是点不动。 -->
+          <!-- 学院下拉走 /auth/colleges（白名单里的公开目录，注册页在登录之前，必须匿名可读）。
+               第十八轮已把 college-service 里"每学院 3 次 Feign 取学生/教师/辅导员计数"整族删掉
+               —— 那条链下游 authenticated() 无头必 403、计数恒 0 且零读者，现在一次请求直达。
+               仍带 loading：服务没起时至少让"在加载"看得见，而不是点不动。 -->
           <span v-if="collegesLoading" class="rg-hint dim">正在加载学院列表…</span>
         </div>
 

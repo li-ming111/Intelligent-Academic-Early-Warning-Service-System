@@ -37,8 +37,8 @@
               :loading="collegesLoading" @change="handleCollegeChange">
               <el-option v-for="c in colleges" :key="c.id" :label="c.name" :value="c.id" />
             </el-select>
-            <!-- ⚠️ 同 TeacherRegister：/auth/colleges 每学院 3 次 Feign 调用（4 学院 = 12 次），
-                 下游服务没起时每次都要等重试链（~13 秒）—— 必须让"在加载"看得见。 -->
+            <!-- 同 TeacherRegister：/auth/colleges 公开目录，匿名可读。
+                 第十八轮已删掉里层的 Feign 计数调用，现在一次请求直达，不再有"每学院 3 次"的链。 -->
             <span v-if="collegesLoading" class="rg-hint dim">正在加载学院列表…</span>
           </div>
         </div>
