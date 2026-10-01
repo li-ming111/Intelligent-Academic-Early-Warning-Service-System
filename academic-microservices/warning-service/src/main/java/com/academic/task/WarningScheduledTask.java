@@ -16,6 +16,7 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -101,9 +102,36 @@ public class WarningScheduledTask {
             return 0;
         }
 
-        Set<Long> pendingStudents = new HashSet<>(scoreReadMapper.findExistingWarningStudentIds());
+        // ==================== 判重口径 ====================
+        // 既有的「学生 + 挂科门数」组合 → 跳过。**不看 status**。
+        // 所以"把一条预警处理掉"不再等于"下一轮又给他报一条"：
+        //   · 处理后门数没变  → 键相同 → 跳过（从前这里会再插一条，页面上一人挂两条）；
+        //   · 处理后门数变了  → 键不同 → 照常生成新的一条（问题变严重本来就该再报）。
+        // ⚠️ 加 fail_count 列之前生成的行，如果迁移回填不到门数（正文里没有"已累计N门"），
+        //    就没有可比较的键，只能按**旧口径兜底**：仍有未处理(status=0)的旧行就跳过。
+        //    这一格覆盖不到"已处理 + 没门数"的历史行（旧口径本来就不拦它），
+        //    属于回填失败的残余；活库的 4 行已由迁移脚本全部回填，不会走到这里。
+        Map<Long, Set<Integer>> existingCounts = new HashMap<>();
+        Set<Long> legacyPendingStudents = new HashSet<>();
+        for (Map<String, Object> key : scoreReadMapper.findExistingWarningKeys()) {
+            if (key == null) {
+                continue;
+            }
+            Long sid = toLong(key.get("studentId"));
+            if (sid == null) {
+                continue;
+            }
+            Integer failCount = toInt(key.get("failCount"));
+            Integer status = toInt(key.get("status"));
+            if (failCount != null) {
+                existingCounts.computeIfAbsent(sid, k -> new HashSet<>()).add(failCount);
+            } else if (status != null && status == 0) {
+                legacyPendingStudents.add(sid);
+            }
+        }
         if (verbose) {
-            log.info("已有 {} 名学生存在未处理预警", pendingStudents.size());
+            log.info("已有 {} 名学生存在未处理预警（旧口径兜底），{} 名学生有可比较门数的历史预警",
+                    legacyPendingStudents.size(), existingCounts.size());
         }
 
         List<Map<String, Object>> failCountRows = scoreReadMapper.findFailCountByStudent();
@@ -114,11 +142,12 @@ public class WarningScheduledTask {
                 log.warn("跳过一条缺少 studentId 的挂科统计记录: {}", row);
                 continue;
             }
-            if (pendingStudents.contains(studentId)) {
-                continue;
-            }
             Integer failCount = toInt(row.get("failCount"));
             if (failCount == null || failCount <= 0) {
+                continue;
+            }
+            if (legacyPendingStudents.contains(studentId)
+                    || existingCounts.getOrDefault(studentId, Set.of()).contains(failCount)) {
                 continue;
             }
 
@@ -132,7 +161,7 @@ public class WarningScheduledTask {
             createWarning(studentId, (String) row.get("studentName"), rule, failCount, detail);
 
             // 关键：立即回写，保证同一轮扫描内不会对同一名学生重复生成
-            pendingStudents.add(studentId);
+            existingCounts.computeIfAbsent(studentId, k -> new HashSet<>()).add(failCount);
             generated++;
         }
         return generated;
@@ -228,6 +257,9 @@ public class WarningScheduledTask {
                 .setWarningLevel(rule.rule().getWarningLevel())
                 .setWarningMessage(message)
                 .setTriggerScore(triggerScore)
+                // 记下生成时的门数：这是判重键的一半（见 runScan 的注释）。
+                // 不写这一列的话，下一轮扫描就认不出"这条预警说的是同一个问题"。
+                .setFailCount(failCount)
                 .setStatus(0)
                 .setCreatedAt(LocalDateTime.now());
         academicWarningMapper.insert(warning);

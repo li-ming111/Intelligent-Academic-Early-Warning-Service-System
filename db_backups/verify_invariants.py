@@ -175,6 +175,24 @@ c(g, '司明/李爽/张健/韩坤 的挂科门数仍是 3,3,3,2（权威口径�
 c(g, '两表行数 259 / 246',
   'SELECT (SELECT COUNT(*) FROM scores), (SELECT COUNT(*) FROM score_record)', '259\t246')
 
+# ---------- G. 预警判重口径（2026-09-30 修"已处理的预警被重扫复活"时立的） ----------
+# 判重键是 (student_id, fail_count)，不看 status。下面两条直接守着这个口径：
+# 第 1 条保证键的另一半没缺，第 2 条保证键没有被重复插过。
+g = 'G. 预警判重口径（student_id + fail_count，不看 status）'
+c(g, '每行 academic_warning 都有 fail_count（NULL 就比不出"是不是同一个问题"）',
+  'SELECT COUNT(*) FROM academic_warning WHERE fail_count IS NULL')
+c(g, '判重键 (student_id, fail_count) 不许重复 —— 重复即判重被绕过（一人挂两条）',
+  'SELECT COUNT(*) FROM (SELECT student_id, fail_count FROM academic_warning '
+  'GROUP BY student_id, fail_count HAVING COUNT(*) > 1) x')
+
+# ---------- H. 演示基线之二（档位；规则改了就要一起改） ----------
+g = 'H. 预警档位与门数（基线：1-2 门→1 级、3-5 门→2 级、>5 门→3 级）'
+c(g, '每行 fail_count 都落在它 warning_level 对应的档里',
+  'SELECT COUNT(*) FROM academic_warning WHERE warning_level IS NULL OR fail_count IS NULL '
+  'OR NOT ((warning_level=1 AND fail_count BETWEEN 1 AND 2) '
+  'OR (warning_level=2 AND fail_count BETWEEN 3 AND 5) '
+  'OR (warning_level=3 AND fail_count > 5))')
+
 
 def q(sql):
     r = subprocess.run(['mysql', '-uroot', '-proot', '--default-character-set=utf8mb4',

@@ -32,6 +32,10 @@ import static org.mockito.Mockito.*;
  *   <li>同一名学生重复插入 —— 旧代码的 existingWarningStudents 集合从不回写，
  *       一名学生命中多个扫描分支会插入多条；</li>
  *   <li>规则解析错误 —— 旧 parseThreshold() 把门数区间当成分数阈值。</li>
+ *   <li>已处理的预警被重扫复活 —— 旧判重只看 status=0，处理完就等于解除屏蔽，
+ *       下一轮又插一条；2026-09-30 改为按「学生 + 挂科门数」判重（不看 status），
+ *       见 {@code testScan_HandledWarningIsNotRegenerated} 与
+ *       {@code testScan_RegeneratesWhenFailCountChanges}。</li>
  * </ul>
  */
 @ExtendWith(MockitoExtension.class)
@@ -57,7 +61,7 @@ class WarningScheduledTaskTest {
     @DisplayName("预警等级完全取自规则表 —— 旧代码在此处硬编码成 2")
     void testScan_WarningLevelComesFromRuleTable() {
         stubRules(rule(1L, "初级预警", 1, "fail_count >= 1 AND fail_count <= 2"));
-        stubNoPendingWarnings();
+        stubNoExistingWarnings();
         when(scoreReadMapper.findFailCountByStudent())
                 .thenReturn(List.of(failRow(13L, "韩坤", 2)));
         when(scoreReadMapper.findFailDetailByStudent(13L))
@@ -71,6 +75,7 @@ class WarningScheduledTaskTest {
         assertEquals(1L, warning.getRuleId());
         assertEquals(13L, warning.getStudentId());
         assertEquals("韩坤", warning.getStudentName());
+        assertEquals(2, warning.getFailCount());   // 判重键的一半，必须落库
         assertEquals(0, warning.getStatus());
         assertNotNull(warning.getCreatedAt());
     }
@@ -83,7 +88,7 @@ class WarningScheduledTaskTest {
                 rule(1L, "初级预警", 1, "fail_count >= 1 AND fail_count <= 2"),
                 rule(2L, "中级预警", 2, "fail_count >= 1 AND fail_count <= 5"),
                 rule(3L, "高级预警", 3, "fail_count > 5"));
-        stubNoPendingWarnings();
+        stubNoExistingWarnings();
         when(scoreReadMapper.findFailCountByStudent())
                 .thenReturn(List.of(failRow(3L, "司明", 3)));
         when(scoreReadMapper.findFailDetailByStudent(3L))
@@ -104,7 +109,7 @@ class WarningScheduledTaskTest {
     @DisplayName("已有未处理预警的学生被跳过，其余学生照常生成")
     void testScan_SkipsStudentWithPendingWarning() {
         stubRules(rule(2L, "中级预警", 2, "fail_count >= 3 AND fail_count <= 5"));
-        when(scoreReadMapper.findExistingWarningStudentIds()).thenReturn(List.of(3L));
+        when(scoreReadMapper.findExistingWarningKeys()).thenReturn(List.of(existingKey(3L, 3, 0)));
         when(scoreReadMapper.findFailCountByStudent()).thenReturn(List.of(
                 failRow(3L, "司明", 3),
                 failRow(20L, "李爽", 3)));
@@ -120,10 +125,76 @@ class WarningScheduledTaskTest {
     }
 
     @Test
+    @DisplayName("已处理的预警不会复活：门数没变就跳过（旧口径在这里会再插一条）")
+    void testScan_HandledWarningIsNotRegenerated() {
+        // 旧口径是 SELECT DISTINCT student_id ... WHERE status = 0，
+        // 于是这条 status=1 的行等于不存在 —— 只要该生门数仍 > 0 就又插一条，
+        // 页面上同一个人同时挂着"已处理"和"待处理"，半小时复活一次。
+        stubRules(rule(2L, "中级预警", 2, "fail_count >= 3 AND fail_count <= 5"));
+        when(scoreReadMapper.findExistingWarningKeys()).thenReturn(List.of(existingKey(3L, 3, 1)));
+        when(scoreReadMapper.findFailCountByStudent()).thenReturn(List.of(failRow(3L, "司明", 3)));
+
+        int generated = scheduledTask.triggerNow();
+
+        assertEquals(0, generated);
+        verify(academicWarningMapper, never()).insert(any());
+        verify(scoreReadMapper, never()).findFailDetailByStudent(3L);
+    }
+
+    @Test
+    @DisplayName("挂科门数变了就照常再报一次（3 门 → 5 门，问题变严重）")
+    void testScan_RegeneratesWhenFailCountChanges() {
+        stubRules(
+                rule(1L, "初级预警", 1, "fail_count >= 1 AND fail_count <= 2"),
+                rule(2L, "中级预警", 2, "fail_count >= 3 AND fail_count <= 5"));
+        // 既有那条是 3 门（哪怕已处理），今天变成 5 门 → 键不同 → 应当再报
+        when(scoreReadMapper.findExistingWarningKeys()).thenReturn(List.of(existingKey(3L, 3, 1)));
+        when(scoreReadMapper.findFailCountByStudent()).thenReturn(List.of(failRow(3L, "司明", 5)));
+        when(scoreReadMapper.findFailDetailByStudent(3L))
+                .thenReturn(List.of(detail(6L, "操作系统", 40.0)));
+
+        int generated = scheduledTask.triggerNow();
+
+        assertEquals(1, generated);
+        AcademicWarning warning = captureSingleInsert();
+        assertEquals(3L, warning.getStudentId());
+        assertEquals(2, warning.getWarningLevel());   // [3,5] 中级
+        assertEquals(5, warning.getFailCount());      // 新门数必须落库，否则下一轮又会重复
+    }
+
+    @Test
+    @DisplayName("加列前的历史行没有门数时按旧口径兜底：未处理就仍然跳过")
+    void testScan_LegacyPendingRowWithoutFailCountStillSkips() {
+        // fail_count 为 NULL 说明这是迁移回填不到的行（正文里没有"已累计N门"），
+        // 比不出来就只能沿用旧口径 —— 保守，不会因此多报。
+        stubRules(rule(2L, "中级预警", 2, "fail_count >= 3 AND fail_count <= 5"));
+        when(scoreReadMapper.findExistingWarningKeys()).thenReturn(List.of(existingKey(3L, null, 0)));
+        when(scoreReadMapper.findFailCountByStudent()).thenReturn(List.of(failRow(3L, "司明", 3)));
+
+        assertEquals(0, scheduledTask.triggerNow());
+        verify(academicWarningMapper, never()).insert(any());
+    }
+
+    @Test
+    @DisplayName("历史行没门数且已处理：无从判定是否同一问题，不拦截（自动迁移已把 4 行全部回填）")
+    void testScan_LegacyHandledRowWithoutFailCountDoesNotBlock() {
+        // 这是回填失败的残留口径，写下来是为了别让人以为兜底覆盖了这一格：
+        // 旧口径本来就不拦 status=1，新口径在没有门数时也只能照旧。
+        stubRules(rule(2L, "中级预警", 2, "fail_count >= 3 AND fail_count <= 5"));
+        when(scoreReadMapper.findExistingWarningKeys()).thenReturn(List.of(existingKey(3L, null, 1)));
+        when(scoreReadMapper.findFailCountByStudent()).thenReturn(List.of(failRow(3L, "司明", 3)));
+        when(scoreReadMapper.findFailDetailByStudent(3L))
+                .thenReturn(List.of(detail(6L, "操作系统", 40.0)));
+
+        assertEquals(1, scheduledTask.triggerNow());
+        assertEquals(3, captureSingleInsert().getFailCount());
+    }
+
+    @Test
     @DisplayName("同一轮扫描内不会对同一名学生重复生成（pending 集合即时回写）")
     void testScan_DoesNotDuplicateWithinOneRun() {
         stubRules(rule(1L, "初级预警", 1, "fail_count >= 1 AND fail_count <= 2"));
-        stubNoPendingWarnings();
+        stubNoExistingWarnings();
         // 聚合查询若因数据异常返回了重复行，也只应生成一条
         when(scoreReadMapper.findFailCountByStudent()).thenReturn(List.of(
                 failRow(13L, "韩坤", 2),
@@ -148,7 +219,7 @@ class WarningScheduledTaskTest {
         stubRules(
                 rule(4L, "GPA预警", 2, "gpa < 2.0"),
                 rule(1L, "初级预警", 1, "fail_count >= 1 AND fail_count <= 2"));
-        stubNoPendingWarnings();
+        stubNoExistingWarnings();
         when(scoreReadMapper.findFailCountByStudent())
                 .thenReturn(List.of(failRow(13L, "韩坤", 2)));
         when(scoreReadMapper.findFailDetailByStudent(13L))
@@ -179,7 +250,7 @@ class WarningScheduledTaskTest {
         stubRules(
                 rule(9L, "坏规则", 3, "fail_count >= 5 AND fail_count <= 2"),
                 rule(1L, "初级预警", 1, "fail_count >= 1 AND fail_count <= 2"));
-        stubNoPendingWarnings();
+        stubNoExistingWarnings();
         when(scoreReadMapper.findFailCountByStudent())
                 .thenReturn(List.of(failRow(13L, "韩坤", 2)));
         when(scoreReadMapper.findFailDetailByStudent(13L))
@@ -204,7 +275,7 @@ class WarningScheduledTaskTest {
     @DisplayName("挂科门数落在所有规则区间之外时不生成预警")
     void testScan_FailCountMatchesNoRule() {
         stubRules(rule(3L, "高级预警", 3, "fail_count > 5"));
-        stubNoPendingWarnings();
+        stubNoExistingWarnings();
         when(scoreReadMapper.findFailCountByStudent())
                 .thenReturn(List.of(failRow(13L, "韩坤", 2)));
 
@@ -229,7 +300,7 @@ class WarningScheduledTaskTest {
     @DisplayName("triggerScore 取最低挂科分数，预警文案包含规则名与课程明细")
     void testScan_WarningContent() {
         stubRules(rule(2L, "中级预警", 2, "fail_count >= 3 AND fail_count <= 5"));
-        stubNoPendingWarnings();
+        stubNoExistingWarnings();
         when(scoreReadMapper.findFailCountByStudent())
                 .thenReturn(List.of(failRow(3L, "司明", 3)));
         // mapper 保证按分数升序返回，首条即最低分
@@ -254,7 +325,7 @@ class WarningScheduledTaskTest {
     @DisplayName("挂科课程过多时预警文案省略为\"等\"，不会无限长")
     void testScan_WarningContentTruncatesLongCourseList() {
         stubRules(rule(3L, "高级预警", 3, "fail_count > 5"));
-        stubNoPendingWarnings();
+        stubNoExistingWarnings();
         when(scoreReadMapper.findFailCountByStudent())
                 .thenReturn(List.of(failRow(99L, "王五", 7)));
         when(scoreReadMapper.findFailDetailByStudent(99L)).thenReturn(List.of(
@@ -274,7 +345,7 @@ class WarningScheduledTaskTest {
     @DisplayName("缺少 studentId 的脏数据行被跳过，不中断整轮扫描")
     void testScan_SkipsRowWithNullStudentId() {
         stubRules(rule(1L, "初级预警", 1, "fail_count >= 1 AND fail_count <= 2"));
-        stubNoPendingWarnings();
+        stubNoExistingWarnings();
         Map<String, Object> dirty = new HashMap<>();
         dirty.put("studentName", "无ID");
         dirty.put("failCount", 2);
@@ -297,7 +368,7 @@ class WarningScheduledTaskTest {
     @DisplayName("增量扫描按同一口径为新挂科学生生成预警")
     void testIncrementalScan_GeneratesForNewStudent() {
         stubRules(rule(1L, "初级预警", 1, "fail_count >= 1 AND fail_count <= 2"));
-        stubNoPendingWarnings();
+        stubNoExistingWarnings();
         when(scoreReadMapper.findFailCountByStudent())
                 .thenReturn(List.of(failRow(13L, "韩坤", 2)));
         when(scoreReadMapper.findFailDetailByStudent(13L))
@@ -316,8 +387,18 @@ class WarningScheduledTaskTest {
         when(warningRuleMapper.selectList(any())).thenReturn(List.of(rules));
     }
 
-    private void stubNoPendingWarnings() {
-        when(scoreReadMapper.findExistingWarningStudentIds()).thenReturn(List.of());
+    /** 库里一条预警都没有：既不构成判重键，也没有可兜底的历史行。 */
+    private void stubNoExistingWarnings() {
+        when(scoreReadMapper.findExistingWarningKeys()).thenReturn(List.of());
+    }
+
+    /** 构造一条既有预警的判重键：{@code failCount} 允许为 null（加列前的历史行）。 */
+    private static Map<String, Object> existingKey(long studentId, Integer failCount, Integer status) {
+        Map<String, Object> key = new HashMap<>();
+        key.put("studentId", studentId);
+        key.put("failCount", failCount);
+        key.put("status", status);
+        return key;
     }
 
     private AcademicWarning captureSingleInsert() {

@@ -37,8 +37,17 @@ public interface ScoreReadMapper {
     List<Map<String, Object>> findFailDetailByStudent(@Param("studentId") Long studentId);
 
     /**
-     * 已有未处理预警的学生 ID，用于避免重复生成。
+     * 已有的预警判重键，用于避免重复生成。
+     * 列：{@code studentId} / {@code failCount}（可能为 NULL）/ {@code status}。
+     *
+     * <p><b>2026-09-30 改</b>：从前是 {@code SELECT DISTINCT student_id ... WHERE status = 0}，
+     * 于是"把一条预警处理掉"就等于"给这名学生开了绿灯"—— 下一轮扫描只要他挂科门数仍 &gt; 0
+     * 就再插一条新的（新 id、status=0），页面上同一个人同时挂着"已处理"和"待处理"。
+     *
+     * <p>现在**不看 status**、看的是「学生 + 挂科门数」这对键：同一个问题只报一次，
+     * 挂科门数真的变了（变严重/变轻）才会再生成一条。
      */
-    @Select("SELECT DISTINCT student_id FROM academic_warning WHERE status = 0")
-    List<Long> findExistingWarningStudentIds();
+    @Select("SELECT student_id AS studentId, fail_count AS failCount, status "
+          + "  FROM academic_warning")
+    List<Map<String, Object>> findExistingWarningKeys();
 }
