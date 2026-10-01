@@ -109,11 +109,13 @@ class ApiClient {
     // `assistance_plans.student_id` 存的就是 profile id。传 users.id 会静默返回空数组。
     // （对比：`/assistance-plans/{i}` 同一份数据却传 users.id。同名不同源，务必看清。）
     getEvaluations: (profileId) => this._get(`/students/evaluations/${profileId}/list`),
-    // ⚠️ 提交体只认四个键，名字写错会被**静默丢弃**：
-    //   { planId, counselorId, score, content }
-    // 评分叫 `score` 不叫 rating；**没有** studentId —— 学生身份靠 planId 反查关联。
-    // （申诉那边同族的 description 静默丢弃已于 2026-09-30 修：score_appeals 加了列、
-    //   submitAppeal 真写并回读；评价这条还在，本方法未动。）
+    // ⚠️ 提交体认这些键：{ planId, counselorId, score, content, effectiveness, id }
+    //   （`rating` / `feedback` 是 `score` / `content` 的**兼容别名**，新代码别用。）
+    // 评分**推荐**叫 `score`；叫 `rating` 现在也能落库，但那是给旧页面留的别名。
+    // **没有** studentId —— 学生身份靠 planId 反查关联。
+    // ⚠️ 这条注释在 2026-10-01 更正过一次：原文写"只认四个键、评价这条还没修"，
+    //   而 `StudentServiceImpl.submitEvaluation` 早在 commit a720674 就收齐了别名、
+    //   对不认识的 key 打 WARN、带 `id` 走更新而不是插第二条、写完回读。注释比代码旧了。
     submitEvaluation: (data) => this._post('/students/evaluations/submit', data),
     // 设置：走 /users/{uid}/settings。
     // `/students/settings/{uid}` 2026-09-30 之前是纯桩（PUT 直接 `return {success:true}`
