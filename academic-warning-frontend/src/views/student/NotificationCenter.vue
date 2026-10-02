@@ -129,6 +129,7 @@
 
 <script>
 import { studentAPI } from '@/api'
+import { subscribeMyMessages, unsubscribeMyMessages } from '@/utils/realtimeMessages'
 
 // 订阅设置的 9 个键，顺序与后端 `StudentServiceImpl.SUBSCRIPTION_KEYS` 一致。
 // 页面里一律用**布尔**（el-checkbox 只认 `modelValue === trueValue`），
@@ -171,8 +172,25 @@ export default {
   },
   mounted() {
     this.init()
+    // 2026-10-02（W3.2）：订阅自己的实时消息。
+    // 服务端在「辅导员发通知」「管理员发广播」「预警生成」时会
+    // `convertAndSendToUser(userId, "/queue/messages", …)`，收不到时页面只能靠
+    // 手动刷新 —— 这一句就是让"已打开的页面立刻收到"成立的那一半。
+    subscribeMyMessages(this.onRealtimeMessage)
+  },
+  beforeUnmount() {
+    unsubscribeMyMessages()
   },
   methods: {
+    /** 收到实时消息：刷新未读数与列表，并提示。 */
+    async onRealtimeMessage(payload) {
+      const content = payload && (payload.content || payload.title)
+      this.$message.success(content ? `收到新消息：${content}` : '收到新消息')
+      await this.loadUnreadCount()
+      await this.loadUnreadNotifications()
+      await this.loadAllNotifications()
+    },
+
     async init() {
       this.loading = true
       try {

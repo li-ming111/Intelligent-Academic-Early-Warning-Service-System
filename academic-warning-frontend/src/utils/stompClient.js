@@ -7,7 +7,11 @@ class StompClient {
     this.maxReconnectAttempts = 5
     this.reconnectDelay = 3000
     this.baseUrl = window.location.host
-    this.wsUrl = `ws://${this.baseUrl}/ws`
+    // 2026-10-02（W3.2）：原来恒用 `ws://`。页面走 https 时浏览器会**拒绝**把
+    // 明文 ws 升级请求发出去（混合内容），控制台只留一行 SecurityError，
+    // 表现同样是"推送收不到"。按当前页面协议选 ws / wss。
+    const wsProtocol = window.location.protocol === 'https:' ? 'wss' : 'ws'
+    this.wsUrl = `${wsProtocol}://${this.baseUrl}/ws`
     this.reconnectTimer = null
     this.manualDisconnect = false
     this.connectionError = null
@@ -73,11 +77,20 @@ class StompClient {
           this.reconnectAttempts = 0
           this.connectionError = null
           
+          // 断线重连后把已有订阅补回来。
+          // ⚠️ 2026-10-02（W3.2）：`this.subscriptions[topic]` 存的是
+          // `{ callback, subscription }` 这个**对象**，不是回调本身 —— 原来直接把
+          // 它当 callback 传给 `handleMessage`，于是重连之后每收到一条消息都会
+          // `callback(parsedBody)` → "callback is not a function"，
+          // 表现是"刚连上时能收，掉线重连后再也收不到"。必须取 `.callback`。
+          // 同时把新的 subscription 写回去，否则旧的那条只会在内存里越积越多。
           Object.keys(this.subscriptions).forEach((topic) => {
-            const callback = this.subscriptions[topic]
-            this.client.subscribe(topic, (message) => {
+            const entry = this.subscriptions[topic]
+            const callback = typeof entry === 'function' ? entry : entry.callback
+            const subscription = this.client.subscribe(topic, (message) => {
               this.handleMessage(topic, message, callback)
             })
+            this.subscriptions[topic] = { callback, subscription }
             console.log('[STOMP] 重新订阅:', topic)
           })
           

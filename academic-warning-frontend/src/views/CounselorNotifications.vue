@@ -75,9 +75,10 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { counselorAPI } from '@/api/index'
+import { subscribeMyMessages, unsubscribeMyMessages } from '@/utils/realtimeMessages'
 
 const typeOptions = [
   { value: 'warning', label: '预警通知' },
@@ -99,7 +100,22 @@ const getCounselorId = () => {
 
 const typeLabel = (v) => (typeOptions.find(t => t.value === v) || {}).label || v
 
-onMounted(loadHistory)
+onMounted(() => {
+  loadHistory()
+  // 2026-10-02（W3.2）：辅导员也会**收**消息（例如学生提交申诉后的回执），
+  // 订阅自己的队列，收到即刷新发送历史并提示。
+  subscribeMyMessages(onRealtimeMessage)
+})
+
+onUnmounted(() => {
+  unsubscribeMyMessages()
+})
+
+async function onRealtimeMessage(payload) {
+  const content = payload && (payload.content || payload.title)
+  ElMessage.success(content ? `收到新消息：${content}` : '收到新消息')
+  await loadHistory()
+}
 
 async function loadHistory() {
   try {

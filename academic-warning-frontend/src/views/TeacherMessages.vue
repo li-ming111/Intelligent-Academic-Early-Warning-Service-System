@@ -90,10 +90,11 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Search } from '@element-plus/icons-vue'
 import { teacherAPI } from '@/api/index'
+import { subscribeMyMessages, unsubscribeMyMessages } from '@/utils/realtimeMessages'
 
 const messages = ref([])
 const unreadCount = ref(0)
@@ -147,7 +148,21 @@ function typeCls(t) {
 onMounted(async () => {
   await loadMessages()
   await loadUnread()
+  // 2026-10-02（W3.2）：订阅自己的实时消息，收到即刷新（原来只有管理员消息页在订）
+  subscribeMyMessages(onRealtimeMessage)
 })
+
+onUnmounted(() => {
+  unsubscribeMyMessages()
+})
+
+/** 收到实时消息：刷新列表与未读数。 */
+async function onRealtimeMessage(payload) {
+  const content = payload && (payload.content || payload.title)
+  ElMessage.success(content ? `收到新消息：${content}` : '收到新消息')
+  await loadMessages()
+  await loadUnread()
+}
 
 async function loadMessages() {
   loading.value = true

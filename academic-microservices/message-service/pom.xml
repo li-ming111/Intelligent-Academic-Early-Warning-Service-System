@@ -97,6 +97,26 @@
             <groupId>com.academic</groupId>
             <artifactId>academic-common</artifactId>
         </dependency>
+
+        <!-- JWT：WebSocket 的 CONNECT 帧要验票（2026-10-02 W3.2）。
+             浏览器**没法**给 WebSocket 握手设自定义 HTTP 头，所以网关那套
+             「Authorization → 注入 X-User-Id」在 /ws 上根本走不通；身份只能从
+             STOMP CONNECT 帧里取（客户端 connectHeaders 里已经带着了）。
+             版本由父 pom 的 dependencyManagement 管，与 auth-service 同一份。 -->
+        <dependency>
+            <groupId>io.jsonwebtoken</groupId>
+            <artifactId>jjwt-api</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.jsonwebtoken</groupId>
+            <artifactId>jjwt-impl</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.jsonwebtoken</groupId>
+            <artifactId>jjwt-jackson</artifactId>
+            <scope>runtime</scope>
+        </dependency>
     </dependencies>
 
     <build>

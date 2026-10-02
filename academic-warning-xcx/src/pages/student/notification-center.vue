@@ -90,8 +90,9 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { studentAPI } from '@/services/api.js'
+import { subscribeMyMessages, unsubscribeMyMessages } from '@/utils/stompClient.js'
 import { useUser } from '@/composables/useUser.js'
 import { roleThemeStyle } from '@/composables/useRoleTheme.js'
 import { formatDate } from '@/utils/format.js'
@@ -216,7 +217,23 @@ async function doDelete(n) {
   }
 }
 
-onMounted(load)
+onMounted(() => {
+  load()
+  // 2026-10-02（W3.2）：订阅自己的实时消息。服务端在辅导员发通知 / 管理员发广播 /
+  // 预警生成时 `convertAndSendToUser(userId, "/queue/messages", …)`，
+  // 订阅上之后页面不用手动刷新就能看到新通知。
+  subscribeMyMessages(onRealtimeMessage)
+})
+
+onUnmounted(() => {
+  unsubscribeMyMessages()
+})
+
+async function onRealtimeMessage(payload) {
+  const content = payload && (payload.content || payload.title)
+  if (content) uni.showToast({ title: `收到新消息：${content}`, icon: 'none' })
+  await load()
+}
 
 async function load() {
   loading.value = true

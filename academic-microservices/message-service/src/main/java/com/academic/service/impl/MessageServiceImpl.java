@@ -11,6 +11,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
+import org.springframework.messaging.simp.user.SimpUserRegistry;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -29,6 +30,14 @@ public class MessageServiceImpl implements MessageService {
 
     @Autowired
     private SimpMessagingTemplate messagingTemplate;
+
+    /**
+     * 在线会话注册表（由 {@code @EnableWebSocketMessageBroker} 提供）。
+     * {@code required = false}：只有 WebSocket 配置被加载时才有这个 bean，
+     * 缺了不影响发消息本身，只是没法判断对方在不在线。
+     */
+    @Autowired(required = false)
+    private SimpUserRegistry simpUserRegistry;
 
     @Override
     public Message getById(Long id) {
@@ -232,35 +241,54 @@ public class MessageServiceImpl implements MessageService {
         }
     }
 
+    /**
+     * 定向发送并实时推送。
+     *
+     * <p>2026-10-02（W3.2）：{@code senderId} 改成由调用方传入。
+     * 原来这里写死 {@code 28L}（发件人、发件人姓名都是 28 号用户），
+     * 于是管理员发出的每一条定向消息在库里、在学生通知中心里都署名 28 号用户 ——
+     * 而且**不报错**，从症状上完全看不出来。
+     */
     @Override
-    public void sendMessage(Long userId, String content, String type) {
+    public void sendMessage(Long senderId, Long userId, String content, String type) {
         Message message = new Message();
-        message.setSenderId(28L);
+        message.setSenderId(senderId);
         message.setReceiverId(userId);
         message.setContent(content);
         message.setType(type != null ? Integer.parseInt(type) : 0);
         message.setStatus(0);
         message.setCreatedAt(LocalDateTime.now());
         messageMapper.insert(message);
-        
-        // 填充发送者名称
-        User sender = userMapper.selectById(28L);
-        if (sender != null) {
-            message.setSenderName(sender.getName());
-        } else {
-            message.setSenderName("系统");
-        }
-        
+
+        // 填充发送者名称（按**真实的**发件人查，而不是写死的那个）
+        User sender = senderId == null ? null : userMapper.selectById(senderId);
+        message.setSenderName(sender != null ? sender.getName() : "系统");
+
+        // ⚠️ 这一句要求会话有 Principal —— 见 `JwtStompAuthInterceptor`。
+        // 没有它时 convertAndSendToUser 在 SimpUserRegistry 里找不到收件人，
+        // **一条都不发、也不报错** —— 所以「发出去没报错」不等于「对方收到了」。
+        // 下面先查 `SimpUserRegistry` 判断对方在不在线，日志据实说，
+        // 免得演示时看着「推送成功」却等不到消息、反过来怀疑链路。
+        boolean online = isOnline(userId);
         try {
             messagingTemplate.convertAndSendToUser(
                     String.valueOf(userId),
                     "/queue/messages",
                     message
             );
-            log.info("实时消息推送成功: userId={}, content={}", userId, content);
+            if (online) {
+                log.info("实时消息已推送给在线用户: userId={}, senderId={}", userId, senderId);
+            } else {
+                log.info("收件人不在线（无 WebSocket 会话），消息已落库、未实时推送: userId={}", userId);
+            }
         } catch (Exception e) {
             log.warn("实时消息推送失败: userId={}, error={}", userId, e.getMessage());
         }
+    }
+
+    /** 该 userId 当前有没有活的 WebSocket 会话（没有就不该谎报「推送成功」）。 */
+    private boolean isOnline(Long userId) {
+        return simpUserRegistry != null && simpUserRegistry.getUser(String.valueOf(userId)) != null;
     }
 
     // deleteMessagesByUserId(Long) 已删（2026-10-01）：唯一调用方

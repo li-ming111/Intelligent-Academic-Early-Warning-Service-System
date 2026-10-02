@@ -163,16 +163,17 @@ public class MessageController {
     }
 
     @PostMapping("/send")
-    public ApiResponse<String> sendMessage(@RequestBody Map<String, Object> payload) {
+    public ApiResponse<String> sendMessage(@RequestBody Map<String, Object> payload,
+                                           HttpServletRequest request) {
         Long userId = null;
         if (payload.containsKey("userId")) {
             userId = ((Number) payload.get("userId")).longValue();
         } else if (payload.containsKey("user_id")) {
             userId = ((Number) payload.get("user_id")).longValue();
         }
-        
+
         String content = (String) payload.get("content");
-        
+
         Integer typeInt = null;
         if (payload.containsKey("type")) {
             Object typeObj = payload.get("type");
@@ -182,10 +183,24 @@ public class MessageController {
                 typeInt = Integer.parseInt((String) typeObj);
             }
         }
-        
+
         String typeStr = typeInt != null ? String.valueOf(typeInt) : "0";
-        
-        messageService.sendMessage(userId, content, typeStr);
+
+        // 2026-10-02（W3.2）：发件人由**身份头**决定，不再恒为 28。
+        //
+        // 原来这里调用的是 `sendMessage(userId, content, type)`，而实现里写死
+        // `message.setSenderId(28L)` —— 于是管理员发的每一条定向消息，在库里、
+        // 在学生的通知中心里，发件人都是「28 号用户」。它不报错（28 确实存在，
+        // 外键过得去），所以从症状上完全看不出来。
+        //
+        // 取不到身份就**如实报错**，不要塞一个假的发件人：`messages.sender_id`
+        // 有指向 `users.id` 的真外键，塞 0/NULL 要么 ERROR 1452、要么留一行无主消息。
+        Long senderId = getRequestUserId(request);
+        if (senderId == null) {
+            return ApiResponse.badRequest("无法确定发送人：请求缺少 X-User-Id（网关或调用方需注入身份）");
+        }
+
+        messageService.sendMessage(senderId, userId, content, typeStr);
         return ApiResponse.success("消息发送成功");
     }
 

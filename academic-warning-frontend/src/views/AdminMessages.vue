@@ -300,6 +300,7 @@ import { adminAPI } from '@/api/index'
 import apiClient from '@/api/client'
 import { ElMessage } from 'element-plus'
 import { Delete, WarningFilled } from '@element-plus/icons-vue'
+import { subscribeMyMessages, unsubscribeMyMessages } from '@/utils/realtimeMessages'
 
 // 数据
 const messages = ref([])
@@ -353,22 +354,14 @@ const filteredTasks = computed(() => {
 // 结果翻到第 2 页永远是空的，而卡片上「共 N 条」写的是**已取回的那一页的长度**，
 // 不是库里的总数。现在总数用服务端回的 total，翻页由服务端做。
 
-// 订阅实时消息
+// 订阅实时消息（走共用工具，订阅地址见 utils/realtimeMessages.js 的说明：
+// 必须是 `/user/queue/messages`，写成 `/user/{id}/queue/messages` 会**静默收不到**）
 const subscribeToMessages = async () => {
-  const userId = localStorage.getItem('userId')
-  if (!userId) return
-  
-  const topic = `/user/${userId}/queue/messages`
-  try {
-    const { default: stompClient } = await import('@/utils/stompClient')
-    await stompClient.subscribe(topic, (message) => {
-      console.log('[AdminMessages] 收到实时消息:', message)
-      handleNewMessage(message)
-    })
-    console.log(`[AdminMessages] 已订阅主题: ${topic}`)
-  } catch (error) {
-    console.error('[AdminMessages] 订阅失败:', error)
-  }
+  const topic = await subscribeMyMessages((message) => {
+    console.log('[AdminMessages] 收到实时消息:', message)
+    handleNewMessage(message)
+  })
+  if (topic) console.log(`[AdminMessages] 已订阅主题: ${topic}`)
 }
 
 // 消息类型文案。`messages.type` 是唯一存在的等级类字段，取值只有三处写入方：
@@ -421,18 +414,8 @@ onMounted(async () => {
   subscribeToMessages()
 })
 
-onUnmounted(async () => {
-  const userId = localStorage.getItem('userId')
-  if (userId) {
-    const topic = `/user/${userId}/queue/messages`
-    try {
-      const { default: stompClient } = await import('@/utils/stompClient')
-      stompClient.unsubscribe(topic)
-      console.log(`[AdminMessages] 已取消订阅主题: ${topic}`)
-    } catch (error) {
-      console.error('[AdminMessages] 取消订阅失败:', error)
-    }
-  }
+onUnmounted(() => {
+  unsubscribeMyMessages()
 })
 
 // 加载用户列表

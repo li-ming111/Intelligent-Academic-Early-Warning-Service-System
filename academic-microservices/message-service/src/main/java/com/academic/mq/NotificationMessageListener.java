@@ -5,8 +5,10 @@ import com.rabbitmq.client.Channel;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
 import org.springframework.amqp.support.AmqpHeaders;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.messaging.handler.annotation.Header;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
+import org.springframework.messaging.simp.user.SimpUserRegistry;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
@@ -46,9 +48,16 @@ import java.util.Map;
  * 于是在日志里反复出现同一条通知。所以下面每个出口都要显式 ack 或 nack。
  *
  * <h3>推送目标</h3>
- * {@code /user/{userId}/queue/messages} —— 与
- * {@code MessageServiceImpl.sendMessage} 用的是同一个目的地，客户端只需订阅一次
- * （PC 端 {@code AdminMessages.vue} 已经在订，学生/教师/辅导员的通知中心同理）。
+ * 服务端调用 {@code convertAndSendToUser(userId, "/queue/messages", …)}，
+ * 与 {@code MessageServiceImpl.sendMessage} 是同一个目的地，客户端只需订阅一次。
+ *
+ * <p>⚠️ 客户端要订阅的是 <b>{@code /user/queue/messages}</b>，**不是**
+ * {@code /user/{userId}/queue/messages}（2026-10-02 实测）：Spring 解析**订阅**时只切掉
+ * {@code /user} 这一段前缀，写成带 id 的那种会得到
+ * {@code /{userId}/queue/messages-user{sessionId}}，与推送端算出的
+ * {@code /queue/messages-user{sessionId}} 对不上 —— 连得上、订阅得上、日志还打「推送成功」，
+ * 就是一条都收不到。四个订阅方（PC 三个通知页 + 小程序通知中心）统一走
+ * {@code utils/realtimeMessages.js} / {@code utils/stompClient.js} 里的同一个常量。
  */
 @Slf4j
 @Component
@@ -58,6 +67,13 @@ public class NotificationMessageListener {
     public static final String QUEUE = "message.notification.queue";
 
     private final SimpMessagingTemplate messagingTemplate;
+
+    /**
+     * 在线会话注册表（由 {@code @EnableWebSocketMessageBroker} 提供）。
+     * {@code required = false}：缺了不影响推送本身，只是没法判断收件人在不在线。
+     */
+    @Autowired(required = false)
+    private SimpUserRegistry simpUserRegistry;
 
     public NotificationMessageListener(SimpMessagingTemplate messagingTemplate) {
         this.messagingTemplate = messagingTemplate;
@@ -83,8 +99,17 @@ public class NotificationMessageListener {
             push.put("warningId", payload.get("warningId"));
             push.put("timestamp", System.currentTimeMillis());
 
+            // 「没报错」≠「对方收到了」：convertAndSendToUser 在对方没有会话时是静默 no-op，
+            // 所以先查在线注册表，日志据实说（通知本身已经落库，功能不受影响）。
+            boolean online = simpUserRegistry != null
+                    && simpUserRegistry.getUser(String.valueOf(userId)) != null;
             messagingTemplate.convertAndSendToUser(String.valueOf(userId), "/queue/messages", push);
-            log.info("MQ 通知已实时推送给 userId={}（warningId={}）", userId, payload.get("warningId"));
+            if (online) {
+                log.info("MQ 通知已实时推送给在线用户 userId={}（warningId={}）", userId, payload.get("warningId"));
+            } else {
+                log.info("收件人不在线（无 WebSocket 会话），通知已落库、未实时推送: userId={}（warningId={}）",
+                        userId, payload.get("warningId"));
+            }
             channel.basicAck(deliveryTag, false);
         } catch (Exception e) {
             // 不 requeue：通知在业务侧已经落库，重投只会无限循环刷日志。

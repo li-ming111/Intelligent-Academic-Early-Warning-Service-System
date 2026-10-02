@@ -10,8 +10,9 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
-
-import java.io.IOException;
+import org.springframework.messaging.simp.user.SimpUser;
+import org.springframework.messaging.simp.user.SimpUserRegistry;
+import org.springframework.test.util.ReflectionTestUtils;import java.io.IOException;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -28,10 +29,15 @@ import static org.mockito.Mockito.*;
  * 发出去的消息只会堆在队列里。文档写的那条「业务事件 → RabbitMQ → WebSocket 实时推送」
  * 只有前半截。
  *
- * <p><b>这里钉五件事</b>：
- * <br>① 推送目的地是 {@code /user/{userId}/queue/messages} —— 与
- *     {@code MessageServiceImpl.sendMessage} **同一个目的地**，客户端只需订阅一次；
- *     写错这里不会报错，只会"推送成功但页面收不到"，所以必须钉死；
+ * <p><b>这里钉六件事</b>：
+ * <br>① 服务端推送到 {@code convertAndSendToUser(userId, "/queue/messages", …)} —— 与
+ *     {@code MessageServiceImpl.sendMessage} **同一个目的地**，客户端只需订阅一次。
+ *     ⚠️ **客户端要订的是 {@code /user/queue/messages}**，不是
+ *     {@code /user/{userId}/queue/messages}（2026-10-02 实测：写成后者连得上、
+ *     订阅得上、服务端还打「推送成功」，就是一条收不到）；
+ * <br>①′ 「在线判断」只改日志、**不改变投递**：{@code convertAndSendToUser} 在对方没有
+ *     会话时是静默 no-op，所以要查 {@code SimpUserRegistry} 才能说实话；但**不能**因此把
+ *     推送变成「在线才发」—— 注册表登记有延迟，刚连上的会话会被漏掉；
  * <br>② 成功要 **ack**。容器是 {@code AcknowledgeMode.MANUAL}，不 ack 的消息会一直挂在
  *     unacked 里、连接一断就重投，症状是日志里反复出现同一条通知；
  * <br>③ 没有收件人的消息要**丢弃并 ack**，不是 nack —— 重投多少次都还是没有收件人；
@@ -115,6 +121,25 @@ class NotificationMessageListenerTest {
 
         verify(channel).basicNack(45L, false, false);
         verify(channel, never()).basicAck(anyLong(), anyBoolean());
+    }
+
+    @Test
+    @DisplayName("在线与否都照推、照 ack —— 在线判断只影响日志，不能变成投递闸门")
+    void onlineCheckIsDiagnosticOnly() throws IOException {
+        // 手工注入：`@InjectMocks` 走了构造器注入之后就不再注入剩下的字段了
+        SimpUserRegistry registry = mock(SimpUserRegistry.class);
+        ReflectionTestUtils.setField(listener, "simpUserRegistry", registry);
+
+        // 在线
+        when(registry.getUser("56")).thenReturn(mock(SimpUser.class));
+        listener.onNotification(payload(56L), channel, 46L);
+        verify(messagingTemplate).convertAndSendToUser(eq("56"), eq("/queue/messages"), any());
+        verify(channel).basicAck(46L, false);
+
+        // 不在线（注册表里查不到，默认就返回 null）—— 照样推、照样 ack
+        listener.onNotification(payload(57L), channel, 47L);
+        verify(messagingTemplate).convertAndSendToUser(eq("57"), eq("/queue/messages"), any());
+        verify(channel).basicAck(47L, false);
     }
 
     @Test
