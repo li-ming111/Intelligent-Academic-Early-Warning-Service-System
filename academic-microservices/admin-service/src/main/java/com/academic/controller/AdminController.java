@@ -35,6 +35,7 @@ import com.academic.mapper.ScoreRecordMapper;
 import com.academic.mapper.AcademicWarningMapper;
 import com.academic.mapper.ScoreStatMapper;
 import com.academic.mapper.UserMapper;
+import com.academic.mapper.AdminTaskMapper;
 import com.academic.exception.ResourceNotFoundException;
 
 import java.math.BigDecimal;
@@ -88,6 +89,10 @@ public class AdminController {
 
     @Autowired
     private com.academic.mapper.AuditLogMapper auditLogMapper;
+
+    /** 管理端任务（W1.11）。`/admin/tasks/*` 原来是整组桩，现在落到 `admin_tasks` 表上。 */
+    @Autowired
+    private AdminTaskMapper adminTaskMapper;
 
     @Autowired
     private UserService userService;
@@ -3034,31 +3039,38 @@ public class AdminController {
     }
 
     // ============= 任务管理接口 =============
+    //
+    // ⚠️ 2026-10-02（W1.11）：这四个端点原来是**整组桩** ——
+    //   · `getTasksList` 里写死 `List<Map<String,Object>> tasks = new ArrayList<>();`
+    //     （自带注释"任务列表（目前为空，后续可扩展）"）⇒ 永远回空列表；
+    //   · 其余三个只 `log.info` 一行就回 "…successfully"，**一个字节都不落库**。
+    //   而 PC `AdminMessages.vue` 的整个「任务管理」tab（创建表单 + 四个统计卡 +
+    //   状态筛选 + 行内改状态 + 单条/批量删除 + 分页）**早就写好也接对了**，
+    //   只是对着一个永远空的列表渲染 —— 于是页面看着"能用"，点了什么也不会发生。
+    //   现在落到 `admin_tasks` 表上（迁移 `db_backups/admin_tasks_20261002_apply.sql`）。
+
+    /** 任务状态的合法取值，与页面三个筛选按钮 / 行内下拉一一对应。 */
+    private static final Set<String> TASK_STATUSES = Set.of("pending", "in_progress", "completed");
+    /** 优先级的合法取值，与页面三个标签一一对应。 */
+    private static final Set<String> TASK_PRIORITIES = Set.of("low", "medium", "high");
+
     @GetMapping("/tasks/list")
     public ApiResponse<Map<String, Object>> getTasksList(
             @RequestParam(defaultValue = "1") Integer page,
             @RequestParam(defaultValue = "20") Integer size,
             @RequestParam(required = false) String status) {
         try {
-            // 任务列表（目前为空，后续可扩展）
-            List<Map<String, Object>> tasks = new ArrayList<>();
-            
-            // 过滤状态
-            if (status != null && !status.isEmpty()) {
-                final String filterStatus = status;
-                tasks = tasks.stream()
-                    .filter(task -> filterStatus.equals(String.valueOf(task.get("status"))))
-                    .collect(java.util.stream.Collectors.toList());
-            }
-            
-            int total = tasks.size();
-            int start = (page - 1) * size;
-            int end = Math.min(start + size, total);
-            List<?> pageItems = start < total ? tasks.subList(start, end) : List.of();
-            
+            int safePage = page == null || page < 1 ? 1 : page;
+            int safeSize = size == null || size < 1 ? 20 : Math.min(size, 200);
+            String filter = (status == null || status.isBlank() || "all".equals(status)) ? null : status;
+
+            long total = adminTaskMapper.countWithFilter(filter);
+            List<Map<String, Object>> items =
+                    adminTaskMapper.selectPage(filter, (safePage - 1) * safeSize, safeSize);
+
             Map<String, Object> result = new HashMap<>();
             result.put("total", total);
-            result.put("items", pageItems);
+            result.put("items", items);
             return ApiResponse.success(result);
         } catch (Exception e) {
             log.error("Get tasks list failed: {}", e.getMessage());
@@ -3067,10 +3079,39 @@ public class AdminController {
     }
 
     @PostMapping("/tasks/create")
-    public ApiResponse<String> createTask(@RequestBody Map<String, Object> taskData) {
+    public ApiResponse<Map<String, Object>> createTask(@RequestBody Map<String, Object> taskData) {
         try {
-            log.info("Create task: {}", taskData);
-            return ApiResponse.success("Task created successfully");
+            String title = str(taskData.get("title"));
+            if (title == null || title.isBlank()) {
+                // 页面自己也挡了一道，但接口不能只靠前端挡（小程序/curl 也打得到）
+                return ApiResponse.error("任务标题不能为空");
+            }
+            String priority = str(taskData.get("priority"));
+            if (priority == null || priority.isBlank()) {
+                priority = "medium";
+            }
+            if (!TASK_PRIORITIES.contains(priority)) {
+                return ApiResponse.error("优先级只能是 low / medium / high，收到: " + priority);
+            }
+
+            AdminTask task = new AdminTask();
+            task.setTitle(title.length() > 200 ? title.substring(0, 200) : title);
+            task.setDescription(str(taskData.get("description")));
+            task.setPriority(priority);
+            task.setStatus("pending"); // 新建的一律是"待处理"，与页面上「待处理」卡片对得上
+            // created_by 有指向 users.id 的真外键 ⇒ 用 AuditLogService 那份"回查 users"
+            // 的解析（挡伪造/已删用户），解析不出来就写 NULL，**不编一个 0**
+            task.setCreatedBy(auditLogService.currentActorId());
+            task.setCreatedAt(LocalDateTime.now());
+            task.setUpdatedAt(LocalDateTime.now());
+            adminTaskMapper.insert(task);
+
+            auditLogService.record("CREATE", "ADMIN_TASK", task.getId(), "创建任务「" + task.getTitle() + "」");
+
+            Map<String, Object> result = new HashMap<>();
+            result.put("id", task.getId());
+            result.put("title", task.getTitle());
+            return ApiResponse.success(result);
         } catch (Exception e) {
             log.error("Create task failed: {}", e.getMessage());
             return ApiResponse.error(e.getMessage());
@@ -3078,12 +3119,26 @@ public class AdminController {
     }
 
     @PostMapping("/tasks/{taskId}/status")
-    public ApiResponse<String> updateTaskStatus(
+    public ApiResponse<Map<String, Object>> updateTaskStatus(
             @PathVariable Long taskId,
             @RequestBody Map<String, Object> statusData) {
         try {
-            log.info("Update task status: taskId={}, status={}", taskId, statusData.get("status"));
-            return ApiResponse.success("Task status updated successfully");
+            String status = str(statusData.get("status"));
+            if (status == null || !TASK_STATUSES.contains(status)) {
+                return ApiResponse.error("状态只能是 pending / in_progress / completed，收到: " + status);
+            }
+            // 用受影响行数判定，不用"没抛异常"判定：改一个不存在的 id 时
+            // MyBatis-Plus 的 updateById 同样会"成功"，只有行数能区分。
+            int rows = adminTaskMapper.updateStatus(taskId, status);
+            if (rows == 0) {
+                return ApiResponse.error("任务不存在: " + taskId);
+            }
+            auditLogService.record("UPDATE", "ADMIN_TASK", taskId, "任务状态改为 " + status);
+
+            Map<String, Object> result = new HashMap<>();
+            result.put("id", taskId);
+            result.put("status", status);
+            return ApiResponse.success(result);
         } catch (Exception e) {
             log.error("Update task status failed: {}", e.getMessage());
             return ApiResponse.error(e.getMessage());
@@ -3093,12 +3148,21 @@ public class AdminController {
     @DeleteMapping("/tasks/{taskId}")
     public ApiResponse<String> deleteTask(@PathVariable Long taskId) {
         try {
-            log.info("Delete task: {}", taskId);
-            return ApiResponse.success("Task deleted successfully");
+            int rows = adminTaskMapper.deleteById(taskId);
+            if (rows == 0) {
+                return ApiResponse.error("任务不存在: " + taskId);
+            }
+            auditLogService.record("DELETE", "ADMIN_TASK", taskId, "删除任务 id=" + taskId);
+            return ApiResponse.success("任务已删除");
         } catch (Exception e) {
             log.error("Delete task failed: {}", e.getMessage());
             return ApiResponse.error(e.getMessage());
         }
+    }
+
+    /** 请求体里取字符串（前端可能传 null / 数字 / 带空格）。 */
+    private static String str(Object v) {
+        return v == null ? null : String.valueOf(v).trim();
     }
 
     // ============= 班级管理申请接口 =============

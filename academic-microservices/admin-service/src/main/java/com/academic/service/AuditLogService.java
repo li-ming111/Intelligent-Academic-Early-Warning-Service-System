@@ -72,6 +72,18 @@ public class AuditLogService {
     }
 
     /**
+     * 当前操作者的 {@code users.id}，解析不出来返回 {@code null}。
+     *
+     * <p>W1.11（2026-10-02）起对外暴露：{@code admin_tasks.created_by} 上有指向
+     * {@code users.id} 的**真外键**，写一个不存在的 id 会 {@code ERROR 1452}。
+     * 与其在 controller 里再抄一遍"回查 users 挡住伪造/已删用户"，不如就用这里
+     * 这一份 —— 两处各写一套必然漂移。
+     */
+    public Long currentActorId() {
+        return resolveActorId(currentRequest());
+    }
+
+    /**
      * 解析操作者 {@code users.id}；解析不出来返回 {@code null}（该列可空）。
      *
      * <p>先按 {@code X-User-Id} 回查（挡住伪造/已删用户导致的 1452），再退回按

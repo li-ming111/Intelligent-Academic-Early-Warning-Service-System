@@ -903,3 +903,27 @@ CREATE TABLE IF NOT EXISTS `benchmark_analysis` (
     KEY `idx_benchmark_analysis_major_id` (`major_id`),
     CONSTRAINT `fk_benchmark_analysis_student_id` FOREIGN KEY (`student_id`) REFERENCES `student_profile` (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ==================== 管理端任务（W1.11，2026-10-02） ====================
+--
+-- PC `AdminMessages.vue` 的「任务管理」tab（创建表单 + 四个统计卡 + 状态筛选 +
+-- 行内改状态 + 单条/批量删除 + 分页）一直写好了，而 `/admin/tasks/*` 四个端点
+-- 全是桩（列表写死空、其余只 log 就回 successfully）。这张表是它的真归宿。
+-- 迁移脚本：`db_backups/admin_tasks_20261002_apply.sql`（+ `_rollback.sql`）。
+-- ⚠️ `updated_at` 刻意不加 `ON UPDATE CURRENT_TIMESTAMP`（与本仓其余表一致），
+--    由 UPDATE 语句显式写。
+
+CREATE TABLE IF NOT EXISTS `admin_tasks` (
+    `id` bigint NOT NULL AUTO_INCREMENT,
+    `title` varchar(200) NOT NULL,
+    `description` text,
+    `priority` varchar(20) NOT NULL DEFAULT 'medium',
+    `status` varchar(20) NOT NULL DEFAULT 'pending',
+    `created_by` bigint DEFAULT NULL,
+    `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+    `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    KEY `idx_admin_tasks_status` (`status`),
+    KEY `idx_admin_tasks_created_by` (`created_by`),
+    CONSTRAINT `fk_admin_tasks_created_by` FOREIGN KEY (`created_by`) REFERENCES `users` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

@@ -338,6 +338,23 @@ Gateway (8076)
 | `POST /admin/backup/{backupId}/restore` | 恢复**演练**：新建临时库灌一遍、数表数、再删掉临时库；**绝不覆盖演示库** |
 | `DELETE /admin/backup/{backupId}` | 删除一个备份文件（名字带路径穿越校验） |
 
+#### 3.5.8 任务管理
+
+对应 PC `AdminMessages.vue` 的「任务管理」tab（创建表单 / 四个统计卡 / 三个状态筛选 /
+行内改状态 / 单条与批量删除 / 分页）。落在 `admin_tasks` 表上。
+
+| 端点 | 说明 |
+|------|------|
+| `GET /admin/tasks/list` | 分页列表，回 `{total, items}`；`status` 可筛 `pending`/`in_progress`/`completed`（`all` 等同不过滤） |
+| `POST /admin/tasks/create` | 建任务。`title` 必填且截断到 200；`priority` 只收 `low`/`medium`/`high`（缺省 `medium`）；状态恒为 `pending` |
+| `POST /admin/tasks/{taskId}/status` | 只改状态。按**受影响行数**判成败 —— 改不存在的 id 回「任务不存在」 |
+| `DELETE /admin/tasks/{taskId}` | 删任务。同样按受影响行数判，删不存在的 id 回「任务不存在」 |
+
+> 2026-10-02（W1.11）之前这四个端点是**整组桩**：列表写死空 `ArrayList`，
+> 创建/改状态/删除只 `log.info` 一行就回 `"…successfully"`。前端早就接好了，
+> 对着永远空的列表渲染 ⇒ 页面看着"能用"，点什么都"成功"、什么都不发生。
+> `created_by` 有指向 `users.id` 的真外键，解析不出操作人时写 `NULL` 而非 0。
+
 ---
 
 ### 3.6 学业预警引擎 (Warning Service)

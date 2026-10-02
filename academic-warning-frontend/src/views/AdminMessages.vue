@@ -478,13 +478,15 @@ const loadMessages = async () => {
 }
 
 // 加载任务
-// ⚠️ 同上：`/admin/tasks/list` 也是 `{total, items}`，且服务端**写死返回空列表**
-// （"任务列表（目前为空，后续可扩展）"）。所以这里永远显示空 —— 但那是后端的真话，
-// 不是前端读错键导致的假空。改读 items，键名对上之后这个空才是有意义的。
+// 2026-10-02（W1.11）：后端已改成真查 `admin_tasks` 表（此前是写死空列表的桩，
+// 所以这里永远显示空 —— 那时这个空是后端的真话，不是前端读错键）。
+// 页面的筛选与分页都是**本地**做的（顶部三个按钮 + 本地 `filteredTasks`），
+// 所以这里一次取满服务端允许的上限（200），别用默认的 20 —— 否则第 21 条起
+// 本地分页和右上角「共 N 个任务」都会少算。
 const loadTasks = async () => {
   loading.value = true
   try {
-    const response = await adminAPI.getTasks()
+    const response = await adminAPI.getTasks(1, 200)
     tasks.value = (response && response.items) || []
   } catch (error) {
     ElMessage.error(error?.message ? `加载任务失败：${error.message}` : '加载任务失败')
@@ -645,12 +647,16 @@ const createTask = async () => {
 }
 
 // 更新任务状态
+// `@change` 触发时 `row.status` 已经被 v-model 改成新值了 —— 后端拒绝的话
+// 这个下拉会停在"改成功了"的样子上（比如那条任务已被别人删掉，后端回「任务不存在」）。
+// 所以失败时重新拉一次，让控件回到库里的真实状态，而不是留个假象。
 const updateTaskStatus = async (task) => {
   try {
     await adminAPI.updateTaskStatus(task.id, task.status)
     ElMessage.success('任务状态已更新')
   } catch (error) {
     ElMessage.error(error?.message ? `更新任务状态失败：${error.message}` : '更新任务状态失败')
+    await loadTasks()
   }
 }
 
