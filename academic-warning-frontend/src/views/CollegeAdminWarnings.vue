@@ -93,20 +93,24 @@ const warnCounts = computed(() => ({
 function levelLabel(l) { const v = Number(l) || 0; return v >= 3 ? '严重' : v == 2 ? '中度' : '轻度' }
 function fmtDate(t) { if (!t) return ''; try { return new Date(t).toLocaleDateString('zh-CN') } catch(e) { return String(t).substring(0,10) } }
 
+// 后端两个写接口都要「操作人」：它拿 userId 查出你的学院，再核对这条预警属不属于本院。
+// 少传就回 400「缺少操作人 userId」，传别人的 id 回 403。
+const myUserId = () => Number(localStorage.getItem('userId')) || null
+
 async function markProcessed(row) {
   try {
-    await collegeAdminAPI.processWarning({ id: row.id, status: 1 })
+    await collegeAdminAPI.processWarning(myUserId(), { id: row.id, status: 1 })
     row.status = 1
     ElMessage.success('已标记为已处理')
-  } catch (e) { ElMessage.error('操作失败') }
+  } catch (e) { ElMessage.error(e?.message || '操作失败') }
 }
 async function handleDelete(row) {
   try {
     await ElMessageBox.confirm('确定要删除该预警记录吗？此操作不可恢复。', '删除确认', { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' })
-    await collegeAdminAPI.deleteWarning(row.id)
+    await collegeAdminAPI.deleteWarning(myUserId(), row.id)
     warnings.value = warnings.value.filter(w => w.id !== row.id)
     ElMessage.success('已删除')
-  } catch (e) { if (e !== 'cancel') ElMessage.error('删除失败') }
+  } catch (e) { if (e !== 'cancel') ElMessage.error(e?.message || '删除失败') }
 }
 async function loadData() {
   const uid = localStorage.getItem('userId'); if (!uid) return

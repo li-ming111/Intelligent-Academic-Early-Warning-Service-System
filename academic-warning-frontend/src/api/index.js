@@ -13,9 +13,6 @@ export const authAPI = {
   getColleges: () => {
     return apiClient.get('/auth/colleges')
   },
-  getAllCourses: () => {
-    return apiClient.get('/auth/courses')
-  },
   getMajorsByCollege: (collegeId) => {
     return apiClient.get('/auth/majors', { params: { collegeId } })
   },
@@ -27,10 +24,15 @@ export const authAPI = {
   },
   registerCounselor: (data) => {
     return apiClient.post('/auth/register/counselor', data)
-  },
-  registerAdmin: (data) => {
-    return apiClient.post('/auth/register/admin', data)
   }
+  // 2026-10-02（W1.15）：删掉两个死封装。
+  //   · `registerAdmin` 打 `POST /auth/register/admin` —— 那个端点 2026-10-01 已按
+  //     「零调用方 = 删」删掉了（管理员建号只剩 `POST /users/add` 一条活路径）。
+  //     留着它等于仓库里挂着一个指向已删端点的名字，谁复制谁踩。
+  //   · `getAllCourses` 打 `GET /auth/courses` —— 白名单里有名、`AuthController` 里
+  //     **从来没有这个映射**，全仓零调用方（教师端课程页走的是
+  //     `teacherAPI.getAllCourses` → `/teachers/courses`，另一条路）。
+  //     不为它补一个没人用的端点，直接删。
 }
 
 export const studentAPI = {
@@ -1049,13 +1051,16 @@ export const collegeAdminAPI = {
   getCounselors: (userId) => apiClient.get(`/college-admin/counselors/${userId}`),
   getAssistance: (userId) => apiClient.get(`/college-admin/assistance/${userId}`),
   getTeacherDetail: (userId, teacherId) => apiClient.get(`/college-admin/teacher-detail/${userId}/${teacherId}`),
-  processWarning: (data) => apiClient.post('/college-admin/process-warning', data),
+  // 2026-10-02（W1.13）：这两个写接口原先**不收操作人**，后端也就无从判断这条预警属不属于
+  // 你的学院 —— 任何已认证用户拿任意 warningId 都能改状态、能删行。现在把 userId 带上，
+  // 后端按「预警 → 学生 → 班级 → 学院」校验归属，非本院一律拒绝。
+  processWarning: (userId, data) => apiClient.post('/college-admin/process-warning', { userId, ...data }),
   // 2026-10-01 第二十四轮：原来写的是 apiClient.del，而 axios 实例上**没有 del 这个方法**
   // （只有 get/post/put/patch/delete/head/options/request）⇒ 一点「删除预警」就抛
   // TypeError: apiClient.del is not a function，请求根本发不出去，页面只会弹「删除失败」。
   // 后端 DELETE /college-admin/delete-warning/{id} 一直是好的（CollegeAdminController），
   // 纯粹是这里少写一个 e。
-  deleteWarning: (warningId) => apiClient.delete(`/college-admin/delete-warning/${warningId}`),
+  deleteWarning: (userId, warningId) => apiClient.delete(`/college-admin/delete-warning/${userId}/${warningId}`),
   getClassStudents: (userId, classId) => apiClient.get(`/college-admin/class-students/${userId}/${classId}`),
   exportData: (userId, type) => apiClient.get(`/college-admin/export/${userId}?type=${type||'scores'}`),
   scoreQuery: (userId, params) => apiClient.get(`/college-admin/score-query/${userId}`, { params }),

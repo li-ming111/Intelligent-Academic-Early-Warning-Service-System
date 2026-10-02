@@ -92,7 +92,10 @@ Gateway (8076)
 - 登录验证码**服务端**校验，一次性消费（`CaptchaService`，Caffeine 进程内 TTL 5 分钟）
 - 前端路由守卫 + 后端双层拦截
 
-> **已删除的端点（不要再引用）**：`POST /auth/register/admin`（2026-10-01 删，零调用方且与 `/users/add` 重复）、`GET /auth/courses`（从来不存在，是小程序 `services/api.js` 里的幽灵封装，已删）。管理员建号只剩 `POST /users/add` 一条路径。
+> **已删除的端点（不要再引用）**：
+> - `POST /auth/register/admin` —— 2026-10-01 删（零调用方且与 `/users/add` 重复）。管理员建号只剩 `POST /users/add` 一条路径。
+> - `GET /auth/courses` —— **从来没有实现过**，是一条"白名单里有名、`AuthController` 里没有映射"的幽灵地址。2026-10-02（W1.15）把引用它的封装**一并清干净**：PC `api/index.js` 的 `authAPI.getAllCourses`、小程序 `services/api.js` 的 `getAllCourses`（两处全仓零调用方），以及网关 `WHITE_LIST` 与 `auth-service/SecurityConfig` 里那两条对应的放行 —— **四处是同一次改动的四个半**，只删一部分会留下"永远不成立的放行"。教师端课程列表走的是 `/teachers/courses`，是另一条路，未受影响。
+> - 同轮删掉两个 `authAPI.registerAdmin`（PC，指向上面那个已删端点）与四个 **0 字节**占位 `.java` 文件（`auth-service/controller/AuthController.java`、三个 `util/RedisUtil.java`）—— 空文件不定义任何类、全仓零引用，留着只会让人以为"auth-service 管登录"。
 
 ---
 

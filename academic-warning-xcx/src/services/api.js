@@ -42,7 +42,10 @@ class ApiClient {
     if (collegeId) u += `?collegeId=${collegeId}`;
     return this._get(u)
   }
-  getAllCourses = () => this._get('/auth/courses')
+  // 2026-10-02（W1.15）：删掉 `getAllCourses = () => this._get('/auth/courses')`。
+  // 那个端点在 `AuthController` 里**从来没有过实现**（白名单与 permitAll 里挂着名，
+  // 全仓零调用方）—— 留着它只会让人以为"课程目录能匿名取"，实际是 404。
+  // 教师端课程列表走的是 `teacher.getAllCourses` → `/teachers/courses`，那是另一条路。
 
   // ========== 学生端 ==========
   student = {
@@ -980,7 +983,10 @@ class ApiClient {
     getWarnings: (uid) => this._get(`/college-admin/warnings/${uid}`),
 
     /**
-     * 标记预警已处理。体 `{id: 预警id, status}`（不传 status 时后端默认 1）。
+     * 标记预警已处理。体 `{userId: 操作人, id: 预警id, status}`（不传 status 时后端默认 1）。
+     * ⚠️ `userId` **必须传**（2026-10-02 W1.13 之前这个参数收了却不发，后端也压根不收）：
+     *    后端拿它查出操作人的学院，再核对这条预警属不属于本院，非本院回 403。
+     *    少传回 400「缺少操作人 userId」。
      * ⚠️ 它只写 `status` 与 `updated_at` —— **不写** `handle_result` / `handled_by` /
      *    `handled_at` 那三列（那一套只有管理员的 `/admin/warnings/{id}/handle` 会写，
      *    而且那边的「备注」其实是塞进 `handled_by`）。所以这一页不给"处理说明"输入框，
@@ -988,13 +994,14 @@ class ApiClient {
      * ⚠️ 也没有反向接口：status 只能从 0 置 1，**撤销不了**。
      */
     processWarning: (uid, warningId, status = 1) =>
-      this._post('/college-admin/process-warning', { id: warningId, status }),
+      this._post('/college-admin/process-warning', { userId: uid, id: warningId, status }),
 
     /**
      * 删除预警记录。⚠️ **真删行**（`deleteById`），不是软删；删掉之后库里就没有这条了，
      * 已产生的"某学生被预警过"的痕迹一起消失。界面上必须是二次确认的危险操作。
+     * `uid` 是操作人 —— 后端据此校验这条预警属不属于你的学院（2026-10-02 W1.13 加的）。
      */
-    deleteWarning: (warningId) => this._del(`/college-admin/delete-warning/${warningId}`),
+    deleteWarning: (uid, warningId) => this._del(`/college-admin/delete-warning/${uid}/${warningId}`),
 
     /**
      * 本学院辅导员：`{id(counselor_profiles.id), name, phone, classCount,
@@ -1034,10 +1041,11 @@ class ApiClient {
     /**
      * 某班花名册：`{id(student_profile.id), studentId(学号), name, className, gpa,
      * totalCourses, passedCourses, failedCourses, warningCount}`。
-     * ⚠️ **它不校验这个班属不属于你的学院** —— 实现只查了 `class_id = 传入的 classId`。
-     *    实测电子工程学院管理员（uid=56）请求 `/class-students/56/1` 能拿到软件学院
-     *    计科2306班 24 个人的姓名与学号（成绩类字段因为按本院统计而全是 null）。
-     *    这是服务端的越权读取，页面上挡不住，只能记在案。
+     * ✅ 2026-10-02（W1.13）起**校验班级归属**：非本院的班回 `code:403 班级不属于本院`，
+     *    不再返回一个空数组（空数组跟"这个班确实没人"分不清）。
+     *    此前实测电子工程学院管理员（uid=56）请求 `/class-students/56/1` 能拿到软件学院
+     *    计科2306班 24 个人的姓名与学号（成绩类字段因为按本院统计而全是 null，
+     *    所以看着"像"是空的，但姓名学号是真泄漏）。
      */
     getClassStudents: (uid, classId) => this._get(`/college-admin/class-students/${uid}/${classId}`),
 

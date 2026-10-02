@@ -72,7 +72,14 @@ public class AuthenticationFilter implements GlobalFilter, Ordered {
             // 网关有路由、下游没有实现，一直是 404 —— 2026-09-30 才在
             // college-service 加了 ClassController 并把 /classes/all 设为匿名可达。
             "/api/auth/classes",
-            "/api/auth/courses",
+            // ⚠️ 这里原本还有一条 `/api/auth/courses` —— 2026-10-02（W1.15）删掉了。
+            //    它和 `/api/auth/classes` 是**方向相反**的两种幽灵：classes 是"白名单有名、
+            //    下游没实现"，补齐了；courses 则是**从来没有人需要过它** ——
+            //    `AuthController`（在 user-service 里）没有这个映射、PC 与小程序两端的
+            //    `getAllCourses` 封装**全仓零调用方**（教师端课程页走的是
+            //    `/teachers/courses`，另一条路）。白名单里挂着一条永远 404 的地址，
+            //    唯一的作用就是让后来人以为"课程目录能匿名取"。删掉封装的同时把这条也删了，
+            //    连同 auth-service `SecurityConfig` 里那句 `permitAll` —— 两处是同一次改动的两半。
             "/api/colleges/all",
             "/actuator/health",
             "/ws/**"
@@ -295,6 +302,14 @@ public class AuthenticationFilter implements GlobalFilter, Ordered {
         // 路径前缀快速检查
         if (path.startsWith(PREFIX_ADMIN)) {
             return false; // 非管理员不可访问 admin 路径
+        }
+        // ⚠️ `/api/college-admin/**` 此前**漏在下面所有前缀检查之外**，一路落到函数末尾的
+        // `return true` —— 学生 / 教师 / 辅导员的 token 都能打到学院管理员控制器。
+        // 那个控制器里既有全院花名册，也有「删预警」这种真删行的写接口，所以这不是理论问题。
+        // 注意 `PREFIX_ADMIN = "/api/admin"` 与 `/api/college-admin` 不构成前缀关系，
+        // 上面那句挡不住它 —— 差的就是这一句。role=4 与 role=5 在上面两段已经 return。
+        if (path.startsWith(PREFIX_COLLEGE_ADMIN)) {
+            return false;
         }
         if (path.startsWith(PREFIX_TEACHER) && role != ROLE_TEACHER) {
             return false;

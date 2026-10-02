@@ -44,4 +44,20 @@ public interface AcademicWarningMapper extends BaseMapper<AcademicWarning> {
           + " WHERE cl.college_id = #{collegeId} "
           + " ORDER BY aw.warning_level DESC, aw.created_at DESC, aw.id DESC")
     List<Map<String, Object>> selectWarningsByCollege(@Param("collegeId") Long collegeId);
+
+    /**
+     * 该预警是否属于这个学院。{@code > 0} 即属于。
+     *
+     * <p>{@code academic_warning.student_id} 是 {@code student_profile.id}，
+     * 所以走 {@code student_profile.class_id → classes.college_id} 这条链，
+     * 与 {@link #selectWarningsByCollege} 的口径一字不差。
+     *
+     * <p>用于学院管理员的**写操作**（改状态 / 删行）归属校验：这两个接口原先
+     * 连操作人是谁都不收，任何已认证用户拿着任意 warningId 就能改能删。
+     */
+    @Select("SELECT COUNT(*) FROM academic_warning aw "
+          + "  JOIN student_profile sp ON sp.id = aw.student_id "
+          + "  JOIN classes cl ON cl.id = sp.class_id "
+          + " WHERE aw.id = #{warningId} AND cl.college_id = #{collegeId}")
+    int countWarningInCollege(@Param("warningId") Long warningId, @Param("collegeId") Long collegeId);
 }

@@ -40,7 +40,13 @@ public class SecurityConfig {
                 .requestMatchers("/auth/register/student").permitAll()
                 .requestMatchers("/auth/register/teacher").permitAll()
                 .requestMatchers("/auth/register/counselor").permitAll()
-                .requestMatchers("/auth/colleges", "/auth/majors", "/auth/courses").permitAll()
+                // `/auth/courses` 于 2026-10-02（W1.15）从这一行里删掉：本服务没有这个映射
+                // （`auth-service/.../controller/AuthController.java` 是个 **0 字节空文件**，
+                // 真正的登录/注册控制器在 user-service，那边也没有 `/courses`），全仓零调用方。
+                // 与网关 WHITE_LIST 里那条是**同一次改动的两半** —— 只删一处会留下一条
+                // 永远不成立的放行。`/auth/colleges`、`/auth/majors` 是真路由（网关
+                // StripPrefix=2 + RewritePath 打到 college-service），保留。
+                .requestMatchers("/auth/colleges", "/auth/majors").permitAll()
                 .requestMatchers("/actuator/health").permitAll()
                 // 2026-10-01 第二十四轮：账号与权限管理面只对系统管理员开放。
                 //

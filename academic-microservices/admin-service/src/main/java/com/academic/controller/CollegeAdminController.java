@@ -8,11 +8,33 @@ import com.academic.mapper.*;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.*;
 import java.util.stream.Collectors;
 
+/**
+ * 学院管理员端接口。**所有路径的第一参数都是 {@code users.id}**（不是档案表 id），
+ * 学院归属由 {@code college_admin_profile.college_id} 推出来。
+ *
+ * <p>因为「学院」是从客户端传进来的 id 推出来的，这一层必须自己把两道闸关严
+ * （2026-10-02 W1.13 补齐；此前这两道都没有，实测能跨院读到别人全班姓名学号）：
+ *
+ * <ol>
+ *   <li><b>身份绑定</b> —— 路径里的 userId 必须等于网关注入的登录身份
+ *       （{@link #isSelf}）。少了这道，甲院管理员把 uid 换成乙院管理员的，
+ *       下面所有按学院做的过滤就全按乙院算了，等于没做。管理员（role=4）不受限。</li>
+ *   <li><b>资源归属</b> —— 路径里传进来的 {@code classId} / {@code warningId} 是
+ *       客户端给的，必须查一次它属不属于本院（{@link #ownsClass} / {@link #ownsWarning}）。
+ *       写操作尤其要紧：{@code /delete-warning} 是<b>真删行</b>。</li>
+ * </ol>
+ *
+ * <p>越权一律回 {@code ApiResponse.forbidden}（code 403），并且**发生在取数之前** ——
+ * 先查出来再丢掉不算修复，那次读已经发生了。归属类失败刻意回 403 而不是空列表：
+ * 空列表跟"这个班确实没人"分不清，拒绝必须是能看见的。
+ */
 @Slf4j
 @RestController
 @RequestMapping("/college-admin")
@@ -58,19 +80,97 @@ public class CollegeAdminController {
 
     @GetMapping("/profile/{userId}")
     public ApiResponse<Map<String, Object>> getProfile(@PathVariable Long userId) {
+        if (!isSelf(userId)) return ApiResponse.forbidden("只能查看本人档案");
         Map<String, Object> profile = collegeAdminProfileMapper.selectByUserId(userId);
         return profile != null ? ApiResponse.success(profile) : ApiResponse.error("未找到学院管理员档案");
     }
 
+    /**
+     * 网关注入的登录身份（{@code GatewayAuthFilter} 把 {@code X-User-Id} 放进 principal）。
+     * 直连且没带头时为 null。
+     */
+    private Long principalId() {
+        Authentication a = SecurityContextHolder.getContext().getAuthentication();
+        if (a == null || a.getPrincipal() == null) return null;
+        try {
+            return Long.parseLong(String.valueOf(a.getPrincipal()));
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    /** 调用方是不是管理员（role=4）。网关对 role=4 是「全部放行」，这一层跟着放行。 */
+    private boolean isAdmin() {
+        Authentication a = SecurityContextHolder.getContext().getAuthentication();
+        return a != null && a.getAuthorities().stream()
+                .anyMatch(g -> "ROLE_ADMIN".equals(g.getAuthority()));
+    }
+
+    /**
+     * 路径里的 userId 必须就是登录人本人。
+     *
+     * <p>这一层是**必要**的，不是重复校验：本控制器所有接口的第一参数都是
+     * {@code users.id}，学院归属由 {@code getCollegeId(那个 id)} 推出来。若只校验
+     * 「这个 id 有学院管理员档案」，那么甲院管理员只要把 URL 里的 uid 换成乙院管理员的，
+     * 拿到的就是乙院的学院 id —— 归属校验会被整个绕开，换谁就查谁。
+     */
+    private boolean isSelf(Long userId) {
+        if (isAdmin()) return true;
+        Long me = principalId();
+        return me != null && userId != null && me.longValue() == userId.longValue();
+    }
+
+    /**
+     * 取学院管理员所属学院。**顺带两道闸**：①路径里的 userId 必须是登录人本人
+     * （见 {@link #isSelf}）；②该 userId 确实有学院管理员档案。
+     * 任何一条不成立都返回 {@code null}，调用方一律当「无权限」处理。
+     *
+     * <p>身份校验刻意塞在这里而不是逐个接口加 —— 18 个接口都先调它，改一处全覆盖，
+     * 将来新加的接口也不会漏。
+     */
     private Long getCollegeId(Long userId) {
+        if (!isSelf(userId)) {
+            log.warn("学院管理员接口拒绝：路径 userId={} 与登录身份不一致", userId);
+            return null;
+        }
         Map<String, Object> p = collegeAdminProfileMapper.selectByUserId(userId);
         return p != null ? (Long) p.get("college_id") : null;
+    }
+
+    /** 班级是否属于该学院。路径里的 classId 是客户端给的，必须查一次才能信。 */
+    private boolean ownsClass(Long collegeId, Long classId) {
+        return classId != null && classesMapper.countClassInCollege(classId, collegeId) > 0;
+    }
+
+    /** 预警是否属于该学院（预警 → 学生 → 班级 → 学院）。 */
+    private boolean ownsWarning(Long collegeId, Long warningId) {
+        return warningId != null && academicWarningMapper.countWarningInCollege(warningId, collegeId) > 0;
+    }
+
+    /** 宽松取 Long：取不到或不是数字都返回 null，不让一个脏参数把请求炸成 500。 */
+    private static Long longOrNull(Object v) {
+        if (v == null) return null;
+        try {
+            return Long.valueOf(String.valueOf(v).trim());
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    /** 宽松取 Integer：同上，取不到返回 {@code fallback}。 */
+    private static Integer intOr(Object v, Integer fallback) {
+        if (v == null) return fallback;
+        try {
+            return Integer.valueOf(String.valueOf(v).trim());
+        } catch (NumberFormatException e) {
+            return fallback;
+        }
     }
 
     @GetMapping("/dashboard/{userId}")
     public ApiResponse<Map<String, Object>> dashboard(@PathVariable Long userId) {
         Long collegeId = getCollegeId(userId);
-        if (collegeId == null) return ApiResponse.error("无权限");
+        if (collegeId == null) return ApiResponse.forbidden("无权限");
 
         Map<String, Object> d = new HashMap<>();
         Map<String, Object> profile = collegeAdminProfileMapper.selectByUserId(userId);
@@ -120,7 +220,7 @@ public class CollegeAdminController {
     @GetMapping("/classes/{userId}")
     public ApiResponse<List<Map<String, Object>>> getClasses(@PathVariable Long userId) {
         Long collegeId = getCollegeId(userId);
-        if (collegeId == null) return ApiResponse.error("无权限");
+        if (collegeId == null) return ApiResponse.forbidden("无权限");
         List<Map<String, Object>> classes = classesMapper.getClassesByCollegeId(collegeId);
         // 班级统计一次查出后按 classId 取用，取代"逐班逐生查库"
         Map<Long, Map<String, Object>> statsByClass = new HashMap<>();
@@ -144,7 +244,7 @@ public class CollegeAdminController {
             @PathVariable Long userId,
             @RequestParam(required = false) String keyword) {
         Long collegeId = getCollegeId(userId);
-        if (collegeId == null) return ApiResponse.error("无权限");
+        if (collegeId == null) return ApiResponse.forbidden("无权限");
         List<Map<String, Object>> classes = classesMapper.getClassesByCollegeId(collegeId);
         List<Long> classIds = classes.stream().map(c -> (Long) c.get("id")).collect(Collectors.toList());
         if (classIds.isEmpty()) return ApiResponse.success(Collections.emptyList());
@@ -191,7 +291,7 @@ public class CollegeAdminController {
     @GetMapping("/student-detail/{userId}/{profileId}")
     public ApiResponse<Map<String, Object>> getStudentDetail(@PathVariable Long userId, @PathVariable Long profileId) {
         Long collegeId = getCollegeId(userId);
-        if (collegeId == null) return ApiResponse.error("无权限");
+        if (collegeId == null) return ApiResponse.forbidden("无权限");
         StudentProfile sp = studentProfileMapper.selectById(profileId);
         if (sp == null) return ApiResponse.error("学生不存在");
         if (sp.getClassId() == null) return ApiResponse.error("该学生无班级信息");
@@ -247,7 +347,7 @@ public class CollegeAdminController {
     @GetMapping("/teachers/{userId}")
     public ApiResponse<List<Map<String, Object>>> getTeachers(@PathVariable Long userId) {
         Long collegeId = getCollegeId(userId);
-        if (collegeId == null) return ApiResponse.error("无权限");
+        if (collegeId == null) return ApiResponse.forbidden("无权限");
         List<TeacherProfile> all = teacherProfileMapper.selectList(new QueryWrapper<>()).stream()
             .filter(t -> t.getCollegeId() != null && t.getCollegeId().equals(collegeId))
             .collect(Collectors.toList());
@@ -278,7 +378,7 @@ public class CollegeAdminController {
     @GetMapping("/warnings/{userId}")
     public ApiResponse<List<Map<String, Object>>> getWarnings(@PathVariable Long userId) {
         Long collegeId = getCollegeId(userId);
-        if (collegeId == null) return ApiResponse.error("无权限");
+        if (collegeId == null) return ApiResponse.forbidden("无权限");
 
         List<Map<String, Object>> result = new ArrayList<>();
         for (Map<String, Object> row : academicWarningMapper.selectWarningsByCollege(collegeId)) {
@@ -299,7 +399,7 @@ public class CollegeAdminController {
     @GetMapping("/scores-stats/{userId}")
     public ApiResponse<Map<String, Object>> getScoreStats(@PathVariable Long userId) {
         Long collegeId = getCollegeId(userId);
-        if (collegeId == null) return ApiResponse.error("无权限");
+        if (collegeId == null) return ApiResponse.forbidden("无权限");
 
         Map<String, Object> overview = scoreStatMapper.selectCollegeScoreOverview(collegeId);
         if (overview == null) overview = Map.of();
@@ -316,7 +416,7 @@ public class CollegeAdminController {
     @GetMapping("/score-analysis/{userId}")
     public ApiResponse<Map<String, Object>> scoreAnalysis(@PathVariable Long userId) {
         Long collegeId = getCollegeId(userId);
-        if (collegeId == null) return ApiResponse.error("无权限");
+        if (collegeId == null) return ApiResponse.forbidden("无权限");
         Map<String, Object> band = scoreStatMapper.selectScoreDistribution(collegeId);
         if (band == null) band = Map.of();
         Map<String, Integer> dist = new LinkedHashMap<>();
@@ -355,7 +455,7 @@ public class CollegeAdminController {
     @GetMapping("/class-comparison/{userId}")
     public ApiResponse<List<Map<String, Object>>> classComparison(@PathVariable Long userId) {
         Long collegeId = getCollegeId(userId);
-        if (collegeId == null) return ApiResponse.error("无权限");
+        if (collegeId == null) return ApiResponse.forbidden("无权限");
         List<Map<String, Object>> rows = scoreStatMapper.selectClassComparison(collegeId);
         List<Map<String, Object>> result = new ArrayList<>();
         // 在原实现里，下面整个统计过程写在 classes 的 for 循环内部，
@@ -378,7 +478,7 @@ public class CollegeAdminController {
     @GetMapping("/counselors/{userId}")
     public ApiResponse<List<Map<String, Object>>> getCounselors(@PathVariable Long userId) {
         Long collegeId = getCollegeId(userId);
-        if (collegeId == null) return ApiResponse.error("无权限");
+        if (collegeId == null) return ApiResponse.forbidden("无权限");
         List<CounselorProfile> counselors = counselorProfileMapper.selectList(
             new QueryWrapper<CounselorProfile>().eq("college_id", collegeId));
         List<Map<String, Object>> result = new ArrayList<>();
@@ -398,7 +498,7 @@ public class CollegeAdminController {
     @GetMapping("/assistance/{userId}")
     public ApiResponse<List<Map<String, Object>>> getAssistance(@PathVariable Long userId) {
         Long collegeId = getCollegeId(userId);
-        if (collegeId == null) return ApiResponse.error("无权限");
+        if (collegeId == null) return ApiResponse.forbidden("无权限");
         List<Map<String, Object>> result = new ArrayList<>();
         for (Map<String, Object> row : academicWarningMapper.selectWarningsByCollege(collegeId)) {
             Map<String, Object> m = new HashMap<>();
@@ -418,7 +518,7 @@ public class CollegeAdminController {
     public ApiResponse<List<Map<String, Object>>> exportData(@PathVariable Long userId,
             @RequestParam(defaultValue = "scores") String type) {
         Long collegeId = getCollegeId(userId);
-        if (collegeId == null) return ApiResponse.error("无权限");
+        if (collegeId == null) return ApiResponse.forbidden("无权限");
         List<Map<String, Object>> classes = classesMapper.getClassesByCollegeId(collegeId);
         Set<Long> classIds = classes.stream().map(c -> (Long) c.get("id")).collect(Collectors.toSet());
         List<Map<String, Object>> result = new ArrayList<>();
@@ -474,7 +574,7 @@ public class CollegeAdminController {
     @GetMapping("/teacher-detail/{userId}/{teacherId}")
     public ApiResponse<Map<String, Object>> getTeacherDetail(@PathVariable Long userId, @PathVariable Long teacherId) {
         Long collegeId = getCollegeId(userId);
-        if (collegeId == null) return ApiResponse.error("无权限");
+        if (collegeId == null) return ApiResponse.forbidden("无权限");
         TeacherProfile tp = teacherProfileMapper.selectById(teacherId);
         if (tp == null || !tp.getCollegeId().equals(collegeId)) return ApiResponse.error("无权限");
         Map<String, Object> d = new HashMap<>();
@@ -513,19 +613,27 @@ public class CollegeAdminController {
     /** 标记预警/帮扶状态 */
     @PostMapping("/process-warning")
     public ApiResponse<String> processWarning(@RequestBody Map<String, Object> body) {
-        Long warningId = body.get("id") != null ? Long.valueOf(body.get("id").toString()) : null;
-        if (warningId == null) return ApiResponse.error("缺少ID");
+        Long userId = longOrNull(body.get("userId"));
+        Long warningId = longOrNull(body.get("id"));
+        if (userId == null) return ApiResponse.badRequest("缺少操作人 userId");
+        if (warningId == null) return ApiResponse.badRequest("缺少ID");
+        Long collegeId = getCollegeId(userId);
+        if (collegeId == null) return ApiResponse.forbidden("无权限");
+        if (!ownsWarning(collegeId, warningId)) return ApiResponse.forbidden("该预警不属于本院");
         AcademicWarning w = academicWarningMapper.selectById(warningId);
         if (w == null) return ApiResponse.error("记录不存在");
-        w.setStatus(body.get("status") != null ? Integer.valueOf(body.get("status").toString()) : 1);
+        w.setStatus(intOr(body.get("status"), 1));
         w.setUpdatedAt(java.time.LocalDateTime.now());
         academicWarningMapper.updateById(w);
         return ApiResponse.success("处理成功");
     }
 
     /** 删除预警记录 */
-    @DeleteMapping("/delete-warning/{warningId}")
-    public ApiResponse<String> deleteWarning(@PathVariable Long warningId) {
+    @DeleteMapping("/delete-warning/{userId}/{warningId}")
+    public ApiResponse<String> deleteWarning(@PathVariable Long userId, @PathVariable Long warningId) {
+        Long collegeId = getCollegeId(userId);
+        if (collegeId == null) return ApiResponse.forbidden("无权限");
+        if (!ownsWarning(collegeId, warningId)) return ApiResponse.forbidden("该预警不属于本院");
         AcademicWarning w = academicWarningMapper.selectById(warningId);
         if (w == null) return ApiResponse.error("记录不存在");
         academicWarningMapper.deleteById(warningId);
@@ -536,7 +644,13 @@ public class CollegeAdminController {
     @GetMapping("/class-students/{userId}/{classId}")
     public ApiResponse<List<Map<String, Object>>> getClassStudents(@PathVariable Long userId, @PathVariable Long classId) {
         Long collegeId = getCollegeId(userId);
-        if (collegeId == null) return ApiResponse.error("无权限");
+        if (collegeId == null) return ApiResponse.forbidden("无权限");
+        // 班级归属校验。**不能省** —— 少了它，甲院管理员把 classId 换成乙院的班
+        // 就能读到那个班全体的姓名与学号（成绩类字段因为按本院统计而全是 null，
+        // 所以以前看着"像"是空的，但姓名学号是真泄漏）。
+        // 这里刻意回「不属于本院」而不是回一个空列表：空列表跟"这个班确实没人"分不清，
+        // 越权被拒必须是一个能看见的拒绝。
+        if (!ownsClass(collegeId, classId)) return ApiResponse.forbidden("班级不属于本院");
         List<StudentProfile> all = studentProfileMapper.selectList(
             new QueryWrapper<StudentProfile>().eq("class_id", classId));
         // 成绩与预警统计一次查出，取代"每个学生查两次库"
@@ -567,7 +681,7 @@ public class CollegeAdminController {
             @RequestParam(required = false) Long classId,
             @RequestParam(required = false) String keyword) {
         Long collegeId = getCollegeId(userId);
-        if (collegeId == null) return ApiResponse.error("无权限");
+        if (collegeId == null) return ApiResponse.forbidden("无权限");
         // 班级与关键字过滤已下推到 SQL；排序也由 SQL 的 ORDER BY 完成
         List<Map<String, Object>> result = new ArrayList<>();
         for (Map<String, Object> row : scoreStatMapper.selectScoreRows(collegeId, classId, keyword)) {

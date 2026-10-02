@@ -215,7 +215,7 @@ function askDelete() {
     success: async (res) => {
       if (!res.confirm) return
       try {
-        await collegeAdminAPI.deleteWarning(w.id)
+        await collegeAdminAPI.deleteWarning(userId, w.id)
         toast('已删除')
         sheetOpen.value = false
         await load()

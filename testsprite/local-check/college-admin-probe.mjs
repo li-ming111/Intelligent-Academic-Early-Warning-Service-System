@@ -151,10 +151,24 @@ const run = async () => {
       await g('教师详情', `/api/college-admin/teacher-detail/${uid}/${t.id}`)
     }
 
-    // 3. 越权探测：拿 A 学院管理员的 uid 去查 B 学院的班级花名册（只读，不改任何东西）
+    // 3. 越权探测：拿 A 学院管理员的 uid 去查 B 学院的班级花名册（只读，不改任何东西）。
+    //    2026-10-02（W1.13）之前这里回 code=200 + 24 行（软件学院计科2306班全班的姓名学号），
+    //    所以这一条从"记一笔"升格成断言 —— 回 200 就是回归。
     const otherClassId = acc.username === 'collegeadmin1' ? 10 : 1
     const idor = await get(`/api/college-admin/class-students/${uid}/${otherClassId}`, undefined, H)
-    info(`越权探测 class-students/${uid}/${otherClassId} → code=${idor.code} ${brief(idor.data)}`)
+    if (idor.code === 403) {
+      ok(`越权探测 class-students/${uid}/${otherClassId} → 403（跨院花名册被拒）`)
+    } else {
+      bad(`越权探测 class-students/${uid}/${otherClassId} → code=${idor.code} ${brief(idor.data)}  期望 403`)
+    }
+    // 4. 身份绑定：拿 A 的 token 去读 B 的概览（uid 换成对方的）
+    const otherUid = acc.username === 'collegeadmin1' ? 56 : 57
+    const swapped = await get(`/api/college-admin/dashboard/${otherUid}`, undefined, H)
+    if (swapped.code === 403) {
+      ok(`换 uid 探测 dashboard/${otherUid} → 403（路径 uid 与登录身份不符被拒）`)
+    } else {
+      bad(`换 uid 探测 dashboard/${otherUid} → code=${swapped.code}  期望 403`)
+    }
   }
 
   say('')

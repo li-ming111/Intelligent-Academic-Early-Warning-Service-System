@@ -168,7 +168,12 @@ async function showDetail(row) {
     const uid = localStorage.getItem('userId'); curClassName.value = row.name
     classStudents.value = await collegeAdminAPI.getClassStudents(uid, row.id) || []
     detailVisible.value = true
-  } catch (e) { console.error(e) }
+  } catch (e) {
+    // 服务端会校验班级归属，非本院回 403「班级不属于本院」——
+    // 只 console.error 的话用户点一下什么反应都没有，看着像按钮坏了。
+    console.error(e)
+    ElMessage.error(e?.message || '花名册加载失败')
+  }
 }
 
 async function viewStudentDetail(row) {
