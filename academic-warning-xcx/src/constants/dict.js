@@ -17,14 +17,22 @@ export const WARNING_LEVEL_TEXT = {
 
 /* ==========
  * 预警处理状态（academic_warning.status，int）
- * 0 待处理 / 1 已处理
- * 互证：teacher-service `w.getStatus()==0 ? "待处理" : "已处理"`；
- *       admin-service `intOf(status)==1 ? "已处理" : "待处理"`；
- *       counselor-service `warning.setStatus(1); // 已处理`
+ * 0 待处理 / 1 已处理 / 2 已解除
+ *
+ * ⚠️ 2026-10-02（W1.6）补第 2 态。此前这里只写了 0/1，并且注释里列了两条"互证"：
+ *      teacher-service `w.getStatus()==0 ? "待处理" : "已处理"`
+ *      admin-service   `intOf(status)==1 ? "已处理" : "待处理"`
+ *   —— 这两条**在 status=2 上给出相反答案**（一个"已处理"、一个"待处理"），
+ *   所以它们从来不是互证，只是两个都按两态写的地方。现在后端已收敛到
+ *   `com.academic.common.constant.WarningStatus.text()`，三处共用一份。
+ *
+ * 第 3 态的来源：warning-service 的定时扫描按成绩口径现算，不再达阈值时把
+ * status 置 2（见 `WarningScheduledTask`）。
  * ========== */
 export const WARNING_STATUS_TEXT = {
   0: '待处理',
-  1: '已处理'
+  1: '已处理',
+  2: '已解除'
 }
 
 /* ==========
@@ -167,6 +175,10 @@ export const STATUS_TAG_TYPE = {
   active: 'info',
   done: 'success',
   handled: 'success',
+  // 2026-10-02（W1.6）：预警「已解除」—— 用 info（中性灰）而不是 success，
+  // 因为 success 是"人处理完了"（handled），已解除是"分数上来了，自动的"，
+  // 两者混成一个颜色，页面上就分不出哪条是辅导员真处理过的。
+  dispelled: 'info',
   rejected: 'danger',
   withdrawn: 'info',
   cancelled: 'info'

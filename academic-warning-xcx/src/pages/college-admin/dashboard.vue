@@ -132,6 +132,7 @@ import { collegeAdminAPI } from '@/services/api.js'
 import { useUser } from '@/composables/useUser.js'
 import { roleThemeStyle } from '@/composables/useRoleTheme.js'
 import { go } from '@/utils/navigate.js'
+import { normalizeWarnings } from '@/utils/warning.js'
 
 const { userId, userName } = useUser()
 
@@ -143,7 +144,8 @@ const dash = ref({})
 const stats = ref({})
 const warnings = ref([])
 
-const pendingCount = computed(() => warnings.value.filter(w => w.status !== 1).length)
+// 2026-10-02（W1.6）：`status !== 1` 会把"已解除(2)"也算成待处理 ⇒ 只认 0。
+const pendingCount = computed(() => warnings.value.filter(w => w.status === 0).length)
 
 const subtitle = computed(() => {
   const t = profile.value.title
@@ -215,7 +217,7 @@ async function load() {
     dash.value = d && typeof d === 'object' ? d : {}
     stats.value = s && typeof s === 'object' ? s : {}
     profile.value = pf && typeof pf === 'object' ? pf : {}
-    warnings.value = Array.isArray(wl) ? wl : []
+    warnings.value = normalizeWarnings(Array.isArray(wl) ? wl : [])
   } finally {
     loading.value = false
   }

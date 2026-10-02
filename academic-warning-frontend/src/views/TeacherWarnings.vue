@@ -16,7 +16,14 @@
       </div>
       <div class="tw-stat done">
         <div class="ts-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></div>
-        <div class="ts-body"><div class="ts-num">{{ warnings.filter(w=>w.status==='已处理').length }}</div><div class="ts-lbl">已处理</div></div>
+        <div class="ts-body"><div class="ts-num">{{ warnings.filter(w=>warningStatusKey(w.status)==='handled').length }}</div><div class="ts-lbl">已处理</div></div>
+      </div>
+      <!-- 2026-10-02（W1.6）：补第三态。原来只有 4 格且第 4 格判 `status==='已处理'`
+           —— 后端现在会回「已解除」，它既不是"已处理"也没有任何一格能显示，
+           学生明明恢复了却在这页面上凭空少一条。 -->
+      <div class="tw-stat done">
+        <div class="ts-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="8 12 11 15 16 9"/></svg></div>
+        <div class="ts-body"><div class="ts-num">{{ warnings.filter(w=>warningStatusKey(w.status)==='dispelled').length }}</div><div class="ts-lbl">已解除</div></div>
       </div>
     </div>
 
@@ -44,13 +51,13 @@
             <div class="twc-meta">
               <span>{{ w.className }}</span>
               <span>{{ fmtDate(w.createdAt) }}</span>
-              <el-tag size="small" :type="w.status==='待处理'?'danger':'success'">{{ w.status }}</el-tag>
+              <el-tag size="small" :type="warningStatusTagType(w.status)">{{ warningStatusText(w.status) }}</el-tag>
             </div>
           </div>
         </div>
         <div class="twc-right">
           <el-button size="small" @click="viewDetail(w)">详情</el-button>
-          <el-button size="small" type="primary" @click="openHandle(w)" :disabled="w.status==='已处理'">处理</el-button>
+          <el-button size="small" type="primary" @click="openHandle(w)" :disabled="!isPendingWarning(w.status)">处理</el-button>
         </div>
       </div>
     </div>
@@ -111,6 +118,8 @@ import { ref, computed, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { teacherAPI } from '@/api/index'
 import { getUserId } from '@/utils/userUtils'
+// 2026-10-02（W1.6）：teacher-service 这条路的 status 是**中文**，共用层同时吃数字与中文
+import { warningStatusText, warningStatusKey, warningStatusTagType, isPendingWarning } from '@/utils/warning'
 
 const warnings = ref([])
 const filterLevel = ref('')
@@ -160,7 +169,7 @@ async function submitHandle() {
 .tw-page { padding: 20px 24px; min-height: 100vh; background: #f5f7fb; }
 
 /* 统计 */
-.tw-stats { display: grid; grid-template-columns: repeat(4,1fr); gap: 14px; margin-bottom: 20px; }
+.tw-stats { display: grid; grid-template-columns: repeat(5,1fr); gap: 14px; margin-bottom: 20px; }
 .tw-stat { background: #fff; border-radius: 12px; padding: 18px 20px; display: flex; align-items: center; gap: 14px; box-shadow: 0 1px 3px rgba(0,0,0,.04); border-left: 4px solid #ddd; }
 .tw-stat.danger { border-left-color: #ef4444; }
 .tw-stat.warning { border-left-color: #f59e0b; }

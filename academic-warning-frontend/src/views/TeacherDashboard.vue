@@ -154,6 +154,7 @@
 import { ref, reactive, computed, onMounted } from 'vue'
 import { teacherAPI } from '@/api/index'
 import { getUserId } from '@/utils/userUtils'
+import { isPendingWarning } from '@/utils/warning'
 
 const teacherName = ref('教师')
 const currentDate = ref('')
@@ -202,7 +203,10 @@ async function loadData() {
     const wlist = Array.isArray(warnRes) ? warnRes : (warnRes?.data || [])
     stats.highWarnings = wlist.filter(w => w.warningLevel === '严重' || w.warningLevel >= 3).length
     stats.mediumWarnings = wlist.filter(w => w.warningLevel === '中度' || w.warningLevel === 2).length
-    warnings.value = wlist.filter(w => w.status === '待处理' || w.status === 0).slice(0, 8)
+    // 2026-10-02（W1.6）：改调共用层。原来写的是 `w.status === '待处理' || w.status === 0`
+    // —— 扩三态后这仍然是对的（"已解除"两条都不等），但它把后端的中文文案**焊死**在页面里，
+    // 后端改一个字这里就静默恒假。`isPendingWarning` 同时吃数字与中文。
+    warnings.value = wlist.filter(w => isPendingWarning(w.status)).slice(0, 8)
     const clist = Array.isArray(classRes) ? classRes : (classRes?.data || [])
     classes.value = clist.map(c => ({
       id: c.id || c.classId,
@@ -210,7 +214,7 @@ async function loadData() {
       studentCount: c.studentCount || 0
     }))
     const tdList = []
-    const pendingWarns = wlist.filter(w => w.status === '待处理' || w.status === 0).length
+    const pendingWarns = wlist.filter(w => isPendingWarning(w.status)).length
     if (pendingWarns > 0) {
       tdList.push({ id: 1, title: '预警待处理', description: `${pendingWarns}条预警需要您处理`, action: '去处理', link: '/teacher/warnings', urgent: true })
     }

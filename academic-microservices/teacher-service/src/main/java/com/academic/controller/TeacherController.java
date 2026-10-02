@@ -1,6 +1,7 @@
 package com.academic.controller;
 
 import com.academic.common.constant.ScoreCaliber;
+import com.academic.common.constant.WarningStatus;
 import com.academic.common.dto.ApiResponse;
 import com.academic.common.util.ScoreSyncSupport;
 import com.academic.common.entity.TeacherProfile;
@@ -707,7 +708,10 @@ public class TeacherController {
                     m.put("title", w.getTitle());
                     m.put("description", w.getDescription());
                     m.put("type", w.getType());
-                    m.put("status", w.getStatus() != null ? (w.getStatus() == 0 ? "待处理" : "已处理") : "待处理");
+                    // 2026-10-02（W1.6）：原来是两态 `status == 0 ? "待处理" : "已处理"`，
+                    // 于是 status=2（已解除）被翻成"已处理"—— 与同一个类里另一处翻成"待处理"**相反**。
+                    // 收敛到 WarningStatus.text()，三处共用一份。
+                    m.put("status", WarningStatus.text(w.getStatus()));
                     m.put("className", clazz.get("name"));
                     m.put("createdAt", w.getCreatedAt());
                     result.add(m);
@@ -803,7 +807,8 @@ public class TeacherController {
             result.put("warningId", saved.getId());
             result.put("studentId", saved.getStudentId());
             result.put("studentName", saved.getStudentName());
-            result.put("status", saved.getStatus() != null && saved.getStatus() == 1 ? "已处理" : "待处理");
+            // 2026-10-02（W1.6）：同上一处，收敛到共用映射（status=2 现在是"已解除"）
+            result.put("status", WarningStatus.text(saved.getStatus()));
             result.put("handledBy", saved.getHandledBy());
             result.put("handleResult", saved.getHandleResult());
             result.put("handledAt", saved.getHandledAt());

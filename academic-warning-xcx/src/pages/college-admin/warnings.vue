@@ -34,8 +34,8 @@
             <view class="warn__head">
               <warning-tag :level="w.warningLevel" />
               <text class="warn__name">{{ w.studentName || `学生 ${w.studentId}` }}</text>
-              <text class="tag" :class="w.status === 1 ? 'tag--success' : 'tag--warning'">
-                {{ w.status === 1 ? '已处理' : '待处理' }}
+              <text class="tag" :class="warningStatusTagClass(w.status)">
+                {{ w.statusText }}
               </text>
             </view>
             <text class="warn__desc">{{ w.description || '无说明' }}</text>
@@ -78,7 +78,7 @@
           </view>
           <view class="facts__row">
             <text class="facts__k">处理状态</text>
-            <text class="facts__v">{{ current.status === 1 ? '已处理' : '待处理' }}</text>
+            <text class="facts__v">{{ current.statusText }}</text>
           </view>
           <view class="facts__row">
             <text class="facts__k">产生时间</text>
@@ -100,11 +100,15 @@
           <view class="act act--danger" @tap="askDelete">删除记录</view>
         </view>
         <view
-          v-if="current && current.status !== 1"
+          v-if="current && current.isPending"
           class="btn-primary footer-btn"
           :class="{ 'btn-primary--disabled': submitting }"
           @tap="doProcess"
         >{{ submitting ? '提交中…' : '标记为已处理' }}</view>
+        <view
+          v-else-if="current && current.isDispelled"
+          class="btn-primary btn-primary--disabled footer-btn"
+        >这条已自动解除</view>
         <view v-else class="btn-primary btn-primary--disabled footer-btn">这条已处理</view>
       </template>
     </detail-sheet>
@@ -118,6 +122,9 @@ import { useUser } from '@/composables/useUser.js'
 import { roleThemeStyle } from '@/composables/useRoleTheme.js'
 import { formatDate } from '@/utils/format.js'
 import { warningLevelText } from '@/utils/score.js'
+// 2026-10-02（W1.6）：状态是三态（0 待处理 / 1 已处理 / 2 已解除）。
+// 这一页原来自己写 `status === 1 ? '已处理' : '待处理'` ⇒ status=2 显示成"待处理"。
+import { normalizeWarnings, warningStatusTagClass } from '@/utils/warning.js'
 
 const { userId } = useUser()
 const themeStyle = roleThemeStyle('collegeAdmin')
@@ -144,7 +151,8 @@ const filtered = computed(() => {
   return warnings.value.filter(w => String(w.warningLevel) === levelFilter.value)
 })
 
-const pendingCount = computed(() => warnings.value.filter(w => w.status !== 1).length)
+// 2026-10-02（W1.6）：`status !== 1` 会把"已解除(2)"也算成待处理 ⇒ 只认 0。
+const pendingCount = computed(() => warnings.value.filter(w => w.status === 0).length)
 
 /** 等级文案统一走 utils/score.js 的 warningLevelText —— 认不出的值它给「未知」，
  *  不再各页各写一份映射（历史上就是那样漂成"中度/中等/轻微"几种写法的）。 */
@@ -163,10 +171,12 @@ async function load() {
   try {
     if (!userId) return
     const list = await collegeAdminAPI.getWarnings(userId)
-    // 待处理置顶，其余按产生时间倒序
-    warnings.value = (Array.isArray(list) ? list : []).slice().sort((a, b) => {
-      const pa = a.status === 1 ? 1 : 0
-      const pb = b.status === 1 ? 1 : 0
+    // 待处理置顶，其余按产生时间倒序。
+    // 2026-10-02（W1.6）：原来是 `status === 1 ? 1 : 0`（"只有已处理排后"），
+    // 扩三态后"已解除"也是终态、也该排后 ⇒ 直接用归一化好的 `isPending`。
+    warnings.value = normalizeWarnings(Array.isArray(list) ? list : []).sort((a, b) => {
+      const pa = a.isPending ? 0 : 1
+      const pb = b.isPending ? 0 : 1
       if (pa !== pb) return pa - pb
       return String(b.createdAt || '').localeCompare(String(a.createdAt || ''))
     })

@@ -1,5 +1,6 @@
 package com.academic.controller;
 
+import com.academic.common.constant.WarningStatus;
 import com.academic.common.dto.ApiResponse;
 import com.academic.common.entity.*;
 import com.academic.entity.Classes;
@@ -545,7 +546,9 @@ public class CollegeAdminController {
                 m.put("className", row.get("class_name"));
                 m.put("description", row.get("description"));
                 m.put("warningLevel", row.get("warning_level"));
-                m.put("status", intOf(row.get("status")) == 1 ? "已处理" : "待处理");
+                // 2026-10-02（W1.6）：原来是两态，status=2（已解除）被翻成"待处理"——
+                // 而 teacher-service 同一个取值翻成"已处理"。收敛到共用映射。
+                m.put("status", WarningStatus.text(intOf(row.get("status"))));
                 result.add(m);
             }
         } else if ("students".equals(type)) {

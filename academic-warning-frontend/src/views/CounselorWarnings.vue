@@ -20,8 +20,15 @@
         <div class="stat-label">蓝色预警</div>
       </div>
       <div class="stat-card gray">
-        <div class="stat-number">{{ warningStats.processedWarnings || 0 }}</div>
+        <div class="stat-number">{{ warningStats.handledWarnings || 0 }}</div>
         <div class="stat-label">已处理</div>
+      </div>
+      <!-- 2026-10-02（W1.6）：原来这一格数的是 `status===1 || status===2`，
+           标签却写「已处理」—— 把"系统自动解除的"算进了"辅导员处理掉的"。
+           现在拆成两格，各自只数自己那一态。 -->
+      <div class="stat-card gray">
+        <div class="stat-number">{{ warningStats.dispelledWarnings || 0 }}</div>
+        <div class="stat-label">已解除</div>
       </div>
     </div>
 
@@ -44,14 +51,12 @@
         <el-table-column prop="description" label="预警原因" min-width="200" show-overflow-tooltip></el-table-column>
         <el-table-column label="处理状态" width="100">
           <template #default="{ row }">
-            <el-tag :type="row.status === 1 ? 'success' : row.status === 2 ? 'warning' : 'info'">
-              {{ row.status === 1 ? '已处理' : row.status === 2 ? '已解除' : '待处理' }}
-            </el-tag>
+            <el-tag :type="warningStatusTagType(row.status)">{{ warningStatusText(row.status) }}</el-tag>
           </template>
         </el-table-column>
         <el-table-column label="操作" width="150" fixed="right">
           <template #default="{ row }">
-            <el-button type="primary" size="small" link @click="handleWarning(row)" v-if="row.status === 0">处理</el-button>
+            <el-button type="primary" size="small" link @click="handleWarning(row)" v-if="isPendingWarning(row.status)">处理</el-button>
             <el-button type="info" size="small" link @click="viewDetails(row)">详情</el-button>
           </template>
         </el-table-column>
@@ -89,6 +94,8 @@ import { ref, onMounted } from 'vue'
 import { ElMessage, ElLoading } from 'element-plus'
 import { counselorAPI, aiAPI } from '@/api/index'
 import { getUserId } from '@/utils/userUtils'
+// 2026-10-02（W1.6）：状态是三态，文案/配色/归一化只在 utils/warning.js 维护一份
+import { warningStatus, warningStatusText, warningStatusTagType, isPendingWarning, WARNING_STATUS } from '@/utils/warning'
 
 const handleDialogVisible = ref(false)
 const warningsList = ref([])
@@ -96,7 +103,8 @@ const warningStats = ref({
   redWarnings: 0,
   yellowWarnings: 0,
   blueWarnings: 0,
-  processedWarnings: 0
+  handledWarnings: 0,
+  dispelledWarnings: 0
 })
 
 const handleForm = ref({
@@ -122,7 +130,9 @@ const loadWarnings = async () => {
       redWarnings: warningsList.value.filter(w => w.warningLevel === 3).length,
       yellowWarnings: warningsList.value.filter(w => w.warningLevel === 2).length,
       blueWarnings: warningsList.value.filter(w => w.warningLevel === 1).length,
-      processedWarnings: warningsList.value.filter(w => w.status === 1 || w.status === 2).length
+      // 两态分开数，各自只认自己那一态（原来 1|2 合并成"已处理"是把自动解除算进去了）
+      handledWarnings: warningsList.value.filter(w => warningStatus(w.status) === WARNING_STATUS.HANDLED).length,
+      dispelledWarnings: warningsList.value.filter(w => warningStatus(w.status) === WARNING_STATUS.DISPELLED).length
     }
   } catch (error) {
     console.error('加载预警失败:', error)
@@ -225,7 +235,7 @@ const generateOpinion = async () => {
 
 .stats-grid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(5, 1fr);
   gap: 15px;
   margin-bottom: 20px;
 }

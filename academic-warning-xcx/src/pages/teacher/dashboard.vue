@@ -101,7 +101,7 @@
               </view>
               <view class="warn-row__right">
                 <warning-tag :level="w.level" />
-                <text class="tag" :class="w.isPending ? 'tag--warning' : 'tag--success'">{{ w.statusText }}</text>
+                <text class="tag" :class="warningStatusTagClass(w.status)">{{ w.statusText }}</text>
               </view>
             </view>
           </view>
@@ -118,7 +118,7 @@ import { ref, computed, onMounted } from 'vue'
 import { teacherAPI } from '@/services/api.js'
 import { useUser } from '@/composables/useUser.js'
 import { roleThemeStyle } from '@/composables/useRoleTheme.js'
-import { normalizeWarnings, countWarnings } from '@/utils/warning.js'
+import { normalizeWarnings, countWarnings, warningStatusTagClass } from '@/utils/warning.js'
 import { go } from '@/utils/navigate.js'
 
 const { userId, userName } = useUser()

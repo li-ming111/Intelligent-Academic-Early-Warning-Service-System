@@ -120,8 +120,8 @@
               </view>
               <view class="warn-row__right">
                 <warning-tag :level="w.warningLevel" />
-                <text class="tag" :class="w.status === 1 ? 'tag--success' : 'tag--warning'">
-                  {{ w.status === 1 ? '已处理' : '待处理' }}
+                <text class="tag" :class="warningStatusTagClass(w.status)">
+                  {{ w.statusText }}
                 </text>
               </view>
             </view>
@@ -178,6 +178,7 @@ import { useUser } from '@/composables/useUser.js'
 import { roleThemeStyle } from '@/composables/useRoleTheme.js'
 import { formatDate } from '@/utils/format.js'
 import { go } from '@/utils/navigate.js'
+import { normalizeWarnings, warningStatusTagClass } from '@/utils/warning.js'
 
 const { userId, userName } = useUser()
 
@@ -206,11 +207,14 @@ function num(v) {
 /**
  * 最近预警列表。
  * 后端给的是 `recentWarnings`（实体），`warningLevel` 是数字，`title` 是中文等级，
- * 两者本来就一一对应（level 2 → "中级预警"），所以这一页不需要归一化函数。
+ * 两者本来就一一对应（level 2 → "中级预警"），所以**等级**这一页不需要归一化。
+ *
+ * ⚠️ 但**状态**需要：2026-10-02（W1.6）扩成三态后，模板要读 `statusText`，
+ * 而 `status` 是 0/1/2 —— 归一化函数顺手把状态也翻了，所以还是过一遍。
  */
 const recentWarnings = computed(() => {
   const list = dash.value.recentWarnings
-  return Array.isArray(list) ? list : []
+  return normalizeWarnings(Array.isArray(list) ? list : [])
 })
 
 /**

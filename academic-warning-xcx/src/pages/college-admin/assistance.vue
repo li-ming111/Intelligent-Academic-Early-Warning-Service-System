@@ -34,8 +34,8 @@
             <view class="row__head">
               <warning-tag :level="r.level" />
               <text class="row__name">{{ r.studentName || '未知学生' }}</text>
-              <text class="tag" :class="r.status === 1 ? 'tag--success' : 'tag--warning'">
-                {{ r.status === 1 ? '已处理' : '待处理' }}
+              <text class="tag" :class="warningStatusTagClass(r.status)">
+                {{ r.statusText }}
               </text>
             </view>
             <text class="row__desc">{{ r.description || '无说明' }}</text>
@@ -82,7 +82,7 @@
           </view>
           <view class="facts__row">
             <text class="facts__k">处理状态</text>
-            <text class="facts__v">{{ current.status === 1 ? '已处理' : '待处理' }}</text>
+            <text class="facts__v">{{ current.statusText }}</text>
           </view>
           <view class="facts__row">
             <text class="facts__k">产生时间</text>
@@ -109,6 +109,9 @@ import { useUser } from '@/composables/useUser.js'
 import { roleThemeStyle } from '@/composables/useRoleTheme.js'
 import { formatDate } from '@/utils/format.js'
 import { warningLevelText } from '@/utils/score.js'
+// 2026-10-02（W1.6）：这一页的数据源**就是预警表**（后端把 `warning_level` 改名成 `level`
+// 原样返回，见下面那条 note），所以 `status` 是 `academic_warning.status`，同样是三态。
+import { normalizeWarnings, warningStatusTagClass } from '@/utils/warning.js'
 
 const { userId } = useUser()
 const themeStyle = roleThemeStyle('collegeAdmin')
@@ -116,7 +119,8 @@ const themeStyle = roleThemeStyle('collegeAdmin')
 const statusOptions = [
   { label: '全部', value: '' },
   { label: '待处理', value: '0' },
-  { label: '已处理', value: '1' }
+  { label: '已处理', value: '1' },
+  { label: '已解除', value: '2' }
 ]
 
 const loading = ref(true)
@@ -128,10 +132,12 @@ const current = ref(null)
 
 const filtered = computed(() => {
   if (!statusFilter.value) return rows.value
-  return rows.value.filter(r => String(r.status === 1 ? 1 : 0) === statusFilter.value)
+  // 归一化后 status 已是 0/1/2，直接比字符串即可（原来先压成两态再比，2 会被并进 0）
+  return rows.value.filter(r => String(r.status) === statusFilter.value)
 })
 
-const pendingCount = computed(() => rows.value.filter(r => r.status !== 1).length)
+// 2026-10-02（W1.6）：`status !== 1` 会把"已解除(2)"算进待处理 ⇒ 只认 0。
+const pendingCount = computed(() => rows.value.filter(r => r.status === 0).length)
 
 /** 等级文案统一走 utils/score.js —— 这个接口把键名改成了 `level`，值仍是同一套。 */
 function levelText(v) {
@@ -149,10 +155,10 @@ async function load() {
   try {
     if (!userId) return
     const list = await collegeAdminAPI.getAssistance(userId)
-    // 待处理置顶，其余按时间倒序
-    rows.value = (Array.isArray(list) ? list : []).slice().sort((a, b) => {
-      const pa = a.status === 1 ? 1 : 0
-      const pb = b.status === 1 ? 1 : 0
+    // 待处理置顶，其余按时间倒序（`isPending` 由归一化给出，三态下"已解除"也排后）
+    rows.value = normalizeWarnings(Array.isArray(list) ? list : []).sort((a, b) => {
+      const pa = a.isPending ? 0 : 1
+      const pb = b.isPending ? 0 : 1
       if (pa !== pb) return pa - pb
       return String(b.createdAt || '').localeCompare(String(a.createdAt || ''))
     })

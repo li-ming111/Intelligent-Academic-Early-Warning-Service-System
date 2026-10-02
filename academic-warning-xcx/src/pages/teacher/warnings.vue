@@ -51,7 +51,7 @@
             </view>
             <view class="wrow__right">
               <warning-tag :level="w.level" />
-              <text class="tag" :class="w.isPending ? 'tag--warning' : 'tag--success'">{{ w.statusText }}</text>
+              <text class="tag" :class="warningStatusTagClass(w.status)">{{ w.statusText }}</text>
             </view>
           </view>
         </view>
@@ -62,7 +62,7 @@
       <view v-if="current" class="detail">
         <view class="detail__tags">
           <warning-tag :level="current.level" />
-          <text class="tag" :class="current.isPending ? 'tag--warning' : 'tag--success'">{{ current.statusText }}</text>
+          <text class="tag" :class="warningStatusTagClass(current.status)">{{ current.statusText }}</text>
           <text v-if="typeText" class="tag tag--type">{{ typeText }}</text>
         </view>
 
@@ -106,7 +106,7 @@ import { ref, computed, onMounted } from 'vue'
 import { teacherAPI } from '@/services/api.js'
 import { useUser } from '@/composables/useUser.js'
 import { roleThemeStyle } from '@/composables/useRoleTheme.js'
-import { normalizeWarnings } from '@/utils/warning.js'
+import { normalizeWarnings, warningStatusTagClass } from '@/utils/warning.js'
 import { WARNING_TYPE_TEXT, dictText } from '@/constants/dict.js'
 import { go } from '@/utils/navigate.js'
 
@@ -121,10 +121,13 @@ const levelFilter = ref('all')
 const detailOpen = ref(false)
 const current = ref(null)
 
+// 2026-10-02（W1.6）：补「已解除」。此前只有两档，status=2 的预警**点哪个筛选项都出不来**
+// —— 它既不是 pending 也不是 handled，两个条件都把它滤掉，看起来像"记录消失了"。
 const statusOptions = [
   { label: '全部', value: 'all' },
   { label: '待处理', value: 'pending' },
-  { label: '已处理', value: 'handled' }
+  { label: '已处理', value: 'handled' },
+  { label: '已解除', value: 'dispelled' }
 ]
 
 // 取值必须与 `warningLevelKey()` 一致（danger/medium/low）。
@@ -146,8 +149,9 @@ const typeText = computed(() => dictText(WARNING_TYPE_TEXT, current.value && cur
 /** 两个筛选条件都是"客户端过滤"：接口只支持按 status 过滤，
  *  数据量是几十条量级，一次全取回来再过滤比多次请求更快也更稳。 */
 const filtered = computed(() => warnings.value.filter((w) => {
-  if (statusFilter.value === 'pending' && !w.isPending) return false
-  if (statusFilter.value === 'handled' && w.isPending) return false
+  // 三态一一对应（原来是 `handled` 用 `!isPending` 表示，那会把"已解除"也并进"已处理"，
+  // 于是"已解除"永远筛不出来）
+  if (statusFilter.value !== 'all' && w.statusKey !== statusFilter.value) return false
   if (levelFilter.value !== 'all' && w.levelKey !== levelFilter.value) return false
   return true
 }))

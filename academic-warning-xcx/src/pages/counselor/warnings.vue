@@ -76,7 +76,7 @@
             <text class="warn-card__desc">{{ w.description || '暂无说明' }}</text>
 
             <view class="warn-card__foot">
-              <text class="tag" :class="w.isPending ? 'tag--warning' : 'tag--success'">{{ w.statusText }}</text>
+              <text class="tag" :class="warningStatusTagClass(w.status)">{{ w.statusText }}</text>
               <text class="warn-card__time">{{ w.createdDate }}</text>
               <view
                 v-if="!selectMode && w.isPending"
@@ -131,7 +131,10 @@ import { ref, computed, onMounted } from 'vue'
 import { counselorAPI } from '@/services/api.js'
 import { useUser } from '@/composables/useUser.js'
 import { roleThemeStyle } from '@/composables/useRoleTheme.js'
-import { normalizeWarnings, countWarnings } from '@/utils/warning.js'
+import { normalizeWarnings, countWarnings, warningStatusTagClass } from '@/utils/warning.js'
+// 文案只在 constants/dict.js 维护一份（`statusKey` 是字符串 ''/'0'/'1'/'2'，
+// 用字符串下标取数字键在 JS 里是同一格，取得到）
+import { WARNING_STATUS_TEXT } from '@/constants/dict.js'
 
 const { userId, userName } = useUser()
 
@@ -159,7 +162,9 @@ const avatarText = computed(() => (counselorName.value ? String(counselorName.va
 
 const summary = computed(() => countWarnings(rows.value))
 
-const statusLabel = computed(() => (statusKey.value === '0' ? '待处理' : '已处理'))
+// 2026-10-02（W1.6）：三态。原来只有"待处理/已处理"两档文案，
+// status=2（已解除）会落到 else 被显示成"已处理" —— 而它根本没被处理过。
+const statusLabel = computed(() => WARNING_STATUS_TEXT[statusKey.value] || '')
 
 const visible = computed(() => {
   if (statusKey.value === '') return rows.value
@@ -177,13 +182,16 @@ const studentCount = computed(() => {
   return ids.size
 })
 
-/** 四张卡与筛选条一一对应，点得进去、数得出来 */
+/** 卡片与筛选条一一对应，点得进去、数得出来。
+ *  2026-10-02（W1.6）：补「已解除」—— 三态各自成格后
+ *  `待处理 + 已处理 + 已解除 = 预警总数`，这个等式在页面上直接看得见。 */
 const heroStats = computed(() => {
   const s = summary.value
   return [
     { label: '预警总数', value: s.total },
     { label: '待处理', value: s.pending, onTap: () => pick('0', s.pending) },
     { label: '已处理', value: s.handled, onTap: () => pick('1', s.handled) },
+    { label: '已解除', value: s.dispelled, onTap: () => pick('2', s.dispelled) },
     { label: '涉及学生', value: studentCount.value }
   ]
 })
@@ -193,6 +201,7 @@ const statusOptions = computed(() => {
   const opts = [{ label: '全部', value: '', count: s.total }]
   if (s.pending > 0) opts.push({ label: '待处理', value: '0', count: s.pending })
   if (s.handled > 0) opts.push({ label: '已处理', value: '1', count: s.handled })
+  if (s.dispelled > 0) opts.push({ label: '已解除', value: '2', count: s.dispelled })
   return opts
 })
 

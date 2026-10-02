@@ -114,7 +114,7 @@
               </view>
               <view class="warn-row__right">
                 <warning-tag :level="w.level" />
-                <text class="tag" :class="w.isPending ? 'tag--warning' : 'tag--success'">{{ w.statusText }}</text>
+                <text class="tag" :class="warningStatusTagClass(w.status)">{{ w.statusText }}</text>
               </view>
             </view>
           </view>
@@ -131,7 +131,7 @@ import { ref, computed, onMounted } from 'vue'
 import { counselorAPI } from '@/services/api.js'
 import { useUser } from '@/composables/useUser.js'
 import { roleThemeStyle } from '@/composables/useRoleTheme.js'
-import { normalizeWarnings, countWarnings } from '@/utils/warning.js'
+import { normalizeWarnings, countWarnings, warningStatusTagClass } from '@/utils/warning.js'
 import { go } from '@/utils/navigate.js'
 
 const { userId, userName } = useUser()
@@ -172,7 +172,10 @@ const heroStats = computed(() => {
     { label: '带班学生', value: numOr(credit.value.totalStudents) },
     { label: '预警总数', value: s.total },
     { label: '待处理', value: s.pending, onTap: () => go('/pages/counselor/warnings') },
-    { label: '已处理', value: s.handled, onTap: () => go('/pages/counselor/warnings') }
+    { label: '已处理', value: s.handled, onTap: () => go('/pages/counselor/warnings') },
+    // 2026-10-02（W1.6）：补第三态。少了它，"总数"就不等于"待处理+已处理"
+    // —— 这个注释上面刚说过"一处数字只有一个来源"，状态桶也一样。
+    { label: '已解除', value: s.dispelled, onTap: () => go('/pages/counselor/warnings') }
   ]
 })
 

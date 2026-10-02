@@ -19,7 +19,7 @@
               <el-option label="严重" :value="3" /><el-option label="中度" :value="2" /><el-option label="轻度" :value="1" />
             </el-select>
             <el-select v-model="statusFilter" placeholder="状态" clearable size="small" style="width:90px">
-              <el-option label="待处理" :value="0" /><el-option label="已处理" :value="1" />
+              <el-option label="待处理" :value="0" /><el-option label="已处理" :value="1" /><el-option label="已解除" :value="2" />
             </el-select>
             <el-input v-model="search" placeholder="搜索学生/班级" clearable size="small" style="width:160px" />
             <el-button size="small" type="primary" :icon="RefreshRight" @click="loadData">刷新</el-button>
@@ -38,7 +38,7 @@
           <el-table-column prop="description" label="描述" min-width="200" show-overflow-tooltip />
           <el-table-column label="状态" width="80" align="center">
             <template #default="{ row }">
-              <el-tag :type="row.status == 1 ? 'success' : 'warning'" size="small">{{ row.status == 1 ? '已处理' : '待处理' }}</el-tag>
+              <el-tag :type="warningStatusTagType(row.status)" size="small">{{ warningStatusText(row.status) }}</el-tag>
             </template>
           </el-table-column>
           <el-table-column label="时间" width="105" align="center">
@@ -46,7 +46,7 @@
           </el-table-column>
           <el-table-column label="操作" min-width="150" align="center" fixed="right">
             <template #default="{ row }">
-              <el-button v-if="row.status != 1" link type="success" size="small" @click.stop="markProcessed(row)">标记已处理</el-button>
+              <el-button v-if="isPendingWarning(row.status)" link type="success" size="small" @click.stop="markProcessed(row)">标记已处理</el-button>
               <el-button link type="danger" size="small" @click.stop="handleDelete(row)">删除</el-button>
             </template>
           </el-table-column>
@@ -63,6 +63,8 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { collegeAdminAPI } from '@/api/index'
 import { RefreshRight } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+// 2026-10-02（W1.6）：状态是三态，文案/配色只在 utils/warning.js 维护一份
+import { warningStatusText, warningStatusTagType, isPendingWarning } from '@/utils/warning'
 
 const collegeName = ref('本院')
 const warnings = ref([])

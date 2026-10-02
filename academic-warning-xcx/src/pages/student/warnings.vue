@@ -100,7 +100,7 @@ import { ref, computed, onMounted } from 'vue'
 import { studentAPI } from '@/services/api.js'
 import { useUser } from '@/composables/useUser.js'
 import { roleThemeStyle } from '@/composables/useRoleTheme.js'
-import { normalizeWarnings, countWarnings } from '@/utils/warning.js'
+import { normalizeWarnings, countWarnings, warningStatusTagClass } from '@/utils/warning.js'
 import { warningLevelText } from '@/utils/score.js'
 
 const { userId, userName } = useUser()
@@ -156,9 +156,11 @@ function pick(level, count) {
   levelKey.value = levelKey.value === level ? '' : level
 }
 
-/** 状态标签配色复用 common.scss 的全局 .tag--* ，不在这里另起一套 --weak 变量。 */
+/** 状态标签配色复用 common.scss 的全局 .tag--* ，不在这里另起一套 --weak 变量。
+ *  2026-10-02（W1.6）：改为直接调共用层 —— 原来这里只有"已处理→绿 / 其余→黄"两支，
+ *  扩三态后"已解除"会落到黄色（看着像待办）。 */
 function statusTagClass(w) {
-  return w && w.statusKey === 'handled' ? 'tag--success' : 'tag--warning'
+  return warningStatusTagClass(w && w.status)
 }
 
 function openDetail(w) {

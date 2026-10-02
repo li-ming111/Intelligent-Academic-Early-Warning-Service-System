@@ -34,8 +34,8 @@
             <view class="warn__head">
               <warning-tag :level="w.warningLevel" />
               <text class="warn__name">{{ w.studentName || `学生 ${w.studentId}` }}</text>
-              <text class="tag" :class="w.status === 1 ? 'tag--success' : 'tag--warning'">
-                {{ w.status === 1 ? '已处理' : '待处理' }}
+              <text class="tag" :class="warningStatusTagClass(w.status)">
+                {{ w.statusText }}
               </text>
             </view>
             <text class="warn__desc">{{ w.description || w.warningMessage || '无说明' }}</text>
@@ -83,7 +83,7 @@
           </view>
           <view class="facts__row">
             <text class="facts__k">处理状态</text>
-            <text class="facts__v">{{ current.status === 1 ? '已处理' : '待处理' }}</text>
+            <text class="facts__v">{{ current.statusText }}</text>
           </view>
           <view class="facts__row">
             <text class="facts__k">申诉状态</text>
@@ -102,7 +102,7 @@
         <section-title plain title="预警说明" />
         <text class="paragraph">{{ current.description || current.warningMessage || '（无）' }}</text>
 
-        <template v-if="current.status === 1">
+        <template v-if="current.isHandled">
           <section-title plain title="处理记录" extra="来自 handle 接口" />
           <view class="facts">
             <view class="facts__row">
@@ -123,6 +123,11 @@
             这里按它实际的内容起名，写成"处理人"就与库里的事实不符。
           </text>
         </template>
+        <text v-else-if="current.isDispelled" class="note">
+          这条预警是**自动解除**的：定时扫描按成绩口径重算后发现已不再达阈值，把 status 置 2。
+          它没有经过人工处理，所以 `handle_result` / `handled_by` / `handled_at` 三列都是 NULL ——
+          这和"处理完了但没填备注"是两回事，别混为一谈。
+        </text>
         <text v-else class="note">
           还没有处理记录：`handle_result` / `handled_by` / `handled_at` 三列都是 NULL。
         </text>
@@ -171,10 +176,14 @@
             </view>
           </view>
           <view
-            v-if="current && current.status !== 1"
+            v-if="current && current.isPending"
             class="btn-primary footer-btn"
             @tap="enterHandle"
           >处理这条预警</view>
+          <view
+            v-else-if="current && current.isDispelled"
+            class="btn-primary btn-primary--disabled footer-btn"
+          >这条预警已自动解除</view>
           <view v-else class="btn-primary btn-primary--disabled footer-btn">这条预警已处理</view>
         </template>
 
@@ -196,6 +205,10 @@ import { ref, computed, onMounted } from 'vue'
 import { adminAPI } from '@/services/api.js'
 import { roleThemeStyle } from '@/composables/useRoleTheme.js'
 import { formatDate } from '@/utils/format.js'
+// 2026-10-02（W1.6）：状态是三态（0 待处理 / 1 已处理 / 2 已解除）。
+// 这一页原来自己写 `status === 1 ? '已处理' : '待处理'`，于是 status=2 被显示成"待处理"。
+// 收敛到共用层（`utils/warning.js`），页面不再自己判状态。
+import { normalizeWarning, normalizeWarnings, warningStatusTagClass } from '@/utils/warning.js'
 
 const themeStyle = roleThemeStyle('admin')
 
@@ -228,7 +241,9 @@ const filtered = computed(() => {
   return warnings.value.filter(w => String(w.warningLevel) === levelFilter.value)
 })
 
-const pendingCount = computed(() => warnings.value.filter(w => w.status !== 1).length)
+// 2026-10-02（W1.6）：原来是 `status !== 1`（"非已处理都算待处理"）⇒ status=2（已解除）
+// 被算进待处理，首页/列表上"待处理 N 条"永远偏高。改成只认 0。
+const pendingCount = computed(() => warnings.value.filter(w => w.status === 0).length)
 
 function levelText(level) {
   const n = Number(level)
@@ -290,7 +305,7 @@ async function load() {
       adminAPI.getWarnings().catch(e => { console.error('[admin warnings] 预警失败:', e); return null }),
       adminAPI.getRules().catch(e => { console.error('[admin warnings] 规则失败:', e); return null })
     ])
-    warnings.value = Array.isArray(w) ? w : []
+    warnings.value = normalizeWarnings(Array.isArray(w) ? w : [])
     rules.value = Array.isArray(r) ? r : []
   } finally {
     loading.value = false
@@ -306,7 +321,10 @@ function openDetail(w) {
   adminAPI.getWarningById(w.id)
     .then(fresh => {
       if (fresh && typeof fresh === 'object' && current.value && current.value.id === w.id) {
-        current.value = fresh
+        // ⚠️ 详情接口回的是**原始**实体，必须同样过一遍归一化 ——
+        // 否则这里一覆盖，上面 load() 归一化出来的 statusText/isHandled 就全没了，
+        // 页面又会退回自己判 status。这是"归一化只做了一半"最典型的一脚。
+        current.value = normalizeWarning(fresh)
       }
     })
     .catch(e => console.error('[admin warnings] 预警详情失败:', e))

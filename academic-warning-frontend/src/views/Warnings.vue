@@ -42,7 +42,9 @@
           <div class="wc-meta">
             <span class="wc-tag" v-if="w.courseName">{{ w.courseName }}</span>
             <span class="wc-time">{{ formatDate(w.createdAt) }}</span>
-            <el-tag size="small" :type="w.status===1?'success':'info'">{{ w.status===1?'已处理':'待处理' }}</el-tag>
+            <!-- 2026-10-02（W1.6）：原来是两态 `status===1 ? '已处理' : '待处理'`，
+                 status=2（已解除）会显示成"待处理" —— 学生分数已经上来了，通知里还说他待处理 -->
+            <el-tag size="small" :type="warningStatusTagType(w.status)">{{ warningStatusText(w.status) }}</el-tag>
           </div>
         </div>
         <div class="wc-actions">
@@ -136,6 +138,7 @@ import { ElMessage } from 'element-plus'
 import { studentAPI } from '@/api/index'
 import { getUserId } from '@/utils/userUtils'
 import { warningLevelText, warningLevelTagType } from '@/utils/score'
+import { warningStatusText, warningStatusTagType } from '@/utils/warning'
 
 const filterLevel = ref('')
 const allWarnings = ref([])

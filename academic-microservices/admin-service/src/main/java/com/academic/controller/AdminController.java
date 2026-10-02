@@ -3679,9 +3679,11 @@ public class AdminController {
             case "2" -> new String[]{"课程名称", "总人数", "及格人数", "不及格率", "平均分"};
             // 原表头是「预警等级 / 数量 / 处理状态 / 处理时间」，一行一个"等级×状态"的
             // 组合，但数据却是手写的三行假话，且"处理时间"对一个聚合行没有意义。
-            // 改成交叉表：一级一行，待处理/已处理/合计三列 —— 这正好是 academic_warning
-            // 真实能算出来的形状（活库 4 行：中级 3、低级 1，status 全 0）。
-            case "3" -> new String[]{"预警等级", "待处理", "已处理", "合计"};
+            // 改成交叉表：一级一行，按状态分列 —— 这正好是 academic_warning 真实能算出来的形状。
+            // 2026-10-02（W1.6）：状态是三态，所以"待处理/已处理"两列不够 ——
+            // `status=2`（已解除）原来被并进「待处理」列（`status == 1 ? 1 : 0`），
+            // 报表上"待处理"因此比实际多、且永远看不到"已解除"。补第三列。
+            case "3" -> new String[]{"预警等级", "待处理", "已处理", "已解除", "合计"};
             case "4" -> new String[]{"学院名称", "学生人数", "教师人数", "辅导员人数"};
             default -> new String[]{"序号", "数据1", "数据2", "数据3"};
         };
@@ -3786,15 +3788,15 @@ public class AdminController {
         return rows;
     }
 
-    /** 模板3：预警等级统计（等级 / 待处理 / 已处理 / 合计）。*/
+    /** 模板3：预警等级统计（等级 / 待处理 / 已处理 / 已解除 / 合计）。*/
     private List<List<String>> buildWarningStatRows() {
         List<List<String>> rows = new ArrayList<>();
         // 固定 1/2/3 三档，保证"某一档一条都没有"时也留一行 0（否则报表会缺档，
         // 看起来像漏了数据）。等级口径与 warning_rules.name 一致：低级/中级/高级预警。
         Map<Integer, long[]> byLevel = new LinkedHashMap<>();
-        byLevel.put(1, new long[2]);
-        byLevel.put(2, new long[2]);
-        byLevel.put(3, new long[2]);
+        byLevel.put(1, new long[3]);
+        byLevel.put(2, new long[3]);
+        byLevel.put(3, new long[3]);
         for (AcademicWarning w : academicWarningMapper.selectList(null)) {
             Integer level = w.getWarningLevel();
             if (level == null || !byLevel.containsKey(level)) {
@@ -3802,8 +3804,20 @@ public class AdminController {
                 // 与前端 buildWarningTrend「未识别等级不归入任何一条」同一口径。
                 continue;
             }
-            long[] slot = byLevel.get(level);
-            slot[(w.getStatus() != null && w.getStatus() == 1) ? 1 : 0]++;
+            // 2026-10-02（W1.6）：原来是 `status == 1 ? 1 : 0` 两桶 —— status=2（已解除）
+            // 被算进"待处理"。三态各占一格，认不出的（含 null）按待处理，与
+            // {@link com.academic.common.constant.WarningStatus} 同一口径。
+            int idx;
+            if (w.getStatus() == null) {
+                idx = 0;
+            } else {
+                idx = switch (w.getStatus()) {
+                    case com.academic.common.constant.WarningStatus.HANDLED -> 1;
+                    case com.academic.common.constant.WarningStatus.DISPELLED -> 2;
+                    default -> 0;
+                };
+            }
+            byLevel.get(level)[idx]++;
         }
         for (Map.Entry<Integer, long[]> e : byLevel.entrySet()) {
             long[] s = e.getValue();
@@ -3811,7 +3825,8 @@ public class AdminController {
                     warningLevelText(e.getKey()),
                     String.valueOf(s[0]),
                     String.valueOf(s[1]),
-                    String.valueOf(s[0] + s[1])));
+                    String.valueOf(s[2]),
+                    String.valueOf(s[0] + s[1] + s[2])));
         }
         return rows;
     }

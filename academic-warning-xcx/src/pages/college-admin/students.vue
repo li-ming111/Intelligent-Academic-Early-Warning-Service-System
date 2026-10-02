@@ -140,8 +140,8 @@
           <view v-for="w in warnings" :key="w.id" class="wrow">
             <view class="wrow__head">
               <warning-tag :level="w.warningLevel" />
-              <text class="tag" :class="w.status === 1 ? 'tag--success' : 'tag--warning'">
-                {{ w.status === 1 ? '已处理' : '待处理' }}
+              <text class="tag" :class="warningStatusTagClass(w.status)">
+                {{ w.statusText }}
               </text>
             </view>
             <text class="wrow__desc">{{ w.description || '无说明' }}</text>
@@ -177,6 +177,7 @@ import { useUser } from '@/composables/useUser.js'
 import { roleThemeStyle } from '@/composables/useRoleTheme.js'
 import { formatDate } from '@/utils/format.js'
 import { scoreText, scoreClass, gradeOf } from '@/utils/score.js'
+import { normalizeWarnings, warningStatusTagClass } from '@/utils/warning.js'
 import { go } from '@/utils/navigate.js'
 
 const { userId } = useUser()
@@ -208,7 +209,11 @@ const filtered = computed(() => {
 })
 
 const scores = computed(() => (detail.value && Array.isArray(detail.value.scores) ? detail.value.scores : []))
-const warnings = computed(() => (detail.value && Array.isArray(detail.value.warnings) ? detail.value.warnings : []))
+// 2026-10-02（W1.6）：过一遍归一化，模板才能用 `statusText` / `warningStatusTagClass`
+// （原来模板自己写 `status === 1 ? '已处理' : '待处理'`，status=2 会被显示成"待处理"）。
+const warnings = computed(() => normalizeWarnings(
+  detail.value && Array.isArray(detail.value.warnings) ? detail.value.warnings : []
+))
 
 const sheetTitle = computed(() => (detail.value && detail.value.name) || '学生详情')
 

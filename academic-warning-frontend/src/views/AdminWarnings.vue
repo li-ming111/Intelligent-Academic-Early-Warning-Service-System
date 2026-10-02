@@ -14,20 +14,22 @@
         <el-option label="严重" value="3" /><el-option label="中度" value="2" /><el-option label="轻度" value="1" />
       </el-select>
       <el-select v-model="filterStatus" placeholder="处理状态" clearable size="small" style="width:120px">
-        <el-option label="待处理" value="0" /><el-option label="已处理" value="1" />
+        <el-option label="待处理" value="0" /><el-option label="已处理" value="1" /><el-option label="已解除" value="2" />
       </el-select>
       <el-input v-model="searchName" placeholder="搜索学生姓名" clearable size="small" style="width:180px" />
     </div>
 
     <!-- 列表 -->
     <div class="aw-list" v-if="paged.length">
-      <div v-for="(w, i) in paged" :key="w.id" class="aw-card" :class="{ processed: w.status === 1 }" :style="{ animationDelay: i * 0.03 + 's' }">
+      <div v-for="(w, i) in paged" :key="w.id" class="aw-card" :class="{ processed: !isPendingWarning(w.status) }" :style="{ animationDelay: i * 0.03 + 's' }">
         <div class="awc-bar" :class="'lvl-'+w.warningLevel"></div>
         <div class="awc-body">
           <div class="awcb-top">
             <span class="awcb-name">{{ w.studentName }}</span>
             <span class="awcb-lvl" :class="'lvl-'+w.warningLevel">{{ levelLabel(w.warningLevel) }}</span>
-            <span class="awcb-sts" :class="w.status===1 ? 'ok' : 'pending'">{{ w.status === 1 ? '已处理' : '待处理' }}</span>
+            <!-- 2026-10-02（W1.6）：原来是 `status===1 ? '已处理' : '待处理'`，
+                 status=2（已解除）被显示成"待处理" —— 学生分数已经上来了，页面上还挂着待办 -->
+            <span class="awcb-sts" :class="warningStatusKey(w.status)">{{ warningStatusText(w.status) }}</span>
           </div>
           <p class="awcb-title">{{ w.title || w.warningMessage || w.description }}</p>
           <div class="awcb-meta">
@@ -37,14 +39,14 @@
           <!-- 回读：这三样是**库里真存了什么**（/admin/warnings 直接回 AcademicWarning 实体）。
                原来页面上一个字都不显示 —— 处理完到底记没记下、记的是谁，全靠猜，
                于是"处理成功"这句话没有任何东西能佐证。 -->
-          <div class="awcb-meta awcb-handled" v-if="w.status === 1">
+          <div class="awcb-meta awcb-handled" v-if="warningStatusKey(w.status) === 'handled'">
             <span>处理人：{{ w.handledBy || '未记录' }}</span>
             <span>{{ fmtTime(w.handledAt) || '--' }}</span>
             <span v-if="w.handleResult">结果：{{ w.handleResult }}</span>
           </div>
         </div>
-        <button v-if="w.status === 0" class="awc-btn" @click="quickProcess(w)">处理</button>
-        <span v-else class="awc-done">已处理</span>
+        <button v-if="isPendingWarning(w.status)" class="awc-btn" @click="quickProcess(w)">处理</button>
+        <span v-else class="awc-done" :class="{ 'awc-done--dispelled': warningStatusKey(w.status) === 'dispelled' }">{{ warningStatusText(w.status) }}</span>
       </div>
     </div>
     <div v-else class="aw-empty">暂无预警数据</div>
@@ -69,6 +71,8 @@
 import { ref, computed, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { adminAPI } from '@/api/index'
+// 2026-10-02（W1.6）：状态是三态，文案/配色只在 utils/warning.js 维护一份
+import { warningStatusText, warningStatusKey, isPendingWarning } from '@/utils/warning'
 
 const warnings = ref([])
 const filterLevel = ref('')
@@ -171,12 +175,18 @@ onMounted(loadData)
 .awcb-name { font-size: 14px; font-weight: 600; color: #1e293b; }
 .awcb-lvl,.awcb-sts { font-size: 10px; padding: 1px 7px; border-radius: 8px; font-weight: 600; margin-left: 6px; }
 .awcb-lvl.lvl-3 { background: #fef2f2; color: #ef4444; } .awcb-lvl.lvl-2 { background: #fffbeb; color: #d97706; } .awcb-lvl.lvl-1 { background: #eff6ff; color: #2563eb; }
-.awcb-sts.pending { background: #fef2f2; color: #ef4444; } .awcb-sts.ok { background: #ecfdf5; color: #16a34a; }
+/* 三态三色。原来只有 pending / ok 两支（`ok` 现在叫 `handled`），
+   2026-10-02（W1.6）补 `dispelled` —— 中性灰，与"已处理"的绿区分开：
+   绿色是"辅导员处理完了"，灰色是"分数上来了、系统自动写的"。 */
+.awcb-sts.pending { background: #fef2f2; color: #ef4444; }
+.awcb-sts.handled { background: #ecfdf5; color: #16a34a; }
+.awcb-sts.dispelled { background: #f3f4f6; color: #6b7280; }
 .awcb-title { margin: 4px 0; font-size: 12px; color: #64748b; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 360px; }
 .awcb-meta { display: flex; gap: 10px; font-size: 11px; color: #94a3b8; }
 .awc-btn { padding: 5px 14px; border-radius: 6px; border: 1px solid #93c5fd; background: #eff6ff; color: #2563eb; font-size: 12px; cursor: pointer; transition: all .2s; flex-shrink: 0; }
 .awc-btn:hover { background: #2563eb; color: #fff; }
 .awc-done { font-size: 12px; color: #16a34a; flex-shrink: 0; }
+.awc-done--dispelled { color: #6b7280; }
 .aw-empty { text-align: center; padding: 60px 20px; color: #94a3b8; font-size: 14px; }
 .aw-pager { display: flex; justify-content: center; padding-top: 18px; }
 @keyframes fadeUp { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
