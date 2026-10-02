@@ -45,6 +45,7 @@ import com.academic.feign.StudentServiceClient;
 import com.academic.feign.CounselorServiceClient;
 import com.academic.feign.CourseServiceClient;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import com.alibaba.csp.sentinel.annotation.SentinelResource;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.poi.ss.usermodel.*;
@@ -4456,6 +4457,85 @@ public class AdminController {
             return ApiResponse.success(result);
         } catch (Exception e) {
             log.error("Get permissions failed: {}", e.getMessage());
+            return ApiResponse.error(e.getMessage());
+        }
+    }
+
+    /**
+     * 修改一条权限的名称 / 描述（W1.16，2026-10-02）。
+     *
+     * <p>前端 `AdminPermissions.vue` 的「系统权限配置」表每行有一个「编辑」按钮，此前是
+     * `ElMessage.info('编辑功能开发中...')` —— 一个明确的未实现桩（同文件里角色的
+     * 新建/编辑/删除都在第二十四轮做掉了，这个被落下了）。
+     *
+     * <p><b>为什么 {@code code} 不可改</b>：它是**被别处按字面引用的标识符** ——
+     * 前端角色弹窗的权限多选框 `v-model="newRole.permissions"` 存的就是权限码数组，
+     * `resolvePermissions()` 也按码查表。让它可改等于给"绑定关系还在、码却变了"留一个口子。
+     * 传了 `code` 就明确报 400，而不是**静默忽略**（静默忽略会让调用方以为改成功了）。
+     *
+     * <p>⚠️ 用 {@code UpdateWrapper.set(...)} 而不是 {@code updateById(entity)}：
+     * MyBatis-Plus 默认更新策略是 NOT_NULL，**值为 null 的字段不进 UPDATE 语句** ⇒
+     * "把描述清空"用 `updateById` + `setDescription(null)` 是一句空话（本工程第三十二轮
+     * 刚在班级申请上踩过同一个坑）。
+     */
+    @PutMapping("/permissions/{permissionId}")
+    public ApiResponse<Map<String, Object>> updatePermission(@PathVariable Long permissionId,
+                                                             @RequestBody Map<String, Object> data) {
+        try {
+            com.academic.entity.Permission existing = permissionMapper.selectById(permissionId);
+            if (existing == null) {
+                return ApiResponse.notFound("权限不存在");
+            }
+            if (data == null) {
+                return ApiResponse.badRequest("请求体不能为空");
+            }
+            if (data.containsKey("code")) {
+                return ApiResponse.badRequest("权限码不可修改（前端与角色绑定都按权限码字面引用）");
+            }
+            if (!data.containsKey("name") && !data.containsKey("description")) {
+                return ApiResponse.badRequest("没有可修改的字段（只支持 name / description）");
+            }
+
+            UpdateWrapper<com.academic.entity.Permission> update = new UpdateWrapper<>();
+            update.eq("id", permissionId);
+
+            if (data.containsKey("name")) {
+                Object raw = data.get("name");
+                String name = raw == null ? null : String.valueOf(raw).trim();
+                if (name == null || name.isEmpty()) {
+                    return ApiResponse.badRequest("权限名称不能为空");
+                }
+                if (name.length() > 100) {
+                    return ApiResponse.badRequest("权限名称不能超过 100 个字符");
+                }
+                update.set("name", name);
+            }
+            if (data.containsKey("description")) {
+                Object raw = data.get("description");
+                // 空串与纯空白一律归成 null：这个字段是"有没有说明"，空串会被前端当成"有"
+                String desc = raw == null ? null : String.valueOf(raw).trim();
+                if (desc != null && desc.isEmpty()) {
+                    desc = null;
+                }
+                if (desc != null && desc.length() > 500) {
+                    return ApiResponse.badRequest("权限描述不能超过 500 个字符");
+                }
+                update.set("description", desc);
+            }
+            // 该列本身有 ON UPDATE CURRENT_TIMESTAMP，这里显式写一次与 admin-service 其余写路径一致
+            update.set("updated_at", LocalDateTime.now());
+
+            permissionMapper.update(null, update);
+
+            com.academic.entity.Permission saved = permissionMapper.selectById(permissionId);
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("id", saved.getId());
+            result.put("code", saved.getCode());
+            result.put("name", saved.getName());
+            result.put("description", saved.getDescription());
+            return ApiResponse.success(result);
+        } catch (Exception e) {
+            log.error("Update permission failed: {}", e.getMessage());
             return ApiResponse.error(e.getMessage());
         }
     }

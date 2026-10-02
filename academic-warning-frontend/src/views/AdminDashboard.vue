@@ -50,7 +50,7 @@
         <div class="ad-panel">
           <div class="adp-head"><span class="adp-title">待处理审批</span></div>
           <div class="adp-approvals">
-            <router-link to="/admin/class-management/pending-requests" class="adpa-item">
+            <router-link to="/admin/class-management" class="adpa-item">
               <div class="adpai-icon ic-amber"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></div>
               <div class="adpai-info"><span class="adpai-num">{{ pending.classRequests }}</span><span class="adpai-lbl">班级管理申请</span></div>
             </router-link>
@@ -166,7 +166,7 @@ const actions = [
   { key:'stats', icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>', label:'数据分析', link:'/admin/statistics', color:'r' },
   { key:'rules', icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>', label:'规则管理', link:'/admin/rules', color:'a' },
   { key:'permissions', icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>', label:'权限管理', link:'/admin/permissions', color:'t' },
-  { key:'classReq', icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>', label:'班级申请', link:'/admin/class-management/pending-requests', color:'y' },
+  { key:'classReq', icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>', label:'班级申请', link:'/admin/class-management', color:'y' },
 ]
 
 onMounted(async () => {

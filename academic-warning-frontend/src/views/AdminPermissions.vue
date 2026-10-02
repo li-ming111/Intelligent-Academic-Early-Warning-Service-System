@@ -278,6 +278,35 @@
         <el-button type="danger" @click="confirmDelete" :loading="deleteLoading">确认删除</el-button>
       </template>
     </el-dialog>
+
+    <!-- 编辑单条权限（2026-10-02 W1.16）：此前这里是个 toast 桩 -->
+    <el-dialog v-model="permissionDialogVisible" title="编辑权限" width="500px">
+      <el-form label-width="90px">
+        <el-form-item label="权限码">
+          <el-input :model-value="editingPermission?.code" disabled />
+          <div class="form-tip">
+            权限码是前端角色绑定与后端按字面引用的标识符，不可修改。
+          </div>
+        </el-form-item>
+        <el-form-item label="权限名称">
+          <el-input v-model="permissionForm.name" maxlength="100" show-word-limit placeholder="请输入权限名称" />
+        </el-form-item>
+        <el-form-item label="权限描述">
+          <el-input
+            v-model="permissionForm.description"
+            type="textarea"
+            :rows="3"
+            maxlength="500"
+            show-word-limit
+            placeholder="留空即清除描述"
+          />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="permissionDialogVisible = false">取消</el-button>
+        <el-button type="primary" @click="savePermission" :loading="permissionSaving">保存</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -320,6 +349,15 @@ const pendingDeleteIds = ref([])
 const deleteCount = computed(() => pendingDeleteIds.value.length)
 
 const availablePermissions = ref([])
+
+// —— 单条权限的编辑弹窗（2026-10-02 W1.16）——
+// 此前 `editPermission` 只有一句 `ElMessage.info('编辑功能开发中...')`：
+// 按钮点了有反馈、弹窗不开、库里不动。现在真打 `PUT /admin/permissions/{id}`。
+const permissionDialogVisible = ref(false)
+const permissionSaving = ref(false)
+/** 正在编辑的那条权限（null = 弹窗没开）。 */
+const editingPermission = ref(null)
+const permissionForm = ref({ name: '', description: '' })
 
 // 计算属性
 const filteredUsers = computed(() => {
@@ -508,9 +546,49 @@ const batchDeleteRoles = () => {
   deleteDialogVisible.value = true
 }
 
-// 编辑权限
+// 编辑权限（2026-10-02 W1.16）
+//
+// 此前是 `ElMessage.info('编辑功能开发中...')` —— 同文件里角色的新建/编辑/删除
+// 都在第二十四轮做掉了，这个被落下。现在打开弹窗、真打后端。
+//
+// 只允许改 名称 / 描述：`code` 是被前端角色弹窗（`v-model="newRole.permissions"`
+// 存的就是权限码数组）与 `resolvePermissions` 按字面引用的标识符，改了会留下
+// "绑定还在、码却变了"的口子，所以弹窗里显示为禁用。
 const editPermission = (permission) => {
-  ElMessage.info('编辑功能开发中...')
+  editingPermission.value = permission
+  permissionForm.value = {
+    name: permission.name || '',
+    description: permission.description || ''
+  }
+  permissionDialogVisible.value = true
+}
+
+const savePermission = async () => {
+  const target = editingPermission.value
+  if (!target || permissionSaving.value) return
+  const name = String(permissionForm.value.name || '').trim()
+  if (!name) {
+    ElMessage.error('权限名称不能为空')
+    return
+  }
+  permissionSaving.value = true
+  try {
+    // ⚠️ 描述要**显式传空串**而不是省略：省略等于"不改这一列"（后端只改传了的字段），
+    //    而这里用户的意图是"我把描述清掉了"。后端会把空串归成 NULL。
+    await adminAPI.updatePermission(target.id, {
+      name,
+      description: String(permissionForm.value.description || '').trim()
+    })
+    ElMessage.success('权限已更新')
+    permissionDialogVisible.value = false
+    editingPermission.value = null
+    await loadPermissions()
+  } catch (error) {
+    // 后端把"名称空/带 code/权限不存在"翻成 400/404，message 就是原因，直接透出来
+    ElMessage.error(error?.message || '更新权限失败')
+  } finally {
+    permissionSaving.value = false
+  }
 }
 
 // 创建 / 保存角色
@@ -684,6 +762,14 @@ const handlePageSizeChange = () => {
 .delete-warning .warning-text {
   color: #F56C6C;
   font-size: 14px;
+}
+
+/* 编辑权限弹窗里的说明行（W1.16） */
+.form-tip {
+  margin-top: 4px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #909399;
 }
 
 .admin-permissions :deep(.el-card) {

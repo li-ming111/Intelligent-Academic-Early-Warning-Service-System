@@ -900,6 +900,12 @@ export const adminAPI = {
   deleteRole: (roleId) => {
     return apiClient.delete(`/admin/permissions/roles/${roleId}`)
   },
+  // 修改单条权限的名称/描述（2026-10-02 W1.16）。权限码 `code` **不可改** ——
+  // 它是被前端角色弹窗与 `resolvePermissions` 按字面引用的标识符，后端传了 `code` 会回 400。
+  // 空描述要传 `''`（后端归成 NULL）；传 `undefined` 会被 JSON 丢掉、等于"不改这一列"。
+  updatePermission: (permissionId, data) => {
+    return apiClient.put(`/admin/permissions/${permissionId}`, data)
+  },
   // ⚠️ 契约是 {userId, role}（数值），不是 {user_id, role_id}。
   // 原来的唯一调用方发的就是后者 ⇒ 后端 NPE 被吞成 body code 500 ⇒ 这一格从来没保存成功过。
   assignRole: (data) => {
