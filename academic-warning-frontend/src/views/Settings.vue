@@ -93,7 +93,7 @@
             </div>
             <div class="ss-sec-item">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="24" height="24"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
-              <div><strong>上次登录</strong><span>刚刚 · Windows</span></div>
+              <div><strong>上次登录</strong><span>{{ lastLoginText }}</span></div>
             </div>
           </div>
         </el-card>
@@ -104,8 +104,8 @@
             <div v-for="l in logs" :key="l.id" class="ss-log">
               <div class="ssl-dot" :class="l.status==='success'?'ok':'fail'"></div>
               <div class="ssl-body">
-                <div class="ssl-main">{{ l.loginTime }} · {{ l.device }}</div>
-                <div class="ssl-sub">{{ l.ipAddress }} · {{ l.location }}</div>
+                <div class="ssl-main">{{ formatTime(l.loginTime) }} · {{ deviceText(l.device) }}</div>
+                <div class="ssl-sub">{{ l.ipAddress || '未知 IP' }}<template v-if="l.location"> · {{ l.location }}</template></div>
               </div>
               <span class="ssl-tag" :class="l.status==='success'?'ok':'fail'">{{ l.status==='success'?'成功':'失败' }}</span>
             </div>
@@ -131,9 +131,52 @@ const profileLoaded = ref(false)
 const entranceYear = computed(() => (userInfo.studentId || '').substring(0,4) || '--')
 const pw = reactive({ old:'', newPw:'', confirm:'' })
 const privacy = reactive({ scoreVis:'1' })
+// 登录历史：2026-10-02 起是真数据（user-service 的 LoginLogService 在每次登录时写
+// `login_logs`，读取口是 `GET /users/{uid}/login-logs`）。
+// 此前这个数组声明后**从不赋值**，而「上次登录」那一格写死了「刚刚 · Windows」——
+// 一个永远空、一个永远是假的。
 const logs = ref([])
 
-onMounted(async () => { await loadInfo() })
+/** 上一行成功的登录**不是**"上次登录" —— 那正是当前这次会话，所以取倒数第二条。 */
+const lastLoginText = computed(() => {
+  const ok = logs.value.filter(l => l.status === 'success')
+  if (!ok.length) return '暂无记录'
+  if (ok.length === 1) return '本次为首次登录'
+  return `${formatTime(ok[1].loginTime)} · ${deviceText(ok[1].device)}`
+})
+
+/** 后端给的是 ISO（`2026-10-02T11:30:00`），与教师端审计日志页同一写法。 */
+function formatTime(v) {
+  if (!v) return '--'
+  return String(v).replace('T', ' ').substring(0, 19)
+}
+
+/** User-Agent 太长，取"系统 / 浏览器"两段就够认人；取不到时不编一个平台出来。 */
+function deviceText(ua) {
+  if (!ua) return '未知设备'
+  const os = /Windows NT/i.test(ua) ? 'Windows'
+    : /Macintosh|Mac OS X/i.test(ua) ? 'macOS'
+    : /Android/i.test(ua) ? 'Android'
+    : /iPhone|iPad|iOS/i.test(ua) ? 'iOS'
+    : /Linux/i.test(ua) ? 'Linux' : null
+  const browser = /Edg\//i.test(ua) ? 'Edge'
+    : /Chrome\//i.test(ua) ? 'Chrome'
+    : /Firefox\//i.test(ua) ? 'Firefox'
+    : /Safari\//i.test(ua) ? 'Safari' : null
+  if (os && browser) return `${os} · ${browser}`
+  return os || browser || ua.substring(0, 40)
+}
+
+onMounted(async () => { await loadInfo(); await loadLogs() })
+
+async function loadLogs() {
+  const uid = getUserId(); if (!uid) return
+  try {
+    // 响应拦截器（api/client.js）已经解包到 `data.data`，这里拿到的就是数组本身。
+    const res = await studentAPI.getLoginLogs(uid)
+    logs.value = Array.isArray(res) ? res : []
+  } catch (e) { console.error('加载登录历史失败', e) }
+}
 
 async function loadInfo() {
   const uid = getUserId(); if (!uid) return

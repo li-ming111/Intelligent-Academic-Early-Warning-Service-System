@@ -57,6 +57,11 @@ export const studentAPI = {
   getSettings: (userId) => {
     return apiClient.get(`/users/${userId}/settings`)
   },
+  // 登录历史（「设置 → 安全日志」）。2026-10-02 起 login_logs 真的有写入方了
+  // （user-service 的 LoginLogService，登录成功/失败各记一条），这个口才有意义。
+  getLoginLogs: (userId) => {
+    return apiClient.get(`/users/${userId}/login-logs`)
+  },
   getStudentInfo: (studentId) => {
     return apiClient.get(`/students/${studentId}`)
   },
@@ -899,6 +904,11 @@ export const adminAPI = {
   },
   getLoginLogs: (userId) => {
     return apiClient.get(`/admin/login-logs/${userId}`)
+  },
+  // 操作日志（审计日志）。2026-10-02 起 audit_logs 有写入方了：管理端的关键写操作
+  // （账号增删改/重置口令/启停/审批、预警规则增删改、预警处理、申诉审核）各记一条。
+  getAuditLogs: (params) => {
+    return apiClient.get('/admin/audit-logs', { params })
   },
   getUserById: (userId) => {
     return apiClient.get(`/admin/users/${userId}`)

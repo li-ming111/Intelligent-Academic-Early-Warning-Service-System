@@ -50,6 +50,9 @@ class UserControllerTest {
     @Mock
     private UserSettingsMapper userSettingsMapper;
 
+    @Mock
+    private com.academic.mapper.LoginLogMapper loginLogMapper;
+
     @InjectMocks
     private UserController controller;
 
@@ -228,5 +231,56 @@ class UserControllerTest {
 
         assertTrue(controller.getSettings(ME).isSuccess());
         assertFalse(controller.getSettings(99L).isSuccess());
+    }
+
+    // ==================== 登录历史：本人 vs 别人 ====================
+
+    /**
+     * 登录历史是**本人隐私**：本人可查、管理员可查、别的学生查不到。
+     *
+     * <p>不判归属的话，任何一个已登录学生遍历 {@code userId} 就能看到全校师生的
+     * 登录时间与 IP —— 这是比"页面空着"严重得多的缺陷。
+     */
+    @Test
+    void loginLogs_selfAllowedButOtherRejected() {
+        stubMe();
+        when(loginLogMapper.selectList(any())).thenReturn(Collections.emptyList());
+
+        assertTrue(controller.getLoginLogs(ME).isSuccess());
+        assertFalse(controller.getLoginLogs(99L).isSuccess());
+        // 被拒的那次不能真去查库
+        verify(loginLogMapper, times(1)).selectList(any());
+    }
+
+    /** 管理员查任意用户的登录历史 → 放行（管理端「用户详情 → 登录日志」走这条）。 */
+    @Test
+    void loginLogs_adminCanReadAnyone() {
+        authenticateAs(4, "admin");
+        when(loginLogMapper.selectList(any())).thenReturn(Collections.emptyList());
+
+        assertTrue(controller.getLoginLogs(99L).isSuccess());
+    }
+
+    /** 返回体是给前端直接渲染的 Map：六个 key 一个都不能少，否则页面某格恒空。 */
+    @Test
+    void loginLogs_returnsRenderableFields() {
+        stubMe();
+        com.academic.entity.LoginLog entry = new com.academic.entity.LoginLog();
+        entry.setId(7L);
+        entry.setUserId(ME);
+        entry.setUsername("2023020616");
+        entry.setIpAddress("203.0.113.7");
+        entry.setDevice("Mozilla/5.0");
+        entry.setStatus("success");
+        entry.setLoginTime(java.time.LocalDateTime.of(2026, 10, 2, 11, 30));
+        when(loginLogMapper.selectList(any())).thenReturn(Collections.singletonList(entry));
+
+        Map<String, Object> row = controller.getLoginLogs(ME).getData().get(0);
+
+        assertEquals(7L, row.get("id"));
+        assertEquals("203.0.113.7", row.get("ipAddress"));
+        assertEquals("Mozilla/5.0", row.get("device"));
+        assertEquals("success", row.get("status"));
+        assertEquals(java.time.LocalDateTime.of(2026, 10, 2, 11, 30), row.get("loginTime"));
     }
 }

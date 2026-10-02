@@ -51,11 +51,14 @@ public class AuthController {
      * @return 登录响应，包含令牌和用户信息
      */
             @PostMapping("/login")
-    public ApiResponse<Object> login(@RequestBody Map<String, Object> request) {
+    public ApiResponse<Object> login(@RequestBody Map<String, Object> request,
+                                     HttpServletRequest httpRequest) {
         try {
             log.info("User login request: {}", request);
-            // 直接返回登录响应，不解析JSON
-            Object response = userService.login(request);
+            // 直接返回登录响应，不解析JSON。
+            // 带 httpRequest 是为了把这次登录记进 `login_logs`（客户端 IP / UA 只有这里拿得到）——
+            // 此前那张表**全仓无写入方**，学生端「登录历史」与管理员端「登录日志」永远空。
+            Object response = userService.login(request, httpRequest);
             log.info("Login successful");
             return ApiResponse.success(response);
         } catch (Exception e) {

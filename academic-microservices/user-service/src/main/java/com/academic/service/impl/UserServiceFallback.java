@@ -81,6 +81,12 @@ public class UserServiceFallback implements UserService {
     }
 
     @Override
+    public Object login(Map<String, Object> request, jakarta.servlet.http.HttpServletRequest httpRequest) {
+        // 降级路径下没有"登录成功"这回事，自然也没有 login_logs 可写
+        return ApiResponse.error("登录服务暂时不可用，请稍后重试");
+    }
+
+    @Override
     public String register(Object request, Integer role) {
         // 降级时**抛异常**，不返回字符串 —— 返回的字符串会被 controller 包成
         // ApiResponse.success(...)，于是"服务不可用"在响应里变成 success:true（修复前的形状）。

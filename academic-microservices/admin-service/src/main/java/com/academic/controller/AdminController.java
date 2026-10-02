@@ -75,6 +75,19 @@ public class AdminController {
     @Autowired
     private com.academic.mapper.LoginLogMapper loginLogMapper;
 
+    /**
+     * 审计日志写入（2026-10-02 补的写入方）。
+     *
+     * <p>{@code audit_logs} 此前**全仓零写入方**（0 行），而「用户详情」页的操作日志计数
+     * 一直读它 ⇒ 恒 0。现在下面这些关键写操作各记一条：账号增删改/重置口令/启停/审批、
+     * 预警规则增删改、预警处理、申诉审核。
+     */
+    @Autowired
+    private com.academic.service.AuditLogService auditLogService;
+
+    @Autowired
+    private com.academic.mapper.AuditLogMapper auditLogMapper;
+
     @Autowired
     private UserService userService;
 
@@ -244,12 +257,14 @@ public class AdminController {
      *
      * <p>这次改成从**三张真有写入方的表**里取最近发生的事，按时间倒序合并：
      * <ul>
-     *   <li>{@code login_logs}（41 行，auth-service 每次登录写一条）→「X 登录系统」</li>
+     *   <li>{@code login_logs}（写入方是 user-service 的 {@code LoginLogService}，每次登录写一条）→「X 登录系统」</li>
      *   <li>{@code academic_warning}（预警引擎/定时任务写）→「系统生成学业预警」</li>
      *   <li>{@code export_history}（本类各导出方法写）→「导出 X 数据」</li>
      * </ul>
-     * 刻意**不**用 {@code audit_logs}/{@code security_logs}：这两张表当前都是 0 行、
-     * 全仓也没有任何 Java 写入方，接上去只会再造一个"恒空"。
+     * 刻意**不**用 {@code audit_logs}/{@code security_logs}：{@code security_logs} 至今
+     * 0 行且全仓无写入方，接上去只会再造一个"恒空"；{@code audit_logs} 2026-10-02 起有了
+     * 写入方（见 {@code AuditLogService}），但它有自己的专页（「操作日志」，
+     * 读 {@code /admin/audit-logs}），混进"系统动态"里只会让两种日志互相淹没。
      *
      * <p>时间一律取各表自己的时间列，不掺 {@code LocalDateTime.now()} —— 否则每条动态
      * 都会显示成"刚刚"，看起来热闹，实际是在编时间。
@@ -542,6 +557,8 @@ public class AdminController {
         result.put("id", id);
         result.put("status", status);
         result.put("reply", reply);
+        auditLogService.record("REVIEW", "APPEAL", id,
+                (status == 1 ? "通过" : "驳回") + "成绩申诉（课程：" + courseName + "）");
         return ApiResponse.success(result);
     }
 
@@ -669,6 +686,8 @@ public class AdminController {
             createProfileIfNeeded(user);
 
             log.info("User created: id={}, username={}, role={}", user.getId(), user.getUsername(), user.getRole());
+            auditLogService.record("CREATE", "USER", user.getId(),
+                    "新建账号 " + user.getUsername() + "（角色 " + getRoleNameText(user.getRole()) + "）");
             return ApiResponse.success("User created successfully");
         } catch (Exception e) {
             log.error("Create user failed: {}", e.getMessage());
@@ -751,6 +770,10 @@ public class AdminController {
             userService.updateUser(user);
             log.info("User updated: id={}, username={}, passwordChanged={}",
                     id, user.getUsername(), user.getPassword() != null);
+            // 口令是否被改也记进审计：这是最该留痕的一类操作。
+            auditLogService.record("UPDATE", "USER", id,
+                    "修改账号 " + user.getUsername()
+                            + (user.getPassword() != null ? "（含重置口令）" : ""));
             return ApiResponse.success("User updated successfully");
         } catch (Exception e) {
             log.error("Update user failed: {}", e.getMessage());
@@ -815,6 +838,8 @@ public class AdminController {
             // 角色 4（系统管理员）没有对应的 profile 表，只删账号行。
 
             userService.removeById(id);
+            auditLogService.record("DELETE", "USER", id,
+                    "删除账号 " + user.getUsername() + "（角色 " + getRoleNameText(user.getRole()) + "）");
             return ApiResponse.success("User deleted successfully");
         } catch (Exception e) {
             log.error("Delete user failed: {}", e.getMessage());
@@ -879,6 +904,7 @@ public class AdminController {
             user.setPassword(passwordEncoder.encode(defaultPassword));
             userService.updateById(user);
             log.info("Reset password to demo default for user id={}, username={}", id, user.getUsername());
+            auditLogService.record("RESET_PASSWORD", "USER", id, "重置账号 " + user.getUsername() + " 的登录口令");
             return ApiResponse.success("密码已重置为演示口令 123456（系统无邮件服务，特此明示）");
         } catch (Exception e) {
             log.error("Reset password failed: {}", e.getMessage());
@@ -904,6 +930,8 @@ public class AdminController {
                 user.setStatus(1);
             }
             userService.updateById(user);
+            auditLogService.record("TOGGLE_STATUS", "USER", id,
+                    (user.getStatus() == 1 ? "启用" : "停用") + "账号 " + user.getUsername());
             return ApiResponse.success(user.getStatus() == 1 ? "User enabled" : "User disabled");
         } catch (Exception e) {
             log.error("Toggle status failed: {}", e.getMessage());
@@ -921,11 +949,59 @@ public class AdminController {
             user.setStatus(1); // 审批通过，设为活跃
             userService.updateById(user);
             log.info("User approved: id={}, username={}", id, user.getUsername());
+            auditLogService.record("APPROVE", "USER", id, "审批通过账号 " + user.getUsername());
             return ApiResponse.success("审批通过，用户已激活");
         } catch (Exception e) {
             log.error("Approve user failed: {}", e.getMessage());
             return ApiResponse.error(e.getMessage());
         }
+    }
+
+    /**
+     * 操作日志（审计日志）分页列表 —— 管理端「操作日志」视图的数据源。
+     *
+     * <p>2026-10-02 之前 {@code audit_logs} 零写入方、也没有任何列表读取口，只有
+     * 「用户详情」页一个 {@code COUNT(*)}。现在写入方是 {@link com.academic.service.AuditLogService}
+     * （账号增删改/重置口令/启停/审批、预警规则增删改、预警处理、申诉审核各记一条），
+     * 读取口是这里。
+     *
+     * <p>空串过滤条件归一成 {@code null}（前端下拉"全部"提交的是空串，直接塞进
+     * {@code <if test='x != null'>} 会变成一个永远不匹配的 {@code = ''}）。
+     */
+    @GetMapping("/audit-logs")
+    public ApiResponse<Map<String, Object>> getAuditLogs(
+            @RequestParam(defaultValue = "1") Integer page,
+            @RequestParam(defaultValue = "20") Integer size,
+            @RequestParam(required = false) String entityType,
+            @RequestParam(required = false) String actionType) {
+        try {
+            String entity = blankToNull(entityType);
+            String action = blankToNull(actionType);
+            int p = (page == null || page < 1) ? 1 : page;
+            int s = (size == null || size < 1) ? 20 : Math.min(size, 200);
+
+            long total = auditLogMapper.countWithFilter(entity, action);
+            List<Map<String, Object>> items = auditLogMapper.selectPageWithActor(
+                    entity, action, (p - 1) * s, s);
+
+            Map<String, Object> result = new HashMap<>();
+            result.put("total", total);
+            result.put("items", items);
+            result.put("page", p);
+            result.put("size", s);
+            return ApiResponse.success(result);
+        } catch (Exception e) {
+            log.error("Get audit logs failed: {}", e.getMessage());
+            return ApiResponse.error(e.getMessage());
+        }
+    }
+
+    private static String blankToNull(String text) {
+        if (text == null) {
+            return null;
+        }
+        String trimmed = text.trim();
+        return trimmed.isEmpty() || "all".equalsIgnoreCase(trimmed) ? null : trimmed;
     }
 
     @GetMapping("/login-logs/{userId}")
@@ -1481,6 +1557,8 @@ public class AdminController {
     @PostMapping("/rules")
     public ApiResponse<String> createRule(@RequestBody WarningRule rule) {
         warningRuleService.save(rule);
+        auditLogService.record("CREATE", "WARNING_RULE", rule.getId(),
+                "新建预警规则 " + rule.getRuleName());
         return ApiResponse.success("Rule created successfully");
     }
 
@@ -1488,12 +1566,15 @@ public class AdminController {
     public ApiResponse<String> updateRule(@PathVariable Long id, @RequestBody WarningRule rule) {
         rule.setId(id);
         warningRuleService.updateById(rule);
+        // 预警阈值被改动会直接影响哪些学生被判预警，是必须留痕的一类操作。
+        auditLogService.record("UPDATE", "WARNING_RULE", id, "修改预警规则 " + rule.getRuleName());
         return ApiResponse.success("Rule updated successfully");
     }
 
     @DeleteMapping("/rules/{id}")
     public ApiResponse<String> deleteRule(@PathVariable Long id) {
         warningRuleService.removeById(id);
+        auditLogService.record("DELETE", "WARNING_RULE", id, "删除预警规则 id=" + id);
         return ApiResponse.success("Rule deleted successfully");
     }
 
@@ -1817,6 +1898,9 @@ public class AdminController {
             academicWarningMapper.updateById(warning);
 
             log.info("Handled warning {}: result={}, remark={}, handledBy={}", id, handleResult, remark, handledBy);
+            auditLogService.record("HANDLE", "WARNING", id,
+                    "处理学业预警：" + handleResult
+                            + (warning.getStudentName() == null ? "" : "（学生 " + warning.getStudentName() + "）"));
             return ApiResponse.success("Warning handled successfully");
         } catch (Exception e) {
             log.error("Handle warning failed: {}", e.getMessage());

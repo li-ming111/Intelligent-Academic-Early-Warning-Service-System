@@ -6,6 +6,7 @@ import com.academic.common.entity.User;
 import com.academic.common.entity.UserSettings;
 import com.academic.mapper.RegistrationMapper;
 import com.academic.mapper.UserMapper;
+import com.academic.service.LoginLogService;
 import com.academic.util.JwtUtil;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -49,6 +50,12 @@ class UserServiceImplTest {
 
     @Mock
     private JwtUtil jwtUtil;
+
+    // 登录会往 `login_logs` 记一条（2026-10-02 补的写入方）。
+    // ⚠️ 这个 mock 不是可有可无的：漏了它，login() 里那句 record(...) 会 NPE，
+    // 被方法外层那个 catch 吞成"登录失败" —— 三条登录用例一起变红。
+    @Mock
+    private LoginLogService loginLogService;
 
     @InjectMocks
     private UserServiceImpl userService;
@@ -175,6 +182,69 @@ class UserServiceImplTest {
 
         assertEquals("error", map.get("status"));
         assertEquals("账号正在审批中，请等待管理员审核", map.get("message"));
+    }
+
+    // ==================== login_logs 写入方（2026-10-02 补） ====================
+    //
+    // 这三条钉的是"登录这件事真的被记下来了"。此前 `login_logs` 全仓零写入方，
+    // 学生端「登录历史」/管理员端「用户登录日志」/小程序「登录日志」三个页面永远空。
+    // 只断言登录返回值的话，把 record(...) 三行全删掉测试照样绿 —— 所以必须断言写入方。
+
+    /** 登录成功 → 记一条 status=success。 */
+    @Test
+    void testLogin_successWritesLoginLog() {
+        User user = new User()
+                .setId(27L)
+                .setUsername("2023020616")
+                .setPassword("$2a$10$abcdefghijklmnopqrstuv")
+                .setRole(1)
+                .setStatus(1);
+
+        when(userMapper.selectOne(any())).thenReturn(user);
+        when(passwordEncoder.matches("123456", user.getPassword())).thenReturn(true);
+        when(jwtUtil.generateToken(27L, "2023020616", 1)).thenReturn("access-token");
+        when(jwtUtil.generateRefreshToken(27L, "2023020616")).thenReturn("refresh-token");
+
+        userService.login(body("username", "2023020616", "password", "123456"));
+
+        ArgumentCaptor<User> who = ArgumentCaptor.forClass(User.class);
+        verify(loginLogService).record(who.capture(), eq("success"), isNull());
+        assertEquals(27L, who.getValue().getId(), "记的必须是真实用户行（login_logs.user_id 有非空约束）");
+    }
+
+    /** 密码错 → 记一条 status=failed（用户名存在，所以有 id 可写）。 */
+    @Test
+    void testLogin_wrongPasswordWritesFailedLoginLog() {
+        User user = new User()
+                .setId(27L)
+                .setUsername("2023020616")
+                .setPassword("$2a$10$abcdefghijklmnopqrstuv")
+                .setRole(1)
+                .setStatus(1);
+
+        when(userMapper.selectOne(any())).thenReturn(user);
+        when(passwordEncoder.matches("wrong", user.getPassword())).thenReturn(false);
+
+        userService.login(body("username", "2023020616", "password", "wrong"));
+
+        verify(loginLogService).record(user, "failed", null);
+    }
+
+    /**
+     * 用户名根本不存在 → **一条都不写**。
+     *
+     * <p>不是遗漏，是刻意：{@code login_logs.user_id} 是 NOT NULL 且无外键，
+     * 没有 id 可填。写 0 会造出指向不存在用户的悬空引用（本项目在
+     * {@code messages.sender_id} 上踩过同一个坑，恒设 0 导致每次插入都 ERROR 1452）。
+     * 这种情况 {@code LoginLogService} 自己记 warn 跳过。
+     */
+    @Test
+    void testLogin_unknownUsernameWritesNoLoginLog() {
+        when(userMapper.selectOne(any())).thenReturn(null);
+
+        userService.login(body("username", "查无此人", "password", "123456"));
+
+        verifyNoInteractions(loginLogService);
     }
 
     /** 正常注册 → 落库前密码被加密成 BCrypt 格式；手机号/邮箱一并落库。 */

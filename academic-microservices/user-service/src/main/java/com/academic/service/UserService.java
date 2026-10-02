@@ -62,6 +62,14 @@ public interface UserService {
     Object login(Map<String, Object> request);
 
     /**
+     * 用户登录，并记一条 {@code login_logs}。
+     *
+     * <p>与 {@link #login(Map)} 的唯一区别是多带一个请求上下文（用于取客户端 IP 与 UA）。
+     * {@code httpRequest} 为 {@code null} 时只是不记日志，登录结果完全一致。
+     */
+    Object login(Map<String, Object> request, jakarta.servlet.http.HttpServletRequest httpRequest);
+
+    /**
      * 用户注册
      * <p>
      * ⚠️ <b>角色不来自请求体</b>：由调用方（{@code AuthController} 的各个 register 端点）

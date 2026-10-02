@@ -6,8 +6,10 @@ import com.academic.common.entity.User;
 import com.academic.common.entity.UserSettings;
 import com.academic.mapper.RegistrationMapper;
 import com.academic.mapper.UserMapper;
+import com.academic.service.LoginLogService;
 import com.academic.service.UserService;
 import com.academic.util.JwtUtil;
+import jakarta.servlet.http.HttpServletRequest;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import lombok.extern.slf4j.Slf4j;
@@ -31,13 +33,16 @@ public class UserServiceImpl implements UserService {
     private final RegistrationMapper registrationMapper;
     private final PasswordEncoder passwordEncoder;
     private final JwtUtil jwtUtil;
+    private final LoginLogService loginLogService;
 
     public UserServiceImpl(UserMapper userMapper, RegistrationMapper registrationMapper,
-                           PasswordEncoder passwordEncoder, JwtUtil jwtUtil) {
+                           PasswordEncoder passwordEncoder, JwtUtil jwtUtil,
+                           LoginLogService loginLogService) {
         this.userMapper = userMapper;
         this.registrationMapper = registrationMapper;
         this.passwordEncoder = passwordEncoder;
         this.jwtUtil = jwtUtil;
+        this.loginLogService = loginLogService;
     }
 
     @Override
@@ -154,6 +159,21 @@ public class UserServiceImpl implements UserService {
 
     @Override
     public Object login(Map<String, Object> request) {
+        return login(request, null);
+    }
+
+    /**
+     * 登录，并把这次登录写进 {@code login_logs}。
+     *
+     * <p>保留单参重载是为了不打断既有调用方（含测试）：没有请求上下文时只是不记日志，
+     * 登录行为一字不差。生产路径由 {@code AuthController} 传 {@code HttpServletRequest} 进来。
+     *
+     * <p>记日志的时机：<b>只在"用户名存在"时记</b>。用户名不存在时 {@code user} 为 null，
+     * 而 {@code login_logs.user_id} 是 NOT NULL，没有 id 可写 —— 这种情况
+     * {@link LoginLogService} 会记 warn 并跳过（写 0 会造出指向不存在用户的悬空引用）。
+     */
+    @Override
+    public Object login(Map<String, Object> request, HttpServletRequest httpRequest) {
         try {
             log.info("User login attempt: {}", request);
             
@@ -182,6 +202,7 @@ public class UserServiceImpl implements UserService {
                         response.put("message", "账号已被禁用");
                     }
                     response.put("status", "error");
+                    loginLogService.record(user, "failed", httpRequest);
                     return response;
                 }
                 // 使用BCrypt密码比对，兼容明文密码的向后兼容
@@ -208,10 +229,12 @@ public class UserServiceImpl implements UserService {
                     response.put("name", user.getName());
                     response.put("status", "success");
                     log.info("User login successful: {}", user.getUsername());
+                    loginLogService.record(user, "success", httpRequest);
                 } else {
                     response.put("status", "error");
                     response.put("message", "密码错误");
                     log.warn("Login failed: incorrect password for user {}", username);
+                    loginLogService.record(user, "failed", httpRequest);
                 }
             } else {
                 response.put("status", "error");

@@ -4,6 +4,8 @@ import com.academic.common.dto.ApiResponse;
 import com.academic.common.entity.User;
 import com.academic.common.entity.UserSettings;
 import com.academic.dto.UserDTO;
+import com.academic.entity.LoginLog;
+import com.academic.mapper.LoginLogMapper;
 import com.academic.mapper.UserSettingsMapper;
 import com.academic.service.UserService;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
@@ -14,6 +16,8 @@ import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -32,10 +36,14 @@ public class UserController {
      *  必须同时改 Fallback 才能编译；而这里只是对单表的读写，
      *  与 CounselorController 直接注入 warningMapper 的既有写法一致。 */
     private final UserSettingsMapper userSettingsMapper;
+    /** 同上：登录历史的读取只碰 {@code login_logs} 一张表。 */
+    private final LoginLogMapper loginLogMapper;
 
-    public UserController(UserService userService, UserSettingsMapper userSettingsMapper) {
+    public UserController(UserService userService, UserSettingsMapper userSettingsMapper,
+                          LoginLogMapper loginLogMapper) {
         this.userService = userService;
         this.userSettingsMapper = userSettingsMapper;
+        this.loginLogMapper = loginLogMapper;
     }
 
     // ==================== 调用者身份 ====================
@@ -373,6 +381,49 @@ public class UserController {
                     existing == null ? body.getId() : existing.getId()));
         } catch (Exception e) {
             log.error("Update user settings failed: userId={}, err={}", userId, e.getMessage());
+            return ApiResponse.error(e.getMessage());
+        }
+    }
+
+    /**
+     * 本人的登录历史（学生端「设置 → 安全日志 → 登录历史」）。
+     *
+     * <p>2026-10-02 新增。此前 {@code login_logs} 全仓没有写入方、也没有面向学生的读取口：
+     * 页面把 {@code logs} 声明成空数组后**从不赋值**，旁边还写死一句「刚刚 · Windows」。
+     * 现在写入方在 {@link com.academic.service.LoginLogService}（登录成功/失败各记一条），
+     * 读取口就是这里。
+     *
+     * <p>归属校验用 {@code isAdminOrSelf}：管理员可查任意用户（管理端「用户详情 → 登录日志」
+     * 也走这个口），普通用户只能查自己。**不读 {@code X-User-Id} 请求头** —— 直连本服务时
+     * 它可以随便伪造，只认 {@code JwtAuthenticationFilter} 写进 SecurityContext 的身份。
+     *
+     * <p>取最近 20 条即可：这个页面的用途是"我最近从哪儿登录过"，不是审计报表
+     * （全量审计在管理端的 {@code /admin/login-logs/{userId}}）。
+     */
+    @GetMapping("/{userId}/login-logs")
+    public ApiResponse<List<Map<String, Object>>> getLoginLogs(@PathVariable Long userId) {
+        if (!isAdminOrSelf(userId)) {
+            return ApiResponse.forbidden("只能查看本人的登录历史");
+        }
+        try {
+            log.info("Get login logs: userId={}", userId);
+            List<LoginLog> logs = loginLogMapper.selectList(
+                    new QueryWrapper<LoginLog>().eq("user_id", userId)
+                            .orderByDesc("login_time").last("LIMIT 20"));
+            List<Map<String, Object>> result = new ArrayList<>();
+            for (LoginLog entry : logs) {
+                Map<String, Object> item = new LinkedHashMap<>();
+                item.put("id", entry.getId());
+                item.put("loginTime", entry.getLoginTime());
+                item.put("ipAddress", entry.getIpAddress());
+                item.put("device", entry.getDevice());
+                item.put("location", entry.getLocation());
+                item.put("status", entry.getStatus());
+                result.add(item);
+            }
+            return ApiResponse.success(result);
+        } catch (Exception e) {
+            log.error("Get login logs failed: userId={}, err={}", userId, e.getMessage());
             return ApiResponse.error(e.getMessage());
         }
     }

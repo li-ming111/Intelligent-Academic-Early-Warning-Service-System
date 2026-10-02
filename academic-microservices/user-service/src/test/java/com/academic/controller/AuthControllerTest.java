@@ -44,18 +44,19 @@ class AuthControllerTest {
         Map<String, Object> request = new HashMap<>();
         request.put("username", "2023020616");
         request.put("password", "123456");
-        
+
         // 模拟行为
-        when(userService.login(request)).thenReturn(new Object());
-        
+        jakarta.servlet.http.HttpServletRequest httpRequest = mock(jakarta.servlet.http.HttpServletRequest.class);
+        when(userService.login(eq(request), any())).thenReturn(new Object());
+
         // 执行测试
-        ApiResponse<Object> result = authController.login(request);
-        
+        ApiResponse<Object> result = authController.login(request, httpRequest);
+
         // 验证结果
         assertNotNull(result);
-        
+
         // 验证调用
-        verify(userService, times(1)).login(request);
+        verify(userService, times(1)).login(eq(request), any());
     }
     
     // ==================== 这里原有 `testRegister_Success`（2026-10-01 删） ====================

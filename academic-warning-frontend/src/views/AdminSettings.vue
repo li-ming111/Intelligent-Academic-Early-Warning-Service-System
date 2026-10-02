@@ -196,15 +196,60 @@
             </el-table-column>
           </el-table>
         </el-card>
+
+        <!-- 操作日志（审计日志） -->
+        <el-card v-if="activeMenu === 'audit'" class="settings-card">
+          <template #header>
+            <div class="card-header">
+              <el-icon><Document /></el-icon>
+              <span>操作日志</span>
+            </div>
+          </template>
+
+          <div class="audit-filter">
+            <el-select v-model="auditFilter.entityType" placeholder="全部对象" clearable
+                       style="width: 150px" @change="reloadAuditLogs">
+              <el-option v-for="o in auditEntityOptions" :key="o.value" :label="o.label" :value="o.value" />
+            </el-select>
+            <el-select v-model="auditFilter.actionType" placeholder="全部动作" clearable
+                       style="width: 150px" @change="reloadAuditLogs">
+              <el-option v-for="o in auditActionOptions" :key="o.value" :label="o.label" :value="o.value" />
+            </el-select>
+            <el-button @click="reloadAuditLogs">刷新</el-button>
+          </div>
+
+          <el-table :data="auditLogs" stripe size="small" v-loading="auditLoading">
+            <el-table-column label="时间" width="180">
+              <template #default="{ row }">{{ formatDateTime(row.createdAt) }}</template>
+            </el-table-column>
+            <el-table-column label="操作人" width="130">
+              <template #default="{ row }">
+                <span v-if="row.username">{{ row.username }}</span>
+                <span v-else class="audit-unknown">未知</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="动作" width="120">
+              <template #default="{ row }">{{ actionText(row.actionType) }}</template>
+            </el-table-column>
+            <el-table-column prop="details" label="详情"></el-table-column>
+          </el-table>
+
+          <div class="audit-pager">
+            <el-pagination background layout="prev, pager, next, total"
+                           :total="auditTotal" :page-size="auditFilter.size"
+                           :current-page="auditFilter.page"
+                           @current-change="onAuditPageChange" />
+          </div>
+        </el-card>
       </el-col>
     </el-row>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, reactive, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
-import { User, Lock, Setting, Warning } from '@element-plus/icons-vue'
+import { User, Lock, Setting, Warning, Document } from '@element-plus/icons-vue'
 import { adminAPI } from '@/api/index'
 import { applyThemeMode } from '@/config/theme'
 
@@ -215,8 +260,62 @@ const menuItems = [
   { id: 'account', label: '账户信息', icon: User },
   { id: 'password', label: '修改密码', icon: Lock },
   { id: 'preferences', label: '系统偏好', icon: Setting },
-  { id: 'security', label: '安全日志', icon: Warning }
+  { id: 'security', label: '安全日志', icon: Warning },
+  { id: 'audit', label: '操作日志', icon: Document }
 ]
+
+// 操作日志：2026-10-02 起 audit_logs 真的有写入方了（管理端关键写操作各记一条），
+// 此前它是 0 行的空表，也没有任何列表读取口。
+const auditLogs = ref([])
+const auditTotal = ref(0)
+const auditLoading = ref(false)
+const auditFilter = reactive({ page: 1, size: 20, entityType: '', actionType: '' })
+const auditEntityOptions = [
+  { label: '账号', value: 'USER' },
+  { label: '预警规则', value: 'WARNING_RULE' },
+  { label: '学业预警', value: 'WARNING' },
+  { label: '成绩申诉', value: 'APPEAL' }
+]
+const auditActionOptions = [
+  { label: '新建', value: 'CREATE' },
+  { label: '修改', value: 'UPDATE' },
+  { label: '删除', value: 'DELETE' },
+  { label: '处理', value: 'HANDLE' },
+  { label: '审核', value: 'REVIEW' },
+  { label: '重置口令', value: 'RESET_PASSWORD' },
+  { label: '启停', value: 'TOGGLE_STATUS' },
+  { label: '审批', value: 'APPROVE' }
+]
+
+/** 后端存的是大写枚举，直接显示对管理员不友好。 */
+const actionText = (a) => {
+  const hit = auditActionOptions.find(o => o.value === a)
+  return hit ? hit.label : (a || '--')
+}
+
+const reloadAuditLogs = () => { auditFilter.page = 1; loadAuditLogs() }
+const onAuditPageChange = (p) => { auditFilter.page = p; loadAuditLogs() }
+
+const loadAuditLogs = async () => {
+  auditLoading.value = true
+  try {
+    // 空串会被 axios 原样发出去，后端已把空串归一成"不过滤"，这里不再特殊处理。
+    const res = await adminAPI.getAuditLogs({
+      page: auditFilter.page,
+      size: auditFilter.size,
+      entityType: auditFilter.entityType || undefined,
+      actionType: auditFilter.actionType || undefined
+    })
+    auditLogs.value = Array.isArray(res?.items) ? res.items : []
+    auditTotal.value = Number(res?.total) || 0
+  } catch (e) {
+    console.error('加载操作日志失败:', e)
+    auditLogs.value = []
+    auditTotal.value = 0
+  } finally {
+    auditLoading.value = false
+  }
+}
 
 const accountInfo = ref({
   username: '',
@@ -249,6 +348,7 @@ const lastLoginTime = ref('')
 onMounted(async () => {
   await loadAdminInfo()
   await loadSecurityLogs()
+  await loadAuditLogs()
   await loadPreferences()
 })
 
@@ -679,5 +779,20 @@ h4 {
 
 .dark-mode h4 {
   color: #e5e5e5;
+}
+
+/* 操作日志 */
+.audit-filter {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.audit-pager {
+  margin-top: 14px;
+  display: flex;
+  justify-content: flex-end;
+}
+.audit-unknown {
+  color: #94a3b8;
 }
 </style>

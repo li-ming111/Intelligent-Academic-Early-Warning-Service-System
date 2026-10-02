@@ -659,10 +659,13 @@ class ApiClient {
      *
      * ✅ 2026-10-01 第二十四轮更正：此处原写着"**实测恒为 `[]`** —— 没有任何服务往这张表写"。
      *   那句当时没错（后端那个方法就是 `return success(new ArrayList<>())`），但现在**不再是空的了**：
-     *   改成从 `login_logs`（auth-service 每次登录写一条，41 行）、`academic_warning`、
-     *   `export_history` 三张真有写入方的表里取。`createdAt` 一律是**各表自己的时间列**，
-     *   没有一处用"当前时间"顶替 —— 所以刚打开页面看到的可能是几个月前的登录记录，那是实情。
-     *   刻意不接 `audit_logs`/`security_logs`：这两张都是 0 行且全仓无写入方，接上去只会再造一个恒空。
+     *   改成从 `login_logs`（写入方是 user-service 的 `LoginLogService`，每次登录写一条）、
+     *   `academic_warning`、`export_history` 三张真有写入方的表里取。`createdAt` 一律是
+     *   **各表自己的时间列**，没有一处用"当前时间"顶替 —— 所以刚打开页面看到的可能是
+     *   几个月前的登录记录，那是实情。
+     *   刻意不接 `audit_logs`/`security_logs`：后者至今 0 行且全仓无写入方，接上去只会再造一个恒空；
+     *   `audit_logs` 2026-10-02 起有写入方了（管理端关键写操作各记一条），但它有**自己的**
+     *   专页（管理端「操作日志」，读 `/admin/audit-logs`），不必混进"系统动态"里。
      */
     getActivities: () => this._get('/admin/activities'),
 
@@ -713,9 +716,10 @@ class ApiClient {
     /**
      * 登录日志。**必须带 userId**（没有全局日志接口）。
      * 行：`{id, loginTime, ipAddress, location, device, status}`。
-     * ⚠️ 实测全库只有 41 条、最新一条停在 2026-06-29 —— login_logs **没有写入方**，
-     *    新登录不会新增记录。页面上要说明"日志停止更新于 2026-06"，不然会被当成
-     *    "这个账号没登录过"。
+     *
+     * 2026-10-02：`login_logs` 的写入方补上了（user-service 的 `LoginLogService`，
+     * 每次登录写一条，成功与失败都记）。此前全库只有 41 条 6 月的种子数据、新登录不新增，
+     * 页面上还得专门说明"日志停止更新于 2026-06" —— 那段说明已删，别再写回去。
      */
     getLoginLogs: (userId) => this._get(`/admin/login-logs/${userId}`),
 
