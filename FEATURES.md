@@ -333,8 +333,10 @@ Gateway (8076)
 |------|------|
 | `POST /admin/data/import` | 导入数据（学生/成绩） |
 | `GET /admin/data/export/{type}` | 导出数据 |
-| `POST /admin/data/backup` | 数据备份 |
-| `POST /admin/data/restore` | 数据恢复 |
+| `POST /admin/backup` | **真**调 `mysqldump` 生成一份 `.sql` 到 `exports/backups/`；工具路径取不到时如实报错 |
+| `GET /admin/backups/list` | 扫该目录列出**磁盘上真实存在**的备份文件（`implemented:true` + 真实 `dir`） |
+| `POST /admin/backup/{backupId}/restore` | 恢复**演练**：新建临时库灌一遍、数表数、再删掉临时库；**绝不覆盖演示库** |
+| `DELETE /admin/backup/{backupId}` | 删除一个备份文件（名字带路径穿越校验） |
 
 ---
 

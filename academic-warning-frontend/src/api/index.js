@@ -993,6 +993,9 @@ export const adminAPI = {
   restoreBackup: (backupId) => {
     return apiClient.post(`/admin/backup/${backupId}/restore`)
   },
+  deleteBackup: (backupId) => {
+    return apiClient.delete(`/admin/backup/${backupId}`)
+  },
   getExportHistory: (page = 1, pageSize = 10) => {
     return apiClient.get(`/admin/export/history`, { params: { page, size: pageSize } })
   },

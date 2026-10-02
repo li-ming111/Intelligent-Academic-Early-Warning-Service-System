@@ -370,7 +370,13 @@
               <!-- 后端说明"运行时备份未实现"时如实透出，而不是让人以为"点了就会有的" -->
               <div v-if="backupNote" style="margin-top: 8px; font-size: 12px; color: #c0c4cc;">{{ backupNote }}</div>
             </div>
-            <el-table v-else :data="backupList" stripe v-loading="backupLoading">
+            <!-- ⚠️ 2026-10-02（W1.10）：这张表原来**没有 @selection-change** ——
+                 勾选框只改 Element Plus 的内部状态，`selectedBackups` 永远是空数组，
+                 于是 `v-if="selectedBackups.length > 0"` 包着的「批量删除」按钮
+                 **一次都显示不出来**（按钮在，但没有任何路径能让它出现）。
+                 导出历史那张表是接了的，备份这张被落下了。 -->
+            <el-table v-else :data="backupList" stripe v-loading="backupLoading"
+                      @selection-change="handleBackupSelectionChange">
               <el-table-column type="selection" width="55" />
               <el-table-column prop="id" label="ID" width="80" sortable></el-table-column>
               <el-table-column prop="name" label="备份名称" min-width="180" show-overflow-tooltip></el-table-column>
@@ -442,17 +448,27 @@ const backupNotice = computed(() => {
     return '「立即备份数据」不会生成备份文件 —— 本系统未实现运行时自动备份。'
   }
   if (backupImplemented.value === true) {
-    return '系统自动每日备份，备份时间为凌晨02:00。您也可手动备份所有数据。'
+    // 2026-10-02（W1.10）：后端真接上 mysqldump 了，但**没有**"每日凌晨02:00自动备份"
+    // 这回事 —— 定时任务里没有它。原来那半句是替后端许诺，现在只说实话。
+    return '「立即备份数据」会调用 mysqldump 生成一份 .sql 到 ' + (backupDir.value || '导出目录的 backups 子目录')
+      + '。系统**没有**定时自动备份，需要留存请手动点。'
   }
   return '正在读取后端备份能力…'
 })
 const backupLoading = ref(false)
+// 备份目录（后端 /admin/backups/list 回的真实路径）—— 横幅要能告诉人"文件在哪"
+const backupDir = ref('')
 const selectedHistory = ref([])
 const selectedBackups = ref([])
 const deleteDialogVisible = ref(false)
 const deleteLoading = ref(false)
 const deleteCount = ref(0)
 const deleteType = ref('')
+// 「单条」还是「批量」**不能拿 deleteCount 推** —— 只勾一行再点「批量删除」时
+// 计数也是 1，会走进单条分支去读一个没被设置过的 id：备份那条会报"没有拿到名字"，
+// 导出那条更糟，会跳过删除却照旧弹「成功删除 1 条」。所以按下哪个按钮就记哪个。
+const deleteSource = ref('')
+const deleteSingleId = ref(null)
 
 // 分页相关
 const exportHistoryTotal = ref(0)
@@ -927,19 +943,25 @@ const resetReportForm = () => {
   }
 }
 
-// 备份数据
+// 备份数据（2026-10-02 W1.10：后端真的起 mysqldump 了）
 const backupNow = async () => {
+  backupLoading.value = true
   try {
-    await adminAPI.backupData()
-    ElMessage.success('备份已完成')
+    const result = await adminAPI.backupData()
+    // 只报后端真给的文件名与大小，不编"已完成"
+    if (result?.name) {
+      ElMessage.success(`备份已生成：${result.name}（${result.size}）`)
+    } else {
+      ElMessage.success('备份已完成')
+    }
     await loadBackupList()
   } catch (error) {
-    // ⚠️ 别把后端原话抹平成"备份失败"：/admin/backup 现在会回
-    // "本系统未实现运行时自动备份…"。抹平之后管理员只会以为"网络抖了一下，再点一次"。
-    // 成功路径不变 —— 后端真做成备份的那天，这里照旧弹"备份已完成"。
-    // 只如实转述后端给的失败原因；**不在这里改 backupImplemented** ——
-    // 断网也会走到这个 catch，那时横幅若改成"未实现"就是在编另一个谎。
+    // ⚠️ 别把后端原话抹平成"备份失败"：工具缺失/命令失败时后端回的是
+    // "无法启动命令 …mysqldump.exe（路径不对或不在 PATH 上？…）" 这类**可操作**的原因。
+    // 抹平之后管理员只会以为"网络抖了一下，再点一次"。
     ElMessage.error('备份未完成：' + (error?.message || '请求失败'))
+  } finally {
+    backupLoading.value = false
   }
 }
 
@@ -953,11 +975,15 @@ const loadBackupList = async () => {
     const list = Array.isArray(response) ? response
       : Array.isArray(response?.items) ? response.items
       : []
+    // 后端回的是 `created_at`（字符串，已经格式化过）。原来只认 `createdAt`，
+    // 于是每一行的"备份时间"都是空 —— 现在两种都认。
     backupList.value = list.map(item => ({
       ...item,
-      created_at: item.createdAt ? new Date(item.createdAt).toLocaleString('zh-CN') : ''
+      created_at: item.created_at
+        || (item.createdAt ? new Date(item.createdAt).toLocaleString('zh-CN') : '')
     }))
     backupNote.value = response?.note || ''
+    backupDir.value = response?.dir || ''
     if (response && response.implemented === false && !backupNote.value) {
       backupNote.value = '本系统未实现运行时自动备份'
     }
@@ -973,13 +999,25 @@ const loadBackupList = async () => {
 }
 
 // 恢复备份
+/**
+ * 恢复**演练**（2026-10-02 W1.10）。
+ *
+ * <p>原来这里写的是「数据恢复需5-10分钟，恢复期间系统将暂时不可用」+「数据恢复中，请稍候...」
+ * —— 而后端那时直接回"未实现"。现在后端会**在一个临时库上真把备份灌一遍**并校验表数，
+ * 然后删掉临时库：这是"这份备份可用"的证据，**当前演示库不会被覆盖**（刻意的保护）。
+ * 所以提示语必须照实说，不能让人以为线上数据被回滚了。
+ */
 const restoreBackup = async (backupId) => {
-  ElMessage.warning('数据恢复需5-10分钟，恢复期间系统将暂时不可用')
   try {
-    await adminAPI.restoreBackup(backupId)
-    ElMessage.success('数据恢复中，请稍候...')
+    const result = await adminAPI.restoreBackup(backupId)
+    ElMessageBox.alert(
+      `已在临时库 ${result?.scratchDb || '(临时库)'} 上完整恢复并校验（${result?.tableCount ?? '?'} 张表），随后已删除该临时库。`
+      + '\n\n当前数据库**没有被覆盖** —— 这是刻意的保护，避免误操作清掉演示数据。',
+      '恢复演练完成',
+      { confirmButtonText: '知道了', type: 'success' }
+    )
   } catch (error) {
-    ElMessage.error('恢复失败')
+    ElMessage.error('恢复演练失败：' + (error?.message || '请求失败'))
   }
 }
 
@@ -987,6 +1025,9 @@ const restoreBackup = async (backupId) => {
 const deleteBackup = (backupId) => {
   deleteType.value = 'backup'
   deleteCount.value = 1
+  // 备份的 id 就是文件名（后端 /admin/backups/list 的约定），确认时要用它拼 URL
+  deleteSource.value = 'single'
+  deleteSingleId.value = backupId
   deleteDialogVisible.value = true
 }
 
@@ -995,13 +1036,19 @@ const handleHistorySelectionChange = (val) => {
   selectedHistory.value = val
 }
 
+// 处理备份选择变化（2026-10-02 W1.10：这张表原来漏了这个绑定，见模板里的注释）
+const handleBackupSelectionChange = (val) => {
+  selectedBackups.value = val
+}
+
 // 删除导出记录
 const deleteExport = (exportId) => {
   deleteType.value = 'export'
   deleteCount.value = 1
   deleteDialogVisible.value = true
   // 临时保存要删除的单个ID
-  window.__deleteSingleId = exportId
+  deleteSource.value = 'single'
+  deleteSingleId.value = exportId
 }
 
 // 批量下载导出记录
@@ -1038,6 +1085,7 @@ const batchDeleteHistory = () => {
   }
   deleteType.value = 'export'
   deleteCount.value = selectedHistory.value.length
+  deleteSource.value = 'batch'
   deleteDialogVisible.value = true
 }
 
@@ -1049,6 +1097,7 @@ const batchDeleteBackups = () => {
   }
   deleteType.value = 'backup'
   deleteCount.value = selectedBackups.value.length
+  deleteSource.value = 'batch'
   deleteDialogVisible.value = true
 }
 
@@ -1057,26 +1106,39 @@ const confirmDelete = async () => {
   deleteLoading.value = true
   try {
     if (deleteType.value === 'export') {
-      if (deleteCount.value === 1) {
-        // 删除单条记录时使用保存的ID，确保是数字类型
-        const exportId = window.__deleteSingleId !== undefined ? parseInt(window.__deleteSingleId, 10) : null
-        if (exportId) {
-          await adminAPI.deleteExport(exportId)
-        }
-        window.__deleteSingleId = undefined
-      } else {
-        // 批量删除时确保每个ID都是数字类型
-        const deletePromises = selectedHistory.value.map(item => {
-          const id = typeof item.id === 'number' ? item.id : parseInt(item.id, 10)
-          return adminAPI.deleteExport(id)
-        })
-        await Promise.all(deletePromises)
+      // 判据是「按下哪个按钮」，不是「数了几条」（见 deleteSource 的注释）
+      const ids = deleteSource.value === 'single'
+        ? [deleteSingleId.value]
+        : selectedHistory.value.map(item => item.id)
+        .map(id => (typeof id === 'number' ? id : parseInt(id, 10)))
+      if (!ids[0]) {
+        // 拿不到 id 就说拿不到 —— **不许跳过删除再弹"成功"**（本仓踩过的"假成功"）
+        ElMessage.error('没有拿到要删除的记录 id')
+        deleteDialogVisible.value = false
+        return
       }
-      ElMessage.success(`成功删除 ${deleteCount.value} 条导出记录`)
-      await loadExportHistory()
+      await Promise.all(ids.map(id => adminAPI.deleteExport(id)))
+      deleteSingleId.value = null
       selectedHistory.value = []
+      ElMessage.success(`成功删除 ${ids.length} 条导出记录`)
+      await loadExportHistory()
     } else if (deleteType.value === 'backup') {
-      ElMessage.info('删除备份功能开发中...')
+      // 2026-10-02（W1.10）：原来是 `ElMessage.info('删除备份功能开发中...')` 的空壳。
+      // 现在备份是磁盘上的真文件，删除就是真删（后端拿文件名删，带路径穿越校验）。
+      // 单条走行内按钮存的 id，多条走表格勾选 —— 两条路径都得通。
+      const ids = deleteSource.value === 'single'
+        ? [deleteSingleId.value]
+        : selectedBackups.value.map(item => item.id)
+      if (!ids[0]) {
+        ElMessage.error('没有拿到要删除的备份名')
+        deleteDialogVisible.value = false
+        return
+      }
+      await Promise.all(ids.map(id => adminAPI.deleteBackup(id)))
+      deleteSingleId.value = null
+      selectedBackups.value = []
+      ElMessage.success(`已删除 ${ids.length} 个备份文件`)
+      await loadBackupList()
     }
     deleteDialogVisible.value = false
   } catch (error) {

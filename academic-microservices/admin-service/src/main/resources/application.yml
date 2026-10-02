@@ -31,6 +31,15 @@ spring:
       max-file-size: 10MB
       max-request-size: 10MB
 
+# 运行时数据库备份/恢复（W1.10，见 BackupService）。
+# mysqldump / mysql **不在 PATH 上**，所以显式配绝对路径；换机器时改这两行
+# （或设同名环境变量）即可。取不到时不做 fail-fast —— 本工程没有启动脚本，
+# 让服务起不来比"这次备份失败"更糟。
+app:
+  backup:
+    mysqldump: ${MYSQLDUMP_PATH:D:/JAVA/mysql/mysql-8.0.44-winx64/mysql-8.0.44-winx64/bin/mysqldump.exe}
+    mysql: ${MYSQL_CLIENT_PATH:D:/JAVA/mysql/mysql-8.0.44-winx64/mysql-8.0.44-winx64/bin/mysql.exe}
+
 mybatis-plus:
   type-aliases-package: com.academic.entity
   configuration:

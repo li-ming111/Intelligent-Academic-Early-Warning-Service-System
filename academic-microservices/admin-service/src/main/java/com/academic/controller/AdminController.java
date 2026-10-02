@@ -13,6 +13,7 @@ import com.academic.common.entity.AcademicWarning;
 import com.academic.common.entity.Score;
 import com.academic.common.entity.ScoreRecord;
 import com.academic.entity.*;
+import com.academic.service.BackupService;
 import com.academic.service.CollegeService;
 import com.academic.service.CourseService;
 import com.academic.service.MajorService;
@@ -3798,37 +3799,70 @@ public class AdminController {
     //   这是最典型的"报告与事实不符"：页面上列着三条备份历史，磁盘和库里却一条都不存在，
     //   答辩时被问一句"这几个 sql 文件在哪"就答不上来。
     //
-    //   本系统**没有运行时备份机制**；备份是仓库里 `db_backups/*.sql` 手工留存的文件
-    //   （apply/rollback 成对，可重复执行）。所以这里如实说明，而不是继续演。
-    private static final String BACKUP_NOT_IMPLEMENTED =
-        "本系统未实现运行时自动备份；数据库备份以仓库 db_backups/*.sql（apply/rollback 成对）手工留存，请勿依赖此按钮";
+    // ⚠️ 2026-10-02（W1.10）：**真的实现了** —— 见 `BackupService`。
+    //   备份 = 真起 `mysqldump` 子进程写 .sql；列表 = 扫目录里的真文件；
+    //   恢复 = 在**临时库**上真灌一遍再删掉（**绝不覆盖演示库**，理由写在 BackupService 类注释里）。
+    //   工具路径取不到时**如实报错**，不再回"成功"。
+
+    @Autowired
+    private BackupService backupService;
 
     @PostMapping("/backup")
-    public ApiResponse<String> backupData() {
-        log.warn("backupData called: runtime backup is NOT implemented");
-        return ApiResponse.error(BACKUP_NOT_IMPLEMENTED);
+    public ApiResponse<Map<String, Object>> backupData() {
+        try {
+            return ApiResponse.success(backupService.createBackup());
+        } catch (Exception e) {
+            // 抛出来的是"工具缺失 / 命令失败 / 产物为空"这类真原因，如实透给页面
+            log.error("Backup failed: {}", e.getMessage());
+            return ApiResponse.error(e.getMessage());
+        }
     }
 
     @GetMapping("/backups/list")
     public ApiResponse<Map<String, Object>> getBackupList() {
-        // 不再返回编造的备份行：如实回空列表并说明原因，前端显示"暂无备份记录"。
-        // （与 /admin/tasks/list 同一口径：那个空是真话，不是前端读错键。）
-        Map<String, Object> result = new HashMap<>();
-        result.put("total", 0);
-        result.put("items", new ArrayList<>());
-        result.put("implemented", false);
-        result.put("note", BACKUP_NOT_IMPLEMENTED);
-        return ApiResponse.success(result);
+        try {
+            List<Map<String, Object>> items = backupService.listBackups();
+            Map<String, Object> result = new HashMap<>();
+            result.put("total", items.size());
+            result.put("items", items);
+            result.put("implemented", true);
+            result.put("dir", backupService.backupDirPath());
+            result.put("note", items.isEmpty()
+                    ? "备份目录 " + backupService.backupDirPath() + " 里还没有 .sql 文件，点「立即备份数据」即可生成一份"
+                    : "备份文件在 " + backupService.backupDirPath() + "，可直接拷走留存");
+            return ApiResponse.success(result);
+        } catch (Exception e) {
+            log.error("List backups failed: {}", e.getMessage());
+            return ApiResponse.error(e.getMessage());
+        }
     }
 
+    /**
+     * 恢复**演练**：把备份文件恢复到一个临时库、数一遍表、再删掉临时库。
+     *
+     * <p>刻意**不覆盖当前演示库** —— 理由见 {@code BackupService} 的类注释。
+     * 返回体里的 {@code note} 会把这件事写清楚，页面照原话显示。
+     */
     @PostMapping("/backup/{backupId}/restore")
-    public ApiResponse<String> restoreBackup(@PathVariable String backupId) {
+    public ApiResponse<Map<String, Object>> restoreBackup(@PathVariable String backupId) {
         try {
-            log.warn("restoreBackup called: runtime restore is NOT implemented");
-            // 同 getBackupList：没有运行时可恢复的备份，不能回"恢复成功"（那会让管理员以为数据已回滚）
-            return ApiResponse.error(BACKUP_NOT_IMPLEMENTED);
+            return ApiResponse.success(backupService.restoreIntoScratchDb(backupId));
         } catch (Exception e) {
             log.error("Restore backup failed: {}", e.getMessage());
+            return ApiResponse.error(e.getMessage());
+        }
+    }
+
+    /** 删除一个备份文件。 */
+    @DeleteMapping("/backup/{backupId}")
+    public ApiResponse<String> deleteBackup(@PathVariable String backupId) {
+        try {
+            boolean deleted = backupService.deleteBackup(backupId);
+            return deleted
+                    ? ApiResponse.success("备份已删除")
+                    : ApiResponse.error("备份文件不存在: " + backupId);
+        } catch (Exception e) {
+            log.error("Delete backup failed: {}", e.getMessage());
             return ApiResponse.error(e.getMessage());
         }
     }
