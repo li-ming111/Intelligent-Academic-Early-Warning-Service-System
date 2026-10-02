@@ -254,6 +254,7 @@ import { ElMessage } from 'element-plus'
 import { Search } from '@element-plus/icons-vue'
 import { teacherAPI } from '@/api/index'
 import { getUserId } from '@/utils/userUtils'
+import { saveBlobAsFile, describeDownloadError } from '@/utils/download'
 
 const selectedClass = ref('')
 const searchName = ref('')
@@ -481,6 +482,15 @@ const submitEdit = async () => {
   }
 }
 
+/**
+ * 导出当前班级的成绩单。
+ *
+ * <p>改之前这里连着调了两个端点（`exportScores` + `downloadScores`），两个在后端
+ * 都只回 JSON 列表，而两个请求都带 `responseType:'blob'` ⇒ 存下来的
+ * `scores_xxx.xlsx` 其实是一段 JSON 文本，而且中间还先弹了一句
+ * 「成绩单已导出为Excel」。现在只调一个端点（后端真的吐 xlsx），并且**先确认
+ * 拿到的是文件**再报成功。
+ */
 const exportScores = async () => {
   try {
     if (!selectedClass.value) {
@@ -492,18 +502,12 @@ const exportScores = async () => {
       ElMessage.error('当前班级暂无成绩数据，无法导出')
       return
     }
-    await teacherAPI.exportScores(defaultCourseId)
-    ElMessage.info('成绩单已导出为Excel')
-    const blob = await teacherAPI.downloadScores(defaultCourseId)
-    const url = window.URL.createObjectURL(blob)
-    const link = document.createElement('a')
-    link.href = url
-    link.download = `scores_${selectedClass.value}_${Date.now()}.xlsx`
-    link.click()
-    window.URL.revokeObjectURL(url)
+    const blob = await teacherAPI.exportScores(defaultCourseId)
+    await saveBlobAsFile(blob, `成绩单_${selectedClass.value}_${Date.now()}.xlsx`)
+    ElMessage.success('成绩单已导出')
   } catch (error) {
     console.error('导出成绩失败:', error)
-    ElMessage.error('导出成绩失败')
+    ElMessage.error(await describeDownloadError(error))
   }
 }
 

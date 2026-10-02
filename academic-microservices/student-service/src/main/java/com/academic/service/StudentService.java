@@ -129,10 +129,18 @@ public interface StudentService {
     Object getStudentMessages(Long studentId);
     /** 获取未读消息数量 */
     Object getUnreadMessageCount(Long studentId);
-    /** 导出学生成绩到Excel */
-    Object exportScoresToExcel(Long studentId);
-    /** 下载成绩 */
-    Object downloadScores(Long studentId);
+    /**
+     * 生成学生成绩单 xlsx 的字节内容。
+     *
+     * <p>2026-10-02（W1.8）改：参数是 <b>{@code users.id}</b>，与 {@code /students/**}
+     * 其余端点一致；返回的是**真的工作簿字节**，由 controller 直接写进
+     * {@code HttpServletResponse}。此前这里返回一个
+     * {@code {message:"导出成功", scoreCount:N}} 的 JSON，前端却当文件下载 ——
+     * 用户下到的是空文件，界面还提示"导出成功"。
+     *
+     * @return xlsx 字节；学生不存在返回 {@code null}
+     */
+    byte[] exportScoresWorkbook(Long userId);
     /** 按学院统计学生数量 */
     long countByCollege(Long collegeId);
     /** 按学院获取学生列表 */

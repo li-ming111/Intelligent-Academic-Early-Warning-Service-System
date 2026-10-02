@@ -21,6 +21,7 @@ import com.academic.common.entity.ScoreAuditLog;
 import com.academic.entity.Feedback;
 import com.academic.entity.TeacherClassApplication;
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.poi.ss.usermodel.Cell;
 import org.apache.poi.ss.usermodel.CellType;
@@ -32,6 +33,9 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.io.ByteArrayOutputStream;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -429,28 +433,85 @@ public class TeacherController {
     }
 
     /**
-     * 导出成绩
+     * 导出某门课的成绩单为真实 xlsx（W1.8，2026-10-02 改）。
+     *
+     * <p>改之前 {@code /export/scores} 与 {@code /download/scores} 是两个**返回 JSON
+     * 列表**的端点，而前端 {@code TeacherScores.vue} 用 {@code responseType:'blob'}
+     * 把它们当文件存下来 —— 用户拿到的"xlsx"其实是一段 JSON 文本。现在只留一条
+     * 路径，真的产出工作簿；重复的 {@code /download/scores} 一并删掉（前后端都零调用方
+     * 的那一条）。
+     *
+     * <p>⚠️ 与仓内其它教师端查询一致，这里**不做课程归属校验**（那些端点的
+     * {@code teacher_id} 一直是前端传来的查询参数）。这是本仓既有的面，不在本次改动
+     * 范围内 —— 见手册的已知边界。
      */
     @GetMapping("/export/scores")
-    public ApiResponse<Object> exportScores(@RequestParam Long course_id) {
+    public void exportScores(@RequestParam Long course_id, HttpServletResponse response) {
         try {
-            List<Object> scores = (List<Object>) (List<?>) scoreRecordService.exportScores(course_id);
-            return ApiResponse.success(scores);
+            List<ScoreRecord> scores = scoreRecordService.exportScores(course_id);
+
+            String[] headers = {"姓名", "班级", "平时成绩", "期末成绩", "总评成绩", "等级", "绩点", "学期", "备注"};
+            byte[] content;
+            try (Workbook workbook = new XSSFWorkbook();
+                 ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+                Sheet sheet = workbook.createSheet("成绩单");
+                Row headerRow = sheet.createRow(0);
+                for (int i = 0; i < headers.length; i++) {
+                    headerRow.createCell(i).setCellValue(headers[i]);
+                }
+                int rowNum = 1;
+                for (ScoreRecord s : scores) {
+                    Row row = sheet.createRow(rowNum++);
+                    row.createCell(0).setCellValue(s.getStudentName() == null ? "" : s.getStudentName());
+                    row.createCell(1).setCellValue(s.getClassName() == null ? "" : s.getClassName());
+                    setNumber(row.createCell(2), s.getRegularScore());
+                    setNumber(row.createCell(3), s.getFinalScore());
+                    setNumber(row.createCell(4), s.getScoreTotal());
+                    row.createCell(5).setCellValue(s.getGrade() == null ? "" : s.getGrade());
+                    setNumber(row.createCell(6), s.getGradePoint());
+                    row.createCell(7).setCellValue(s.getSemester() == null ? "" : s.getSemester());
+                    row.createCell(8).setCellValue(s.getRemark() == null ? "" : s.getRemark());
+                }
+                for (int i = 0; i < headers.length; i++) {
+                    sheet.autoSizeColumn(i);
+                }
+                workbook.write(out);
+                content = out.toByteArray();
+            }
+
+            String fileName = "scores_course" + course_id + "_"
+                    + java.time.LocalDateTime.now().format(java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"))
+                    + ".xlsx";
+            response.setContentType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+            response.setHeader("Content-Disposition",
+                    "attachment; filename=" + URLEncoder.encode(fileName, StandardCharsets.UTF_8));
+            response.setContentLength(content.length);
+            response.getOutputStream().write(content);
+            response.getOutputStream().flush();
+            log.info("Export scores ok: course_id={}, rows={}", course_id, scores.size());
         } catch (Exception e) {
-            return ApiResponse.error(e.getMessage());
+            log.error("Export scores failed: {}", e.getMessage(), e);
+            try {
+                if (!response.isCommitted()) {
+                    response.reset();
+                    response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
+                    response.setContentType("application/json;charset=UTF-8");
+                    response.getWriter().write("{\"code\":500,\"message\":\"导出失败: "
+                            + String.valueOf(e.getMessage()).replace("\"", "'") + "\"}");
+                    response.getWriter().flush();
+                }
+            } catch (Exception ignore) {
+                // 响应已提交，无处可写
+            }
         }
     }
 
-    /**
-     * 下载成绩
-     */
-    @GetMapping("/download/scores")
-    public ApiResponse<Object> downloadScores(@RequestParam Long course_id) {
-        try {
-            List<Object> scores = (List<Object>) (List<?>) scoreRecordService.exportScores(course_id);
-            return ApiResponse.success(scores);
-        } catch (Exception e) {
-            return ApiResponse.error(e.getMessage());
+    /** 数字列：空值写空串 —— "没录入"和"0 分"是两回事。 */
+    private static void setNumber(Cell cell, Double value) {
+        if (value == null) {
+            cell.setCellValue("");
+        } else {
+            cell.setCellValue(value);
         }
     }
 

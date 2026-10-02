@@ -3,9 +3,12 @@ package com.academic.controller;
 import com.academic.common.dto.ApiResponse;
 import com.academic.dto.StudentDashboardResponse;
 import com.academic.service.StudentService;
+import jakarta.servlet.http.HttpServletResponse;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.*;
 
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
 
@@ -47,25 +50,82 @@ public class StudentController {
         }
     }
 
+    /**
+     * 导出本人成绩单为真实 xlsx（W1.8）。
+     *
+     * <p>路径参数是 {@code users.id}。**只允许导出自己的**：改之前这个端点回的是
+     * JSON 摘要（所以谁也没法借它拿到别人的成绩），一旦真开始吐文件，就必须有归属
+     * 校验，否则等于新开一个"换个 id 就能下载别人成绩单"的口子。
+     *
+     * <p>错误一律以 JSON 回（前端 {@code responseType:'blob'} 下靠
+     * {@code blob.type} 分辨），并且**带真实 HTTP 状态码** —— 本项目反复踩过
+     * "HTTP 200 里包着 code:500" 的坑。
+     */
     @GetMapping("/export/scores/{studentId}/excel")
-    public ApiResponse<Object> exportScoresToExcel(@PathVariable String studentId) {
+    public void exportScoresToExcel(@PathVariable String studentId, HttpServletResponse response) {
         try {
-            log.info("Export scores to Excel: {}", studentId);
-            return ApiResponse.success(studentService.exportScoresToExcel(Long.parseLong(studentId)));
+            Long userId = Long.parseLong(studentId);
+            Long current = currentUserId();
+            if (current == null) {
+                writeJsonError(response, HttpServletResponse.SC_UNAUTHORIZED, "无法识别当前登录用户");
+                return;
+            }
+            if (!current.equals(userId)) {
+                writeJsonError(response, HttpServletResponse.SC_FORBIDDEN, "只能导出本人的成绩单");
+                return;
+            }
+            byte[] content = studentService.exportScoresWorkbook(userId);
+            if (content == null) {
+                writeJsonError(response, HttpServletResponse.SC_NOT_FOUND, "学生不存在");
+                return;
+            }
+            String fileName = "scores_" + studentId + ".xlsx";
+            response.setContentType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+            response.setHeader("Content-Disposition",
+                    "attachment; filename=" + URLEncoder.encode(fileName, StandardCharsets.UTF_8));
+            response.setContentLength(content.length);
+            response.getOutputStream().write(content);
+            response.getOutputStream().flush();
+            log.info("Export scores to Excel ok: userId={}, bytes={}", userId, content.length);
         } catch (Exception e) {
-            log.error("Export scores to Excel failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            log.error("Export scores to Excel failed: {}", e.getMessage(), e);
+            writeJsonError(response, HttpServletResponse.SC_INTERNAL_SERVER_ERROR, "导出失败: " + e.getMessage());
         }
     }
 
-    @GetMapping("/download/scores/{studentId}")
-    public ApiResponse<Object> downloadScores(@PathVariable String studentId) {
+    /** 当前登录用户的 {@code users.id}（网关注入后由 GatewayAuthFilter 放进 SecurityContext）。 */
+    private static Long currentUserId() {
+        var auth = org.springframework.security.core.context.SecurityContextHolder.getContext().getAuthentication();
+        if (auth == null || auth.getPrincipal() == null) {
+            return null;
+        }
         try {
-            log.info("Download scores: {}", studentId);
-            return ApiResponse.success(studentService.downloadScores(Long.parseLong(studentId)));
-        } catch (Exception e) {
-            log.error("Download scores failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return Long.parseLong(String.valueOf(auth.getPrincipal()));
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    /**
+     * 以 JSON 回一个错误。
+     *
+     * <p>响应已经被声明成 {@code responseType:'blob'}，前端拿到的是 Blob，
+     * 只能靠 {@code Content-Type} 分辨这是文件还是错误 —— 所以这里必须显式设
+     * {@code application/json}，别让 Spring 按 {@code text/plain} 兜底。
+     */
+    private static void writeJsonError(HttpServletResponse response, int status, String message) {
+        try {
+            if (response.isCommitted()) {
+                return;
+            }
+            response.reset();
+            response.setStatus(status);
+            response.setContentType("application/json;charset=UTF-8");
+            response.getWriter().write(
+                    "{\"code\":" + status + ",\"message\":\"" + message.replace("\"", "'") + "\"}");
+            response.getWriter().flush();
+        } catch (Exception ignore) {
+            // 响应已提交/连接已断，无处可写
         }
     }
 

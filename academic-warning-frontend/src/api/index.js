@@ -274,13 +274,15 @@ export const studentAPI = {
   getUnreadCount: (userId) => {
     return apiClient.get(`/students/messages/${userId}/unread-count`)
   },
-  // 导出个人数据
+  // 导出个人成绩单（真 xlsx）。
+  // ⚠️ 必须带 responseType:'blob' —— 后端现在真的吐二进制工作簿，
+  // 不带的话 axios 会按 JSON 解析、拿不到文件（改前后端回 JSON 摘要，
+  // 所以这个参数一直缺着也没人发现，见 utils/download.js 的说明）。
   exportScoresExcel: (userId) => {
-    return apiClient.get(`/students/export/scores/${userId}/excel`)
-  },
-  downloadScoresExcel: (userId) => {
-    return apiClient.get(`/students/download/scores/${userId}`, { responseType: 'blob' })
+    return apiClient.get(`/students/export/scores/${userId}/excel`, { responseType: 'blob' })
   }
+  // `downloadScoresExcel` 已删：后端 `/students/download/scores/{id}` 与导出是同一条逻辑，
+  // 两个端点、前端零调用方（「零调用方 = 删」）。
 }
 
 export const teacherAPI = {
@@ -332,11 +334,10 @@ export const teacherAPI = {
   updateScore: (scoreId, data) => {
     return apiClient.put(`/teachers/scores/${scoreId}`, data)
   },
+  // 导出某门课成绩单（真 xlsx）。
+  // `downloadScores` 已删：后端 `/teachers/download/scores` 与导出同一条逻辑，前端零调用方。
   exportScores: (courseId) => {
     return apiClient.get(`/teachers/export/scores`, { params: { course_id: courseId }, responseType: 'blob' })
-  },
-  downloadScores: (courseId) => {
-    return apiClient.get(`/teachers/download/scores`, { params: { course_id: courseId }, responseType: 'blob' })
   },
   importScores: (data) => {
     return apiClient.post(`/teachers/scores/import`, data)

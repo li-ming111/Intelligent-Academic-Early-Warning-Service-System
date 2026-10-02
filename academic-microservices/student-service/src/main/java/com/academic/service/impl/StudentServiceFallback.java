@@ -88,8 +88,7 @@ public class StudentServiceFallback implements StudentService {
     @Override public Object getSecurityLogs(Long studentId, int page, int pageSize) { return ApiResponse.error("获取安全日志服务暂时不可用"); }
     @Override public Object getStudentMessages(Long studentId) { return ApiResponse.error("获取学生消息服务暂时不可用"); }
     @Override public Object getUnreadMessageCount(Long studentId) { return ApiResponse.error("获取未读消息数量服务暂时不可用"); }
-    @Override public Object exportScoresToExcel(Long studentId) { return ApiResponse.error("导出成绩服务暂时不可用"); }
-    @Override public Object downloadScores(Long studentId) { return ApiResponse.error("下载成绩服务暂时不可用"); }
+    @Override public byte[] exportScoresWorkbook(Long userId) { return null; }
     @Override public long countByCollege(Long collegeId) { return 0L; }
     @Override public java.util.List<Object> getStudentsByCollege(Long collegeId) { return Collections.emptyList(); }
 }

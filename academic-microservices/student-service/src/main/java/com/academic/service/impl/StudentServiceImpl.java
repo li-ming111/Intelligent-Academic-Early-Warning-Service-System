@@ -10,10 +10,17 @@ import com.academic.entity.*;
 import com.academic.mapper.*;
 import com.academic.service.StudentService;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.poi.ss.usermodel.Cell;
+import org.apache.poi.ss.usermodel.Row;
+import org.apache.poi.ss.usermodel.Sheet;
+import org.apache.poi.ss.usermodel.Workbook;
+import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.springframework.context.annotation.Primary;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.*;
@@ -2020,25 +2027,107 @@ public class StudentServiceImpl implements StudentService {
         return Map.of("unreadCount", count);
     }
 
-    // ==================== 导出/下载 ====================
+    // ==================== 导出 ====================
+    /**
+     * 生成学生成绩单 xlsx（W1.8，2026-10-02 新增）。
+     *
+     * <p>改之前这里是**两个**方法（{@code exportScoresToExcel} / {@code downloadScores}），
+     * 都只回一个 JSON 摘要，且入参按"学号"查（{@code selectByStudentId(userId.toString())}）
+     * —— 路径上给的是 {@code users.id}，查的是学号列，**一个学生也查不到**。
+     * 现在只留一条路径：真出工作簿。
+     *
+     * <p>学期列不直接写 {@code scores.semester} 那个全局序号（"4"），而是按
+     * {@code student_profile.enrollment_year} 换算成 "2023-2024-2" —— 与前端
+     * {@code Scores.vue} 的 {@code semesterLabel()} 同一套规则，两边显示一致。
+     * 入学年份缺失时退回原始序号，不编。
+     */
     @Override
-    public Object exportScoresToExcel(Long studentId) {
-        log.info("导出学生成绩到Excel: studentId={}", studentId);
-        StudentProfile sp = studentProfileMapper.selectByStudentId(studentId.toString());
-        if (sp == null) return Map.of("message", "学生不存在");
-        List<Score> scores = scoreMapper.selectByStudentId(studentId.toString());
-        Map<String, Object> result = new HashMap<>();
-        result.put("message", "导出成功");
-        result.put("studentId", studentId);
-        result.put("studentName", sp.getName());
-        result.put("scoreCount", scores.size());
-        return result;
+    public byte[] exportScoresWorkbook(Long userId) {
+        log.info("导出学生成绩单: userId={}", userId);
+        StudentProfile sp = studentProfileMapper.selectByUserId(userId);
+        if (sp == null) {
+            return null;
+        }
+        // scores.student_id 存的是 student_profile.id，不是学号、也不是 users.id
+        List<Score> scores = scoreMapper.selectByStudentId(sp.getId().toString());
+
+        try (Workbook workbook = new XSSFWorkbook();
+             ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+            Sheet sheet = workbook.createSheet("成绩单");
+
+            // 首行写一行学生信息，表头从第二行开始 —— 导出的文件是给人看的
+            Row info = sheet.createRow(0);
+            info.createCell(0).setCellValue("姓名");
+            info.createCell(1).setCellValue(sp.getName() == null ? "" : sp.getName());
+            info.createCell(2).setCellValue("学号");
+            info.createCell(3).setCellValue(sp.getStudentId() == null ? "" : sp.getStudentId());
+            info.createCell(4).setCellValue("班级");
+            info.createCell(5).setCellValue(sp.getClassName() == null ? "" : sp.getClassName());
+
+            String[] headers = {"学期", "课程名称", "学分", "平时成绩", "期末成绩", "总评成绩", "绩点", "等级", "授课教师"};
+            Row headerRow = sheet.createRow(1);
+            for (int i = 0; i < headers.length; i++) {
+                headerRow.createCell(i).setCellValue(headers[i]);
+            }
+
+            int rowNum = 2;
+            for (Score s : scores) {
+                Row row = sheet.createRow(rowNum++);
+                row.createCell(0).setCellValue(semesterLabel(s.getSemester(), sp.getEnrollmentYear()));
+                row.createCell(1).setCellValue(s.getCourseName() == null ? "" : s.getCourseName());
+                setNumeric(row.createCell(2), s.getCredits());
+                setNumeric(row.createCell(3), s.getRegularScore());
+                setNumeric(row.createCell(4), s.getFinalScore());
+                setNumeric(row.createCell(5), s.getScoreTotal());
+                setNumeric(row.createCell(6), s.getGradePoint());
+                row.createCell(7).setCellValue(s.getGrade() == null ? "" : s.getGrade());
+                row.createCell(8).setCellValue(s.getTeacherName() == null ? "" : s.getTeacherName());
+            }
+
+            for (int i = 0; i < headers.length; i++) {
+                sheet.autoSizeColumn(i);
+            }
+
+            workbook.write(out);
+            log.info("导出学生成绩单完成: userId={}, 行数={}", userId, scores.size());
+            return out.toByteArray();
+        } catch (IOException e) {
+            throw new IllegalStateException("生成成绩单失败: " + e.getMessage(), e);
+        }
     }
 
-    @Override
-    public Object downloadScores(Long studentId) {
-        log.info("下载成绩: studentId={}", studentId);
-        return exportScoresToExcel(studentId); // 共用导出逻辑
+    /** 数字列：空值写空串，别写成 0（0 分与"没录入"是两回事）。 */
+    private static void setNumeric(Cell cell, BigDecimal value) {
+        if (value == null) {
+            cell.setCellValue("");
+        } else {
+            cell.setCellValue(value.doubleValue());
+        }
+    }
+
+    /**
+     * {@code scores.semester}（全局学期序号）→ "2023-2024-2"。
+     *
+     * <p>与前端 {@code Scores.vue:semesterLabel()} 同一算法：入学年份 +
+     * {@code floor((n-1)/2)} 得学年，{@code (n-1)%2+1} 得学期。入学年份缺失或序号
+     * 不是正整数时原样返回，**不猜**。
+     */
+    static String semesterLabel(String semester, Integer enrollmentYear) {
+        if (semester == null || semester.isBlank()) {
+            return "";
+        }
+        int n;
+        try {
+            n = Integer.parseInt(semester.trim());
+        } catch (NumberFormatException e) {
+            return semester;
+        }
+        if (n < 1 || enrollmentYear == null) {
+            return semester;
+        }
+        int year = enrollmentYear + (n - 1) / 2;
+        int half = (n - 1) % 2 + 1;
+        return year + "-" + (year + 1) + "-" + half;
     }
 
     // ==================== 学院相关 ====================

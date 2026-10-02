@@ -175,6 +175,7 @@ import * as echarts from 'echarts'
 import { ElMessage } from 'element-plus'
 import { studentAPI } from '@/api/index'
 import { getUserId } from '@/utils/userUtils'
+import { saveBlobAsFile, describeDownloadError } from '@/utils/download'
 // 成绩判定统一走这里。不要在页面里直接写 `scoreTotal < 60` ——
 // JS 中 `null < 60` 为 true，会把"期末未录入"渲染成挂科。
 import { isPending, scoreState, PENDING_TEXT, toNumber, warningLevel } from '@/utils/score'
@@ -521,11 +522,22 @@ async function submitAppeal() {
 }
 
 // ---- 导出 ----
+/**
+ * 导出本人成绩单。
+ *
+ * <p>改之前：`await studentAPI.exportScoresExcel(...)` 之后**无条件**弹「导出成功」，
+ * 而后端那时只回一个 JSON 摘要 ⇒ 从来没有任何文件被下载下来，提示却是成功的。
+ * 现在后端吐真 xlsx，这里必须**先确认拿到的是文件**（`saveBlobAsFile` 会在
+ * blob 其实是错误 JSON 或内容为空时抛错）再报成功。
+ */
 async function exportScores() {
   try {
-    await studentAPI.exportScoresExcel(getUserId())
-    ElMessage.success('导出成功')
-  } catch (e) { ElMessage.error('导出失败') }
+    const blob = await studentAPI.exportScoresExcel(getUserId())
+    await saveBlobAsFile(blob, `成绩单_${localStorage.getItem('username') || getUserId()}_${Date.now()}.xlsx`)
+    ElMessage.success('成绩单已导出')
+  } catch (e) {
+    ElMessage.error(await describeDownloadError(e))
+  }
 }
 </script>
 

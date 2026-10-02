@@ -107,7 +107,7 @@ Gateway (8076)
 |------|------|
 | `GET /students/scores/{studentId}` | 查询个人成绩（支持按学期筛选） |
 | `GET /students/scores/{studentId}/gpa` | 查询GPA及历史趋势 |
-| `POST /students/export/scores/{studentId}/excel` | 导出成绩单为Excel |
+| `GET /students/export/scores/{studentId}/excel` | 导出成绩单为Excel（真 xlsx；`{studentId}` 是 `users.id`，只允许导出本人） |
 | `GET /students/{studentId}/class-info` | 获取班级信息 |
 | `GET /students/class-members/{studentId}` | 获取班级成员列表 |
 | `GET /students/class-ranking/{studentId}` | 获取班级排名 |
@@ -182,7 +182,7 @@ Gateway (8076)
 | `POST /teachers/scores` | 录入/保存成绩 |
 | `PUT /teachers/scores/{id}` | 修改单条成绩 |
 | `POST /teachers/scores/import` | 批量导入Excel成绩 |
-| `GET /teachers/export/scores` | 导出成绩为Excel |
+| `GET /teachers/export/scores?course_id=` | 导出该课程成绩单为真 xlsx |
 | `GET /teachers/enrollments` | 查看选课情况 |
 
 #### 3.3.3 班级管理

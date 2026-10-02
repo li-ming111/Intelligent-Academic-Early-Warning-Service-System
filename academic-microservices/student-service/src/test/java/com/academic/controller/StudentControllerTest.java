@@ -3,13 +3,18 @@ package com.academic.controller;
 import com.academic.common.dto.ApiResponse;
 import com.academic.dto.StudentDashboardResponse;
 import com.academic.service.StudentService;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.mock.web.MockHttpServletResponse;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.context.SecurityContextHolder;
 
+import java.nio.charset.StandardCharsets;
 import java.util.Collections;
 import java.util.Map;
 
@@ -67,14 +72,67 @@ class StudentControllerTest {
         verify(studentService, times(1)).getStudentScores(100L, "2025-1");
     }
 
+    // ==================== 成绩导出（W1.8） ====================
+
+    /** 把当前登录用户塞进 SecurityContext —— 导出端点靠它做归属校验。 */
+    private static void loginAs(Long userId) {
+        SecurityContextHolder.getContext().setAuthentication(
+                new UsernamePasswordAuthenticationToken(String.valueOf(userId), null, Collections.emptyList()));
+    }
+
+    @AfterEach
+    void clearSecurityContext() {
+        SecurityContextHolder.clearContext();
+    }
+
     @Test
-    void testExportScoresToExcel() {
-        when(studentService.exportScoresToExcel(100L)).thenReturn("导出成功");
+    void testExportScoresToExcel_streamsWorkbook() throws Exception {
+        loginAs(100L);
+        byte[] xlsx = {0x50, 0x4B, 0x03, 0x04};   // xlsx 的 zip 头
+        when(studentService.exportScoresWorkbook(100L)).thenReturn(xlsx);
 
-        ApiResponse<Object> result = studentController.exportScoresToExcel("100");
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        studentController.exportScoresToExcel("100", response);
 
-        assertNotNull(result);
-        verify(studentService, times(1)).exportScoresToExcel(100L);
+        assertEquals(200, response.getStatus());
+        assertTrue(response.getContentType().startsWith(
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
+                "内容类型应为 xlsx，实际: " + response.getContentType());
+        assertTrue(response.getHeader("Content-Disposition").contains("scores_100.xlsx"));
+        assertArrayEquals(xlsx, response.getContentAsByteArray());
+    }
+
+    @Test
+    void testExportScoresToExcel_rejectsOtherStudent() throws Exception {
+        loginAs(100L);
+
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        studentController.exportScoresToExcel("101", response);
+
+        assertEquals(403, response.getStatus());
+        assertTrue(new String(response.getContentAsByteArray(), StandardCharsets.UTF_8).contains("本人"));
+        verify(studentService, never()).exportScoresWorkbook(anyLong());
+    }
+
+    @Test
+    void testExportScoresToExcel_studentNotFound() throws Exception {
+        loginAs(100L);
+        when(studentService.exportScoresWorkbook(100L)).thenReturn(null);
+
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        studentController.exportScoresToExcel("100", response);
+
+        assertEquals(404, response.getStatus());
+        assertEquals("application/json;charset=UTF-8", response.getContentType());
+    }
+
+    @Test
+    void testExportScoresToExcel_withoutIdentity() throws Exception {
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        studentController.exportScoresToExcel("100", response);
+
+        assertEquals(401, response.getStatus());
+        verify(studentService, never()).exportScoresWorkbook(anyLong());
     }
 
     @Test
