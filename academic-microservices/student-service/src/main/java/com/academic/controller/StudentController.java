@@ -160,6 +160,27 @@ public class StudentController {
         }
     }
 
+    /**
+     * 学生更新自己帮扶计划的进度（+ 完成情况说明）。
+     *
+     * <p>2026-10-02 新增。此前 PC 学生端打的是
+     * {@code /counselors/assistance-plans/{id}/progress}，被网关的前缀角色闸挡下
+     * （role≠3 一律 403）—— 学生点一次失败一次，且弹窗里那个必填的「完成情况」
+     * 前端从来没发出来。端点移到学生自己的前缀下，身份与归属由服务端从网关注入的
+     * {@code X-User-Id} 判定（**不信任 body 里的 id**）。
+     *
+     * <p>⚠️ 这里**刻意不 catch**：参数非法/计划不属于本人由 service 抛
+     * {@link IllegalArgumentException}，交给 {@code GlobalExceptionHandler} 回 **HTTP 400**。
+     * 若像同文件其它方法那样 catch 后返回 {@code ApiResponse.error}，HTTP 仍是 200、
+     * 前端只看状态码就会把失败当成功（本仓反复踩过的那一族）。
+     */
+    @PostMapping("/assistance/{planId}/progress")
+    public ApiResponse<Object> updatePlanProgress(@PathVariable Long planId,
+                                                  @RequestBody(required = false) Map<String, Object> request) {
+        log.info("Update assistance plan progress: planId={}", planId);
+        return ApiResponse.success(studentService.updatePlanProgress(planId, request));
+    }
+
     // ==================== 学业建议 ====================
     @GetMapping("/suggestions/{studentId}")
     public ApiResponse<Object> getSuggestions(@PathVariable String studentId) {

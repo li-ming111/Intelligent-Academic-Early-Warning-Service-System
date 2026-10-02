@@ -5,7 +5,9 @@ import com.academic.common.entity.AcademicWarning;
 import com.academic.entity.WarningRule;
 import com.academic.mapper.AcademicWarningMapper;
 import com.academic.mapper.ScoreReadMapper;
+import com.academic.mapper.WarningReleaseRecordMapper;
 import com.academic.mapper.WarningRuleMapper;
+import com.academic.notify.WarningNotifier;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.EnableScheduling;
@@ -28,10 +30,18 @@ import java.util.Set;
  * <p>每天凌晨 2 点全量扫描，另外每 30 分钟增量扫描一次。两条路径共用
  * {@link #runScan(boolean)}，逻辑只有一份。
  *
- * <p>扫描流程：一次聚合查出每名学生的挂科门数 → 按规则表匹配<b>唯一一条</b>规则
- * → 每名学生只生成一条预警。旧实现分三段扫描（低分学生、多门挂科、按规则），
- * 且 {@code existingWarningStudents} 只在开头加载一次、从不回写，
- * 同一名学生会命中多个分支被重复插入。现在每人只可能出一条。
+ * <p>一轮扫描做两件事，顺序固定：
+ * <ol>
+ *   <li><b>自动解除</b>（{@link #releaseRecoveredWarnings}）—— 待处理的预警如果按
+ *       当前成绩重算已不再满足规则条件，置为「已解除」并写 {@code warning_release_records}；</li>
+ *   <li><b>生成新预警</b> —— 一次聚合查出每名学生的挂科门数 → 按规则表匹配<b>唯一一条</b>规则
+ *       → 每名学生只生成一条，并通知学生与其辅导员。</li>
+ * </ol>
+ * 先解除后生成：解除只影响 status=0 的行，生成按「学生 + 挂科门数」判重（不看 status），
+ * 两者不会互相干扰。
+ *
+ * <p>旧实现分三段扫描（低分学生、多门挂科、按规则），且 {@code existingWarningStudents}
+ * 只在开头加载一次、从不回写，同一名学生会命中多个分支被重复插入。现在每人只可能出一条。
  *
  * <p>预警等级完全来自 {@code warning_rules.level}，没有任何硬编码档位。
  */
@@ -43,16 +53,28 @@ public class WarningScheduledTask {
     /** 预警文案里最多罗列几门挂科课程，超出部分以"等"省略。 */
     private static final int MAX_COURSE_DETAIL = 5;
 
+    /** 自动解除时写进 {@code handled_by} 的标记，与人工处理（辅导员姓名）区分开。 */
+    static final String AUTO_HANDLER = "系统自动";
+
+    /** {@code warning_release_records.release_reason}：成绩恢复导致系统自动解除。 */
+    static final String RELEASE_REASON_AUTO = "auto_recovered";
+
     private final ScoreReadMapper scoreReadMapper;
     private final AcademicWarningMapper academicWarningMapper;
     private final WarningRuleMapper warningRuleMapper;
+    private final WarningReleaseRecordMapper warningReleaseRecordMapper;
+    private final WarningNotifier warningNotifier;
 
     public WarningScheduledTask(ScoreReadMapper scoreReadMapper,
                                 AcademicWarningMapper academicWarningMapper,
-                                WarningRuleMapper warningRuleMapper) {
+                                WarningRuleMapper warningRuleMapper,
+                                WarningReleaseRecordMapper warningReleaseRecordMapper,
+                                WarningNotifier warningNotifier) {
         this.scoreReadMapper = scoreReadMapper;
         this.academicWarningMapper = academicWarningMapper;
         this.warningRuleMapper = warningRuleMapper;
+        this.warningReleaseRecordMapper = warningReleaseRecordMapper;
+        this.warningNotifier = warningNotifier;
     }
 
     /** 每天凌晨 2:00 全量扫描。 */
@@ -83,14 +105,14 @@ public class WarningScheduledTask {
     /**
      * 手动全量扫描一次，供管理端触发接口与演示使用（否则只能等到凌晨 2 点）。
      *
-     * @return 本次新生成的预警条数
+     * @return 本次新生成的预警条数（不含自动解除的条数，解除数走日志）
      */
     public int triggerNow() {
         return runScan(true);
     }
 
     /**
-     * 扫描并生成预警。
+     * 扫描并生成预警，同时解除已恢复的预警。
      *
      * @param verbose 是否输出完整诊断日志。全量扫描传 {@code true}；
      *                每 30 分钟一次的增量扫描传 {@code false}，避免规则诊断日志刷屏
@@ -135,6 +157,19 @@ public class WarningScheduledTask {
         }
 
         List<Map<String, Object>> failCountRows = scoreReadMapper.findFailCountByStudent();
+        Map<Long, Integer> currentFailCounts = new HashMap<>();
+        for (Map<String, Object> row : failCountRows) {
+            Long sid = toLong(row.get("studentId"));
+            Integer count = toInt(row.get("failCount"));
+            if (sid != null && count != null) {
+                currentFailCounts.put(sid, count);
+            }
+        }
+
+        // ---- 第一步：解除已恢复的预警 ----
+        int released = releaseRecoveredWarnings(rules, currentFailCounts, verbose);
+
+        // ---- 第二步：生成新预警 ----
         int generated = 0;
         for (Map<String, Object> row : failCountRows) {
             Long studentId = toLong(row.get("studentId"));
@@ -164,7 +199,82 @@ public class WarningScheduledTask {
             existingCounts.computeIfAbsent(studentId, k -> new HashSet<>()).add(failCount);
             generated++;
         }
+        if (released > 0) {
+            log.info("本轮扫描自动解除 {} 条已恢复的预警", released);
+        }
         return generated;
+    }
+
+    /**
+     * 自动解除：把「当前成绩已不再满足其规则条件」的待处理预警置为已解除。
+     *
+     * <p>判定用的是同一个 {@link ScoreReadMapper#findFailCountByStudent()} 聚合结果 ——
+     * 与"生成预警"完全同一套口径，不会出现"按这套算法该报、按那套算法该解"的自相矛盾。
+     *
+     * <p>三种情况<b>刻意不动</b>：
+     * <ul>
+     *   <li>规则已被停用或改成非挂科口径（如 GPA 规则）⇒ 无从判定，保持原状。
+     *       宁可留一条待处理，也不要凭猜测把预警抹掉。</li>
+     *   <li>当前门数仍落在规则区间内 ⇒ 问题还在，不解除。</li>
+     *   <li>并发下已被别人改掉（{@code UPDATE} 影响行数为 0）⇒ 不写解除记录，
+     *       避免"记录有、状态没变"的脏数据。</li>
+     * </ul>
+     *
+     * @param currentFailCounts student_profile.id → 当前挂科门数；查不到的学生按 0 门处理
+     *                          （聚合查询只返回有挂科的，不在里面就是一门都没挂）
+     */
+    private int releaseRecoveredWarnings(List<FailCountRule> rules,
+                                         Map<Long, Integer> currentFailCounts,
+                                         boolean verbose) {
+        Map<Long, FailCountRule> ruleById = new HashMap<>();
+        for (FailCountRule rule : rules) {
+            ruleById.put(rule.rule().getId(), rule);
+        }
+
+        int released = 0;
+        for (Map<String, Object> row : academicWarningMapper.selectPendingWarnings()) {
+            if (row == null) {
+                continue;
+            }
+            Long id = toLong(row.get("id"));
+            Long studentId = toLong(row.get("studentId"));
+            Long ruleId = toLong(row.get("ruleId"));
+            if (id == null || studentId == null || ruleId == null) {
+                continue;
+            }
+            FailCountRule rule = ruleById.get(ruleId);
+            if (rule == null) {
+                if (verbose) {
+                    log.debug("预警 {} 的规则 {} 不在可判定集合内，自动解除跳过", id, ruleId);
+                }
+                continue;
+            }
+            int current = currentFailCounts.getOrDefault(studentId, 0);
+            if (rule.range().contains(current)) {
+                continue;
+            }
+
+            String note = String.format(
+                    "重新统计后该生当前挂科 %d 门，已不满足规则「%s」（%s）的条件，系统自动解除。",
+                    current, rule.rule().getRuleName(), rule.rule().getExpression());
+            if (academicWarningMapper.releaseWarning(id, note, AUTO_HANDLER) == 0) {
+                continue;
+            }
+            warningReleaseRecordMapper.insertRelease(
+                    id, studentId, RELEASE_REASON_AUTO, note, null);
+
+            AcademicWarning releasedWarning = new AcademicWarning()
+                    .setId(id)
+                    .setStudentId(studentId)
+                    .setTitle(row.get("title") == null ? "学业预警" : String.valueOf(row.get("title")))
+                    .setWarningLevel(toInt(row.get("warningLevel")));
+            warningNotifier.notifyReleased(releasedWarning,
+                    String.format("当前挂科 %d 门，已不满足预警条件", current));
+            released++;
+            log.info("自动解除预警 {}（学生 {}，当前挂科 {} 门，规则「{}」）",
+                    id, studentId, current, rule.rule().getRuleName());
+        }
+        return released;
     }
 
     /**
@@ -222,6 +332,12 @@ public class WarningScheduledTask {
         return best;
     }
 
+    /**
+     * 插入一条预警，并立刻通知学生与其辅导员。
+     *
+     * <p>通知放在插入之后：只有真的落库了、拿到 id 的预警才通知得出去，
+     * 也保证"本轮新生成"与"本轮通知"是同一批（不会给历史预警补发通知）。
+     */
     private void createWarning(Long studentId, String studentName, FailCountRule rule,
                                int failCount, List<Map<String, Object>> detail) {
         // detail 已按分数升序，首条即最低分，用作 triggerScore
@@ -267,6 +383,8 @@ public class WarningScheduledTask {
         log.info("生成预警：学生 {}（{}）挂科 {} 门，命中规则「{}」，等级 {}",
                 studentName, studentId, failCount, rule.rule().getRuleName(),
                 rule.rule().getWarningLevel());
+
+        warningNotifier.notifyNewWarning(warning);
     }
 
     /** 40.0 → "40"，56.5 → "56.5"。 */

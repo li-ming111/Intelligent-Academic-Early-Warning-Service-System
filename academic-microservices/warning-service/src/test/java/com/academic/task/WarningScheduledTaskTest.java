@@ -4,7 +4,9 @@ import com.academic.common.entity.AcademicWarning;
 import com.academic.entity.WarningRule;
 import com.academic.mapper.AcademicWarningMapper;
 import com.academic.mapper.ScoreReadMapper;
+import com.academic.mapper.WarningReleaseRecordMapper;
 import com.academic.mapper.WarningRuleMapper;
+import com.academic.notify.WarningNotifier;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -49,6 +51,12 @@ class WarningScheduledTaskTest {
 
     @Mock
     private WarningRuleMapper warningRuleMapper;
+
+    @Mock
+    private WarningReleaseRecordMapper warningReleaseRecordMapper;
+
+    @Mock
+    private WarningNotifier warningNotifier;
 
     @InjectMocks
     private WarningScheduledTask scheduledTask;
@@ -380,8 +388,120 @@ class WarningScheduledTaskTest {
     }
 
     // ------------------------------------------------------------------
+    // 自动解除（W1.6）
+    // ------------------------------------------------------------------
+
+    @Test
+    @DisplayName("已恢复：待处理预警的门数掉出规则区间 → 置为已解除并写解除记录、通知学生")
+    void testRelease_RecoveredWarningIsReleased() {
+        stubRules(rule(2L, "中级预警", 2, "fail_count >= 3 AND fail_count <= 5"));
+        stubNoExistingWarnings();
+        // 该生当初挂了 3 门（预警里记的就是 3），现在只剩 1 门 —— 不再满足 [3,5]
+        when(scoreReadMapper.findFailCountByStudent()).thenReturn(List.of(failRow(3L, "司明", 1)));
+        when(academicWarningMapper.selectPendingWarnings())
+                .thenReturn(List.of(pendingWarning(395L, 3L, 2L, 3, "中级预警", 2)));
+        when(academicWarningMapper.releaseWarning(eq(395L), anyString(), anyString())).thenReturn(1);
+
+        int generated = scheduledTask.triggerNow();
+
+        assertEquals(0, generated);   // 门数 1 落在所有规则区间之外，本轮也不生成新的
+        verify(academicWarningMapper).releaseWarning(
+                eq(395L), anyString(), eq(WarningScheduledTask.AUTO_HANDLER));
+        verify(warningReleaseRecordMapper).insertRelease(
+                eq(395L), eq(3L), eq(WarningScheduledTask.RELEASE_REASON_AUTO), anyString(), isNull());
+        verify(warningNotifier).notifyReleased(any(), anyString());
+    }
+
+    @Test
+    @DisplayName("问题仍在：门数还落在规则区间内就不解除")
+    void testRelease_StillFailingIsNotReleased() {
+        stubRules(rule(2L, "中级预警", 2, "fail_count >= 3 AND fail_count <= 5"));
+        stubNoExistingWarnings();
+        when(scoreReadMapper.findFailCountByStudent()).thenReturn(List.of(failRow(3L, "司明", 3)));
+        when(academicWarningMapper.selectPendingWarnings())
+                .thenReturn(List.of(pendingWarning(395L, 3L, 2L, 3, "中级预警", 2)));
+        when(scoreReadMapper.findFailDetailByStudent(3L))
+                .thenReturn(List.of(detail(6L, "操作系统", 40.0)));
+
+        scheduledTask.triggerNow();
+
+        verify(academicWarningMapper, never()).releaseWarning(any(), anyString(), anyString());
+        verify(warningReleaseRecordMapper, never()).insertRelease(any(), any(), anyString(), anyString(), any());
+    }
+
+    @Test
+    @DisplayName("规则无法判定门数（GPA 规则）时不解除 —— 宁可留着，也不凭猜测抹掉")
+    void testRelease_UnevaluableRuleIsLeftAlone() {
+        stubRules(rule(1L, "初级预警", 1, "fail_count >= 1 AND fail_count <= 2"));
+        stubNoExistingWarnings();
+        when(scoreReadMapper.findFailCountByStudent()).thenReturn(List.of(failRow(3L, "司明", 2)));
+        // 该预警挂在 GPA 规则（id=4）上，解析不出门数区间
+        when(academicWarningMapper.selectPendingWarnings())
+                .thenReturn(List.of(pendingWarning(400L, 3L, 4L, null, "GPA预警", 2)));
+        when(scoreReadMapper.findFailDetailByStudent(3L))
+                .thenReturn(List.of(detail(1L, "高等数学", 56.5)));
+
+        scheduledTask.triggerNow();
+
+        verify(academicWarningMapper, never()).releaseWarning(any(), anyString(), anyString());
+        verify(warningNotifier, never()).notifyReleased(any(), anyString());
+    }
+
+    @Test
+    @DisplayName("并发下已被别人改掉（影响行数 0）时不写解除记录，避免留下脏记录")
+    void testRelease_ConcurrentUpdateWritesNoRecord() {
+        stubRules(rule(2L, "中级预警", 2, "fail_count >= 3 AND fail_count <= 5"));
+        stubNoExistingWarnings();
+        when(scoreReadMapper.findFailCountByStudent()).thenReturn(List.of(failRow(3L, "司明", 1)));
+        when(academicWarningMapper.selectPendingWarnings())
+                .thenReturn(List.of(pendingWarning(395L, 3L, 2L, 3, "中级预警", 2)));
+        when(academicWarningMapper.releaseWarning(eq(395L), anyString(), anyString())).thenReturn(0);
+
+        scheduledTask.triggerNow();
+
+        verify(warningReleaseRecordMapper, never()).insertRelease(any(), any(), anyString(), anyString(), any());
+        verify(warningNotifier, never()).notifyReleased(any(), anyString());
+    }
+
+    // ------------------------------------------------------------------
+    // 生成后通知（W1.2）
+    // ------------------------------------------------------------------
+
+    @Test
+    @DisplayName("新生成的预警会通知学生与辅导员；被跳过的历史预警不补发通知")
+    void testScan_NewWarningTriggersNotification() {
+        stubRules(rule(1L, "初级预警", 1, "fail_count >= 1 AND fail_count <= 2"));
+        // 学生 3 已有同门数的历史预警 → 本轮跳过、不生成、也就不通知
+        when(scoreReadMapper.findExistingWarningKeys()).thenReturn(List.of(existingKey(3L, 2, 0)));
+        when(scoreReadMapper.findFailCountByStudent()).thenReturn(List.of(
+                failRow(3L, "司明", 2),
+                failRow(13L, "韩坤", 2)));
+        when(scoreReadMapper.findFailDetailByStudent(13L))
+                .thenReturn(List.of(detail(1L, "高等数学", 56.5)));
+
+        assertEquals(1, scheduledTask.triggerNow());
+
+        ArgumentCaptor<AcademicWarning> captor = ArgumentCaptor.forClass(AcademicWarning.class);
+        verify(warningNotifier, times(1)).notifyNewWarning(captor.capture());
+        assertEquals(13L, captor.getValue().getStudentId());
+    }
+
+    // ------------------------------------------------------------------
     // 辅助
     // ------------------------------------------------------------------
+
+    /** 一条待处理预警的判定行（{@code selectPendingWarnings} 的返回形状）。 */
+    private static Map<String, Object> pendingWarning(long id, long studentId, long ruleId,
+                                                     Integer failCount, String title, int level) {
+        Map<String, Object> row = new HashMap<>();
+        row.put("id", id);
+        row.put("studentId", studentId);
+        row.put("ruleId", ruleId);
+        row.put("failCount", failCount);
+        row.put("title", title);
+        row.put("warningLevel", level);
+        return row;
+    }
 
     private void stubRules(WarningRule... rules) {
         when(warningRuleMapper.selectList(any())).thenReturn(List.of(rules));

@@ -182,11 +182,18 @@ const posVerdict = computed(() => {
 })
 
 function numOr(v) {
+  // 同 numFixed：`Number(null)` 是 0 不是 NaN，不挡的话隐私遮蔽的 `gradedCredits: null`
+  // 会显示成「0 学分」。缺值一律回 '—'，不回 0。
+  if (v === null || v === undefined || v === '') return EMPTY
   const n = Number(v)
   return Number.isFinite(n) ? n : 0
 }
 
 function numFixed(v, d = 2) {
+  // ⚠️ 必须先挡掉 null/undefined/空串：`Number(null)` 是 **0**（不是 NaN），
+  // 少了这一句，后端因隐私遮蔽返回的 `gpa: null` 会被显示成「0.00」——
+  // 等于替那位同学宣布"绩点 0 分"，比不显示更糟。
+  if (v === null || v === undefined || v === '') return EMPTY
   const n = Number(v)
   return Number.isFinite(n) ? n.toFixed(d) : EMPTY
 }

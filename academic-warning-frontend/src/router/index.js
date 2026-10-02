@@ -47,6 +47,7 @@ import AdminUsers from '../views/AdminUsers.vue'
 import AdminRules from '../views/AdminRules.vue'
 import AdminStatistics from '../views/AdminStatistics.vue'
 import AdminWarnings from '../views/AdminWarnings.vue'
+import AdminAppeals from '../views/AdminAppeals.vue'
 import AdminCourses from '../views/AdminCourses.vue'
 import AdminPermissions from '../views/AdminPermissions.vue'
 import AdminMessages from '../views/AdminMessages.vue'
@@ -354,6 +355,11 @@ const routes = [
         path: 'warnings',
         name: 'AdminWarnings',
         component: AdminWarnings
+      },
+      {
+        path: 'appeals',
+        name: 'AdminAppeals',
+        component: AdminAppeals
       },
       {
         path: 'courses',

@@ -38,14 +38,24 @@
                  每张卡都是空白行。删掉，不留空行 -->
           </div>
           <div class="member-stats">
-            <div class="stat-item">
-              <span class="label">GPA</span>
-              <span class="value">{{ fmtGpa(member.gpa) }}</span>
-            </div>
-            <div class="stat-item">
-              <span class="label">学分</span>
-              <span class="value">{{ fmtCredits(member.credits) }}</span>
-            </div>
+            <!-- 同 ClassRanking：该同学把「成绩可见范围」设成了非公开，
+                 后端遮蔽了他的 GPA 与学分，这里如实写「未公开」而不是 '—' -->
+            <template v-if="member.gpaHidden">
+              <div class="stat-item">
+                <span class="label">GPA</span>
+                <span class="value muted">未公开</span>
+              </div>
+            </template>
+            <template v-else>
+              <div class="stat-item">
+                <span class="label">GPA</span>
+                <span class="value">{{ fmtGpa(member.gpa) }}</span>
+              </div>
+              <div class="stat-item">
+                <span class="label">学分</span>
+                <span class="value">{{ fmtCredits(member.credits) }}</span>
+              </div>
+            </template>
           </div>
         </div>
       </div>
@@ -271,6 +281,13 @@ onMounted(() => {
   font-size: 14px;
   font-weight: 600;
   color: #667eea;
+}
+
+/* 隐私遮蔽（privacy_level 非公开） */
+.stat-item .value.muted {
+  font-size: 13px;
+  font-weight: 400;
+  color: #94a3b8;
 }
 
 /* 响应式 */

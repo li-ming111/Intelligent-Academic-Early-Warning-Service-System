@@ -82,12 +82,15 @@ export const studentAPI = {
   getSuggestions: (userId) => {
     return apiClient.get(`/students/suggestions/${userId}`)
   },
-  updatePlanProgress: (planId, progress) => {
-    // 2026-10-01 第二十一轮修：原来打的是 `/status` 且把**百分比**塞进 status 字段。
-    // counselor-service 的 `/status` 只认 0/1/2 与状态名（见 AssistancePlanServiceImpl
-    // .parseStatus），传 50 会被判非法 → 400「无法识别的帮扶计划状态: 50」。
-    // 进度有专门的 `/progress`，且它会顺带把状态同步成 0/1/2。
-    return apiClient.patch(`/counselors/assistance-plans/${planId}/progress`, { progress })
+  updatePlanProgress: (planId, progress, note) => {
+    // 2026-10-02 第二十五轮修：原来打的是 `/counselors/assistance-plans/${planId}/progress`。
+    // 那条路径属于 counselor-service，网关 `AuthenticationFilter` 的前缀角色闸对 role≠3
+    // 一律 403 ⇒ **学生点「更新进度」必然失败**（历史注释只在纠结 `/status` vs `/progress`，
+    // 却没发现整条路径就不该由学生打）。学生自己的更新入口现在在 student-service：
+    // `POST /students/assistance/{planId}/progress`，身份与归属由服务端从网关注入的
+    // X-User-Id 判定，**不需要也不应该由前端传 studentId**。
+    // 顺带把弹窗里那个必填的「完成情况」文本框真正发出去（原来收集了却从不发送）。
+    return apiClient.post(`/students/assistance/${planId}/progress`, { progress, note })
   },
   // ========== 班级信息 ==========
   getClassInfo: (studentId) => {
@@ -747,6 +750,18 @@ export const adminAPI = {
   },
   getDashboard: () => {
     return apiClient.get(`/admin/dashboard`)
+  },
+  // ---- 成绩申诉审核（2026-10-02 第二十五轮）----
+  // 此前全仓对 score_appeals 只有"学生自己撤回"一条 UPDATE，**没有任何审核入口**，
+  // 管理员看不到待审申诉、也处理不了。这两个端点是新补的。
+  // status 传 0/1/2/3 过滤，不传返回全部。
+  getAppeals: (status) => {
+    const params = (status === undefined || status === null || status === '') ? {} : { status }
+    return apiClient.get('/admin/appeals', { params })
+  },
+  // status 只能是 1（通过）或 2（驳回）；reply 是审核意见（可空）。
+  reviewAppeal: (id, { status, reply }) => {
+    return apiClient.post(`/admin/appeals/${id}/review`, { status, reply })
   },
   getColleges: () => {
     return apiClient.get(`/admin/colleges`)

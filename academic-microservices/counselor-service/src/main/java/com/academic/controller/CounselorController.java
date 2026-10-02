@@ -58,6 +58,14 @@ public class CounselorController {
     @Autowired
     private CounselorNotificationService counselorNotificationService;
 
+    // 处理预警后通知学生。共用实现（含 id 空间转换 + 偏好闸 + 落库），见 academic-common。
+    @Autowired
+    private com.academic.common.notify.StudentNotifier studentNotifier;
+
+    // 帮扶评价（学生提交、辅导员读）。只读 mapper，不建实体。
+    @Autowired
+    private com.academic.mapper.AssistanceEvaluationMapper assistanceEvaluationMapper;
+
     @Autowired
     private StudentService studentService;
 
@@ -415,6 +423,41 @@ public class CounselorController {
         } catch (Exception e) {
             log.error("获取辅导员帮扶计划列表失败: {}", e.getMessage());
             return ApiResponse.serverError("获取辅导员帮扶计划列表失败: " + e.getMessage());
+        }
+    }
+
+    /**
+     * 某条帮扶计划收到的学生评价。
+     *
+     * <p>{@code FEATURES.md} 只写了 {@code POST .../evaluation}（辅导员提交评估），
+     * 而这张表存的是**学生对计划的评价**，写入方在 student-service（唯一），
+     * 辅导员需要的是**读**。理由见
+     * {@link com.academic.mapper.AssistanceEvaluationMapper} 的类注释。
+     *
+     * @param planId {@code assistance_plans.id}
+     */
+    @GetMapping("/assistance-plans/{planId}/evaluations")
+    public ApiResponse<List<Map<String, Object>>> getPlanEvaluations(@PathVariable Long planId) {
+        try {
+            return ApiResponse.success(assistanceEvaluationMapper.selectByPlanId(planId));
+        } catch (Exception e) {
+            log.error("获取帮扶计划评价失败: planId={}, {}", planId, e.getMessage());
+            return ApiResponse.serverError("获取帮扶计划评价失败: " + e.getMessage());
+        }
+    }
+
+    /**
+     * 某辅导员名下所有帮扶计划收到的学生评价（汇总，供辅导员页展示）。
+     *
+     * @param counselorId {@code users.id}（{@code assistance_plans.counselor_id}）
+     */
+    @GetMapping("/{counselorId}/evaluations")
+    public ApiResponse<List<Map<String, Object>>> getCounselorEvaluations(@PathVariable Long counselorId) {
+        try {
+            return ApiResponse.success(assistanceEvaluationMapper.selectByCounselorId(counselorId));
+        } catch (Exception e) {
+            log.error("获取辅导员帮扶评价失败: counselorId={}, {}", counselorId, e.getMessage());
+            return ApiResponse.serverError("获取辅导员帮扶评价失败: " + e.getMessage());
         }
     }
 
@@ -1226,7 +1269,18 @@ public class CounselorController {
     }
 
     // ==================== P0新增：预警处理 ====================
-    /** 处理单个预警 */
+    /**
+     * 处理单个预警，并通知学生「你的预警已被处理」。
+     *
+     * <p>此前这里只改 {@code academic_warning} 一行 —— 辅导员点完"处理"，
+     * 学生那边毫无感知，得自己再去翻预警页才知道辅导员已经介入。
+     * 现在处理成功后给学生发一条通知（正文带上处理措施）。
+     *
+     * <p>通知走 {@link com.academic.common.notify.StudentNotifier}：
+     * {@code warning.studentId} 是 {@code student_profile.id}，由它换成 {@code users.id}
+     * 再写 {@code notifications}（那张表的 {@code user_id} 有真外键，转错就 ERROR 1452）。
+     * 学生若关掉了预警类通知，通知会正常跳过，<b>不影响处理本身</b>。
+     */
     @PostMapping("/warnings/{warningId}/process")
     public ApiResponse<Map<String, Object>> processWarning(@PathVariable Long warningId, @RequestBody Map<String, Object> data) {
         try {
@@ -1239,6 +1293,7 @@ public class CounselorController {
             warning.setHandledAt(java.time.LocalDateTime.now());
             warning.setUpdatedAt(java.time.LocalDateTime.now());
             warningMapper.updateById(warning);
+            notifyWarningHandled(warning, "辅导员已处理你的预警");
             Map<String, Object> resp = new HashMap<>();
             resp.put("success", true);
             resp.put("message", "预警处理成功");
@@ -1249,7 +1304,7 @@ public class CounselorController {
         }
     }
 
-    /** 批量处理预警 */
+    /** 批量处理预警，逐条通知学生。 */
     @PostMapping("/warnings/batch-process")
     public ApiResponse<Map<String, Object>> batchProcessWarnings(@RequestBody List<Long> warningIds) {
         try {
@@ -1262,6 +1317,7 @@ public class CounselorController {
                     warning.setHandledAt(java.time.LocalDateTime.now());
                     warning.setUpdatedAt(java.time.LocalDateTime.now());
                     warningMapper.updateById(warning);
+                    notifyWarningHandled(warning, "辅导员已批量处理你的预警");
                     processed++;
                 }
             }
@@ -1273,6 +1329,25 @@ public class CounselorController {
         } catch (Exception e) {
             log.error("批量处理预警失败: {}", e.getMessage());
             return ApiResponse.serverError("批量处理预警失败: " + e.getMessage());
+        }
+    }
+
+    /**
+     * 给预警学生发一条"已处理"通知。
+     *
+     * <p>刻意包 try/catch：处理动作本身已经落库成功了，通知发不出去（学生关了开关、
+     * 档案没绑账号、库抖动）都不该让辅导员看到 500 —— 那会让他以为处理没生效而重复点。
+     */
+    private void notifyWarningHandled(com.academic.common.entity.AcademicWarning warning, String title) {
+        try {
+            String result = warning.getHandleResult();
+            String content = "你此前的预警「" + warning.getTitle() + "」已被处理。"
+                    + (result == null || result.isBlank() ? "" : "处理措施：" + result);
+            studentNotifier.notifyStudent(warning.getStudentId(),
+                    com.academic.common.notify.NotificationPreferences.Category.WARNING,
+                    warning.getWarningLevel(), title, content, warning.getId());
+        } catch (Exception e) {
+            log.warn("预警 {} 的处理通知发送失败（处理本身已生效）: {}", warning.getId(), e.getMessage());
         }
     }
 

@@ -44,7 +44,7 @@ export function toClassMembers(payload) {
     return i < 0 ? null : i + 1
   }
 
-  return list.map(r => {
+  return list.map((r, i) => {
     const gpa = toNumber(r.gpa)
     return {
       id: r.profileId,
@@ -55,8 +55,15 @@ export function toClassMembers(payload) {
       // gradedCredits = 计入 GPA 的课程学分（ScoreCaliber.STUDENT_GPA 的 graded_credits）。
       // 没有成绩的同学不会出现在这个列表里（后端按 gpa IS NOT NULL 过滤）。
       credits: toNumber(r.gradedCredits),
-      rank: rankOf(gpa),
+      // 被隐私遮蔽的行算不出"严格高于他的人数"，但列表本身就是按 GPA 降序排的，
+      // 所以**位置**就是他的名次 —— 不这么做的话这一列会全是 '—'，看着像坏了。
+      // （可见的行仍用并列同名次的算法，与后端 calcClassRank 一致。）
+      rank: gpa === null ? i + 1 : rankOf(gpa),
       isCurrent: meProfileId !== null && String(r.profileId) === meProfileId,
+      // 后端按 `student_profile.privacy_level` 遮蔽了这位同学的成绩（等级不是「公开」）。
+      // 行还在（名次与总人数要对得上），只是 gpa/credits 被置空并打了这个标记，
+      // 页面据此显示「未公开」而不是一个像出错的 '—'。
+      gpaHidden: r.gpaHidden === true,
     }
   })
 }

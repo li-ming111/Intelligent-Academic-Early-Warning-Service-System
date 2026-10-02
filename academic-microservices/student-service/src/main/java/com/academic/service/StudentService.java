@@ -22,6 +22,11 @@ public interface StudentService {
     Object getClassInfo(Long studentId);
     /** 获取帮扶计划 */
     Object getAssistancePlans(Long studentId);
+    /**
+     * 学生更新自己帮扶计划的进度与完成情况说明。
+     * 身份取网关注入的当前用户，body：{@code {progress:0-100, note?}}。
+     */
+    Object updatePlanProgress(Long planId, Object request);
     /** 获取学业建议 */
     Object getSuggestions(Long studentId);
     /** 提交成绩申诉 */

@@ -76,6 +76,10 @@ public class TeacherController {
     @Autowired
     private com.academic.mapper.AcademicWarningMapper academicWarningMapper;
 
+    // 教师处理预警后通知学生。共用实现（id 空间转换 + 偏好闸 + 落库），见 academic-common。
+    @Autowired
+    private com.academic.common.notify.StudentNotifier studentNotifier;
+
     @Autowired
     private com.academic.mapper.ScoreRecordMapper scoreRecordMapper;
 
@@ -717,6 +721,21 @@ public class TeacherController {
             com.academic.common.entity.AcademicWarning saved = academicWarningMapper.selectById(warningId);
             if (saved == null) {
                 return ApiResponse.serverError("预警处理失败：写入后回读不到该条记录");
+            }
+
+            // 通知学生「你的预警已被处理」。刻意包 try/catch：处理本身已经落库成功，
+            // 通知发不出去（学生关了开关、档案没绑账号）不该让教师看到 500 而重复点。
+            try {
+                String handleNote = saved.getHandleResult();
+                studentNotifier.notifyStudent(saved.getStudentId(),
+                        com.academic.common.notify.NotificationPreferences.Category.WARNING,
+                        saved.getWarningLevel(),
+                        "教师已处理你的预警",
+                        "你此前的预警「" + saved.getTitle() + "」已被处理。"
+                                + (handleNote == null || handleNote.isBlank() ? "" : "处理措施：" + handleNote),
+                        saved.getId());
+            } catch (Exception ne) {
+                log.warn("预警 {} 的处理通知发送失败（处理本身已生效）: {}", warningId, ne.getMessage());
             }
 
             Map<String, Object> result = new HashMap<>();

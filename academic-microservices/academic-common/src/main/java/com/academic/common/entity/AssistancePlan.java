@@ -27,6 +27,13 @@ public class AssistancePlan {
      * 于是进度被写成了一个含义不明的状态值，而页面显示的 50% 是硬编码的。
      */
     private Integer progress;
+    /**
+     * 学生更新进度时填写的「完成情况」说明（最近一次）。
+     *
+     * <p>2026-10-02 新增列。此前 PC 学生端那个**必填**的完成情况文本域
+     * 前端校验了非空却从不发送 —— 学生写的内容凭空消失。
+     */
+    private String progressNote;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 }

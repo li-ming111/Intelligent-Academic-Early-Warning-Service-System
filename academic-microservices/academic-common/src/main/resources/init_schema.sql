@@ -619,6 +619,7 @@ CREATE TABLE IF NOT EXISTS `assistance_plans` (
     `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
     `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     `progress` tinyint NOT NULL DEFAULT '0' COMMENT '完成进度百分比 0-100',
+    `progress_note` text COMMENT '学生更新进度时填写的完成情况说明（最近一次）',
     PRIMARY KEY (`id`),
     KEY `idx_assistance_plans_counselor_id` (`counselor_id`),
     KEY `idx_assistance_plans_student_id` (`student_id`),

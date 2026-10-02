@@ -2,12 +2,12 @@ package com.academic.service.impl;
 
 import com.academic.common.entity.AcademicWarning;
 import com.academic.common.entity.CommunicationLog;
-import com.academic.common.entity.Notification;
 import com.academic.common.entity.Student;
+import com.academic.common.notify.NotificationPreferences;
+import com.academic.common.notify.StudentNotifier;
 import com.academic.entity.ClassInfo;
 import com.academic.mapper.ClassInfoMapper;
 import com.academic.mapper.CommunicationLogMapper;
-import com.academic.mapper.NotificationMapper;
 import com.academic.mapper.StudentMapper;
 import com.academic.mapper.WarningMapper;
 import com.academic.service.CounselorNotificationService;
@@ -49,8 +49,10 @@ public class CounselorNotificationServiceImpl implements CounselorNotificationSe
     @Autowired
     private CommunicationLogMapper communicationLogMapper;
 
+    // 发通知共用实现（id 空间转换 + 偏好闸 + 落库），见 academic-common。
+    // 本类不再自己 insert notifications —— 学生关掉的开关必须真的生效（W2）。
     @Autowired
-    private NotificationMapper notificationMapper;
+    private StudentNotifier studentNotifier;
 
     @Autowired
     private StudentService studentService;
@@ -111,6 +113,9 @@ public class CounselorNotificationServiceImpl implements CounselorNotificationSe
         int logged = 0;
         int delivered = 0;
         List<String> undeliverable = new ArrayList<>();
+        // 学生自己在设置里关掉了这类通知 —— 不是故障，但要说出来，
+        // 否则辅导员会以为"已向 30 人发送"，实际只到了 20 人。
+        List<String> muted = new ArrayList<>();
 
         for (Student s : res.students) {
             CommunicationLog cl = new CommunicationLog();
@@ -131,19 +136,16 @@ public class CounselorNotificationServiceImpl implements CounselorNotificationSe
                 undeliverable.add(s.getId() + "(" + s.getName() + ")");
                 continue;
             }
-            Notification n = new Notification();
-            // notifications.user_id 是 users.id，不是 student_profile.id
-            n.setUserId(s.getUserId());
-            n.setTitle(displayTitle);
-            n.setContent(body);
-            n.setType(category);
-            n.setPushChannel("app");
-            n.setIsRead(0);
-            n.setIsDeleted(0);
-            n.setCreatedAt(now);
-            n.setUpdatedAt(now);
-            notificationMapper.insert(n);
-            delivered++;
+            // 走共用发通知实现：学生把该类通知关掉时返回 false（不写库），
+            // 而不是像以前那样照发不误。communication_logs 上面已经写了 ——
+            // 那是辅导员自己的发送记录，无论学生收不收都该留痕。
+            boolean sent = studentNotifier.notifyUser(s.getUserId(), s.getId(),
+                    preferenceCategory(category), null, displayTitle, body, null);
+            if (sent) {
+                delivered++;
+            } else {
+                muted.add(s.getId() + "(" + s.getName() + ")");
+            }
         }
 
         Map<String, Object> resp = new LinkedHashMap<>();
@@ -155,8 +157,28 @@ public class CounselorNotificationServiceImpl implements CounselorNotificationSe
         resp.put("recorded", logged);
         resp.put("skipped", res.skipped);
         resp.put("undeliverable", undeliverable);
+        resp.put("muted", muted);
         resp.put("scopeNote", "receivers=warning-students 的口径：名下有 status=0（未处理）预警的学生");
+        resp.put("muteNote", "muted = 学生已在设置里关闭该类通知，通知未写入其通知中心"
+                + "（communication_logs 仍留痕，因为那是辅导员的发送记录）");
         return resp;
+    }
+
+    /**
+     * 辅导员群发的 category（{@code warning/important/normal}）→ 偏好判定用的类别。
+     *
+     * <p>{@code warning} 用 {@link NotificationPreferences.Category#WARNING}（读
+     * {@code subscribe_warnings} / {@code warning_notification}）；
+     * 其余两种是普通群发，用 {@link NotificationPreferences.Category#CLASS}
+     * （读 {@code user_settings.class_notification}）。
+     *
+     * <p>刻意<b>不</b>把 important 也当成 WARNING：辅导员发一条"重要通知"不等于系统预警，
+     * 混用会让关了预警的学生连班级通知都收不到。
+     */
+    private static NotificationPreferences.Category preferenceCategory(String category) {
+        return "warning".equalsIgnoreCase(category)
+                ? NotificationPreferences.Category.WARNING
+                : NotificationPreferences.Category.CLASS;
     }
 
     // ==================== 历史 ====================

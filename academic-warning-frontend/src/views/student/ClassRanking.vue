@@ -42,14 +42,25 @@
           </div>
 
           <div class="member-scores">
-            <div class="score-item">
-              <span class="score-label">GPA</span>
-              <span class="score-value">{{ fmtGpa(member.gpa) }}</span>
-            </div>
-            <div class="score-item">
-              <span class="score-label">学分</span>
-              <span class="score-value">{{ fmtCredits(member.credits) }}</span>
-            </div>
+            <!-- 该同学把「成绩可见范围」设成了非公开（`student_profile.privacy_level`），
+                 后端在排行榜里遮蔽了他的 GPA 与学分。行还在（名次要对得上），
+                 只是数值为空 —— 这里如实写「未公开」，而不是显示一个像出错的 '—'。 -->
+            <template v-if="member.gpaHidden">
+              <div class="score-item">
+                <span class="score-label">GPA</span>
+                <span class="score-value muted">未公开</span>
+              </div>
+            </template>
+            <template v-else>
+              <div class="score-item">
+                <span class="score-label">GPA</span>
+                <span class="score-value">{{ fmtGpa(member.gpa) }}</span>
+              </div>
+              <div class="score-item">
+                <span class="score-label">学分</span>
+                <span class="score-value">{{ fmtCredits(member.credits) }}</span>
+              </div>
+            </template>
           </div>
 
           <!-- 2026-10-01 第二十一轮删：这里原来挂着一枚 `{{ member.status }}` 标签
@@ -347,6 +358,13 @@ onMounted(() => {
   font-size: 16px;
   font-weight: 600;
   color: #667eea;
+}
+
+/* 隐私遮蔽（privacy_level 非公开）：写成说明文字，不抢眼 */
+.score-value.muted {
+  font-size: 13px;
+  font-weight: 400;
+  color: #94a3b8;
 }
 
 /* 状态徽章 */

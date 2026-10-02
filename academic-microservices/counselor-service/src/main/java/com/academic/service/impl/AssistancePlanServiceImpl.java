@@ -1,11 +1,14 @@
 package com.academic.service.impl;
 
 import com.academic.common.entity.AssistancePlan;
+import com.academic.common.notify.NotificationPreferences;
+import com.academic.common.notify.StudentNotifier;
 import com.academic.mapper.AssistancePlanMapper;
 import com.academic.service.AssistancePlanService;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -16,6 +19,12 @@ import java.util.List;
 @Service
 public class AssistancePlanServiceImpl extends ServiceImpl<AssistancePlanMapper, AssistancePlan> implements AssistancePlanService {
 
+    private final StudentNotifier studentNotifier;
+
+    public AssistancePlanServiceImpl(StudentNotifier studentNotifier) {
+        this.studentNotifier = studentNotifier;
+    }
+
     @Override
     public List<AssistancePlan> getPlansByStudentId(Long studentId) {
         LambdaQueryWrapper<AssistancePlan> wrapper = new LambdaQueryWrapper<>();
@@ -23,13 +32,36 @@ public class AssistancePlanServiceImpl extends ServiceImpl<AssistancePlanMapper,
         return baseMapper.selectList(wrapper);
     }
 
+    /**
+     * 创建帮扶计划，并在<b>同一个事务</b>里通知学生。
+     *
+     * <p>为什么必须同事务：文档 3.8 承诺「创建帮扶计划后通知学生」。如果通知写在事务外，
+     * 一旦通知失败，学生会看到一条查不到内容的"新帮扶计划已创建"（或反过来：计划建了、
+     * 学生永远不知道）。两者要么都成、要么都不成。
+     *
+     * <p>因此这里<b>不 catch</b> —— 通知抛异常就让整个事务回滚，由 controller 统一报错。
+     * （在 {@code @Transactional} 方法里 catch 会变成假事务，只回滚自己那半截。）
+     *
+     * <p>学生若在订阅设置里关掉了帮扶类通知，{@link StudentNotifier} 会正常返回 false
+     * 而不是抛异常 —— "关掉通知"是用户的正常选择，不该让创建计划失败。
+     */
     @Override
+    @Transactional(rollbackFor = Exception.class)
     public boolean createPlan(AssistancePlan plan) {
         plan.setCreatedAt(LocalDateTime.now());
         plan.setUpdatedAt(LocalDateTime.now());
         plan.setStatus(0);
         plan.setProgress(0);
-        return save(plan);
+        boolean saved = save(plan);
+        if (saved) {
+            String content = plan.getContent() == null ? "" : plan.getContent();
+            studentNotifier.notifyStudent(plan.getStudentId(),
+                    NotificationPreferences.Category.ASSISTANCE, null,
+                    "新的帮扶计划",
+                    "辅导员为你制定了帮扶计划：" + content,
+                    null);
+        }
+        return saved;
     }
 
     @Override

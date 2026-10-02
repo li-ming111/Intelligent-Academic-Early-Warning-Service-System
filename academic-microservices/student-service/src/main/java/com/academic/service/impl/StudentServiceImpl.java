@@ -11,6 +11,7 @@ import com.academic.mapper.*;
 import com.academic.service.StudentService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Primary;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
@@ -576,6 +577,10 @@ public class StudentServiceImpl implements StudentService {
     /**
      * 把排行榜列表包成统一响应，并算出该生的名次。
      * 空列表时 rank 为 0（而非 1），避免出现"0 人中排第 1"。
+     *
+     * <p>同时执行隐私过滤：排行榜是**同学之间**互相看得见的界面，所以
+     * {@code student_profile.privacy_level} 在这里真正生效（此前这一列全仓无人读，
+     * 存了等于没存）。规则见 {@link #maskPeerPrivacy}。
      */
     private Map<String, Object> rankingResult(List<Map<String, Object>> list, Long profileId,
                                               String scopeKey, Long scopeId, String semester) {
@@ -587,6 +592,7 @@ public class StudentServiceImpl implements StudentService {
                 break;
             }
         }
+        maskPeerPrivacy(list, profileId);
         Map<String, Object> result = new HashMap<>();
         result.put("studentId", profileId);
         result.put(scopeKey, scopeId);
@@ -596,6 +602,58 @@ public class StudentServiceImpl implements StudentService {
         result.put("list", list);
         return result;
     }
+
+    /**
+     * 按 {@code privacy_level} 遮蔽**他人**的成绩明细。
+     *
+     * <p>{@code privacy_level} 的取值由学生端「设置 → 隐私设置 → 成绩可见范围」定义：
+     * {@code 0}=公开 / {@code 1}=仅教师 / {@code 2}=私密。这里处理的是"同学能不能看见"
+     * 这一个维度：只有 {@code 0}（公开）才把 GPA 与已计学分给同学看；
+     * {@code 1}/{@code 2} 一律遮蔽。
+     *
+     * <p><b>教师的可见性不受这里影响</b>：教师/辅导员看成绩走的是另外的接口
+     * （成绩录入、预警、帮扶），本方法只作用于学生之间互相看的排行榜。
+     * 否则「私密」就等于把学生从预警体系里摘出去 —— 那与本系统的目的相悖。
+     *
+     * <p>三条口径：
+     * <ol>
+     *   <li><b>自己的那一行永远不遮</b> —— 学生当然看得见自己的成绩；</li>
+     *   <li>遮蔽是<b>把值置空 + 打标记</b>，不是删行。删行会让名次和总人数跟着变，
+     *       学生会看到"共 8 人"却排出第 12 名；</li>
+     *   <li>名次顺序本身仍按真实 GPA 排（{@code ORDER BY gpa DESC}），所以
+     *       「我排第几」依然是真的 —— 只是看不到别人具体多少分。</li>
+     * </ol>
+     *
+     * @param list      排行榜行（就地修改）
+     * @param profileId 请求者自己的 {@code student_profile.id}
+     */
+    static void maskPeerPrivacy(List<Map<String, Object>> list, Long profileId) {
+        if (list == null) {
+            return;
+        }
+        for (Map<String, Object> row : list) {
+            if (row == null) {
+                continue;
+            }
+            Object id = row.get("profileId");
+            boolean isSelf = profileId != null && id != null && id.toString().equals(profileId.toString());
+            if (isSelf) {
+                row.put("gpaHidden", false);
+                continue;
+            }
+            // 认不出来的等级按"未公开"处理：宁可少露一点，也不要因为读不懂而多露
+            Integer level = toInteger(row.get("privacyLevel"));
+            boolean isPublic = level != null && level == 0;
+            if (isPublic) {
+                row.put("gpaHidden", false);
+                continue;
+            }
+            row.put("gpa", null);
+            row.put("gradedCredits", null);
+            row.put("gpaHidden", true);
+        }
+    }
+
 
     /**
      * 班级 GPA 对标。
@@ -816,6 +874,80 @@ public class StudentServiceImpl implements StudentService {
             case 2 -> "已完成";
             default -> "未开始";
         };
+    }
+
+    // ==================== 帮扶进度（学生侧） ====================
+    /**
+     * 学生更新自己帮扶计划的进度 + 完成情况说明。
+     *
+     * <p>2026-10-02 新增。此前 PC 学生端的「更新进度」打的是
+     * {@code /counselors/assistance-plans/{id}/progress} —— 网关
+     * {@code AuthenticationFilter} 对 role≠3 一律 403，**学生点一次失败一次**；
+     * 而弹窗里那个**必填**的「完成情况」文本框前端压根没发出来。
+     *
+     * <p>身份取网关注入的 {@code X-User-Id}（{@code GatewayAuthFilter} 已写进
+     * SecurityContext 的 principal），**不信任请求体里的任何 id**；归属校验落在
+     * SQL 的 {@code WHERE student_id = ?} 上（改别人的计划影响行数为 0）。
+     *
+     * @param planId  {@code assistance_plans.id}
+     * @param request body：{@code progress}（0-100，必填）、{@code note}（完成情况，可选）
+     */
+    @Override
+    public Object updatePlanProgress(Long planId, Object request) {
+        Map<String, Object> body = request instanceof Map
+                ? (Map<String, Object>) request
+                : Collections.emptyMap();
+        Integer progress = intValueOrNull(body.get("progress"));
+        if (progress == null) {
+            throw new IllegalArgumentException("progress 必填，且需为 0-100 的整数");
+        }
+        if (progress < 0 || progress > 100) {
+            throw new IllegalArgumentException("progress 必须在 0-100 之间，收到: " + progress);
+        }
+        String note = body.get("note") == null ? null : String.valueOf(body.get("note")).trim();
+        if (note != null && note.isEmpty()) {
+            note = null;
+        }
+
+        Long profileId = resolveProfileId(currentUserId());
+        if (profileId == null) {
+            throw new IllegalArgumentException("无法定位当前登录学生的档案");
+        }
+
+        // 进度顺带同步 status：0→待开始(0)、100→已完成(2)、其余→进行中(1)。
+        // 与 counselor-service 的 AssistancePlanServiceImpl.updatePlanProgress 口径一致。
+        int status = progress == 0 ? 0 : (progress >= 100 ? 2 : 1);
+
+        int rows = assistancePlanMapper.updateProgress(planId, profileId, progress, status, note);
+        if (rows == 0) {
+            throw new IllegalArgumentException("帮扶计划不存在或不属于当前用户: " + planId);
+        }
+        Map<String, Object> result = new HashMap<>();
+        result.put("success", true);
+        result.put("id", planId);
+        result.put("progress", progress);
+        result.put("status", status);
+        result.put("progressNote", note);
+        return result;
+    }
+
+    /** 取网关注入的当前登录用户 id（users.id）。直连无认证头时 principal 为 null。 */
+    private Long currentUserId() {
+        var auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth == null || auth.getPrincipal() == null) {
+            return null;
+        }
+        try {
+            return Long.parseLong(String.valueOf(auth.getPrincipal()));
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    /** 与 {@link #intValue} 同源，但**保留 null**（无法识别与"0"要区分得开）。 */
+    private static Integer intValueOrNull(Object value) {
+        Double d = ScoreCaliber.toDouble(value);
+        return d == null ? null : d.intValue();
     }
 
     // ==================== 学业建议 ====================
@@ -1837,9 +1969,19 @@ public class StudentServiceImpl implements StudentService {
 
     private static Integer toInteger(Object value) {
         if (value == null) return null;
+        // ⚠️ Boolean / "true"/"false" 这两支不是可选的：`privacy_level` 是 `tinyint(1)`，
+        // MySQL JDBC 默认把 tinyint(1) 映射成 Boolean（tinyInt1isBit=true）。
+        // 少了它们，「公开（0）」会取成 Boolean.FALSE → parse 失败 → 返回 null，
+        // 于是**最公开的那一档反而被当成"没配过"**，排行榜上被遮住。
+        // （负向对照：把这两支一起删掉，privacy_tinyint1AsBooleanIsUnderstood 立刻变红。）
+        if (value instanceof Boolean b) return b ? 1 : 0;
         if (value instanceof Number n) return n.intValue();
+        String s = value.toString().trim();
+        // "true"/"false" 也认（某些驱动/序列化路径会给字符串）
+        if ("true".equalsIgnoreCase(s)) return 1;
+        if ("false".equalsIgnoreCase(s)) return 0;
         try {
-            return Integer.valueOf(value.toString().trim());
+            return Integer.valueOf(s);
         } catch (NumberFormatException e) {
             return null;
         }

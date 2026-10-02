@@ -33,6 +33,7 @@ public class StudentServiceFallback implements StudentService {
     @Override public Object getHistoryBenchmark(Long studentId) { return ApiResponse.error("获取历史对标数据服务暂时不可用"); }
     @Override public Object getClassInfo(Long studentId) { return ApiResponse.error("获取班级信息服务暂时不可用"); }
     @Override public Object getAssistancePlans(Long studentId) { return ApiResponse.error("获取帮扶计划服务暂时不可用"); }
+    @Override public Object updatePlanProgress(Long planId, Object request) { return ApiResponse.error("更新帮扶进度服务暂时不可用"); }
     @Override public Object getSuggestions(Long studentId) { return ApiResponse.error("获取学业建议服务暂时不可用"); }
     @Override public Object submitAppeal(Object request) { return ApiResponse.error("提交申诉服务暂时不可用"); }
     @Override public Object getStudentAppeals(Long studentId) { return ApiResponse.error("获取申诉列表服务暂时不可用"); }

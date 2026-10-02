@@ -16,6 +16,7 @@
             <router-link to="/admin/users" class="nav-item" :class="{ active: isActive('/admin/users') }"><span>用户管理</span></router-link>
             <router-link to="/admin/rules" class="nav-item" :class="{ active: isActive('/admin/rules') }"><span>规则管理</span></router-link>
             <router-link to="/admin/warnings" class="nav-item" :class="{ active: isActive('/admin/warnings') }"><span>预警管理</span></router-link>
+            <router-link to="/admin/appeals" class="nav-item" :class="{ active: isActive('/admin/appeals') }"><span>申诉审核</span></router-link>
             <router-link to="/admin/statistics" class="nav-item" :class="{ active: isActive('/admin/statistics') }"><span>数据分析</span></router-link>
             <router-link to="/admin/messages" class="nav-item" :class="{ active: isActive('/admin/messages') }"><span>消息通知</span></router-link>
             <router-link to="/admin/data-export" class="nav-item" :class="{ active: isActive('/admin/data-export') }"><span>数据导出</span></router-link>
@@ -130,6 +131,7 @@ const pageMap = {
   '/admin/users': '用户管理',
   '/admin/rules': '规则管理',
   '/admin/warnings': '预警管理',
+  '/admin/appeals': '成绩申诉审核',
   '/admin/statistics': '数据分析',
   '/admin/messages': '消息通知',
   '/admin/data-export': '数据导出',

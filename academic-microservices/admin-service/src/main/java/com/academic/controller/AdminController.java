@@ -123,6 +123,11 @@ public class AdminController {
     @Autowired
     private com.academic.mapper.ScoreAppealMapper scoreAppealMapper;
 
+    // 发通知共用实现（id 空间转换 + 偏好闸 + 落库），见 academic-common。
+    // 此前这里自带一个 NotificationMapper 手写 insert，已收敛掉 —— 两处口径必然漂移。
+    @Autowired
+    private com.academic.common.notify.StudentNotifier studentNotifier;
+
     @Autowired
     private TeacherProfileMapper teacherProfileMapper;
 
@@ -451,6 +456,92 @@ public class AdminController {
                 new QueryWrapper<AcademicWarning>().eq("status", 0));
             result.put("pendingWarnings", (int) pendingWarnings);
         } catch (Exception e) { result.put("pendingWarnings", 0); }
+        return ApiResponse.success(result);
+    }
+
+    // ==================== 成绩申诉审核（2026-10-02 第二十五轮新增） ====================
+
+    /**
+     * 成绩申诉列表。
+     *
+     * <p>此前全仓对 {@code score_appeals} **只有一条 UPDATE**（学生自己撤回 status=3），
+     * 没有任何审核入口 —— 管理员在 PC 和小程序上都看不到待审申诉，库里那条 status=0
+     * 永远处理不掉。这里补上列表 + 审核两个端点。
+     *
+     * @param status 可选：0 待处理 / 1 已通过 / 2 已驳回 / 3 已撤销；不传返回全部
+     */
+    @GetMapping("/appeals")
+    public ApiResponse<List<Map<String, Object>>> listAppeals(
+            @RequestParam(required = false) Integer status) {
+        try {
+            return ApiResponse.success(scoreAppealMapper.selectAppeals(status));
+        } catch (Exception e) {
+            log.error("List appeals failed: {}", e.getMessage());
+            return ApiResponse.error(e.getMessage());
+        }
+    }
+
+    /**
+     * 审核成绩申诉：通过（status=1）或驳回（status=2），并写审核意见 {@code reply}。
+     *
+     * <p>审核成功后给申诉学生写一条 {@code notifications} —— 兑现文档承诺的
+     * 「申诉处理通知：管理员审核申诉后，通知申诉学生结果」。
+     *
+     * <p>两点刻意的取舍：
+     * <ul>
+     *   <li><b>不加 {@code @Transactional}</b>：审核是一条原子 UPDATE，通知是"尽力而为"的
+     *       附加动作。若把两者放进一个事务、又在这里 catch 通知异常，事务会变成假事务
+     *       （本仓在班级管理写路径上踩过）。分开写语义更诚实。</li>
+     *   <li>通知的 {@code user_id} 是 {@code users.id}（有真外键），由
+     *       {@code student_profile.user_id} 换过来；换不到就**只审不通知**并记 warn，
+     *       绝不让通知失败把审核结果带崩。</li>
+     * </ul>
+     */
+    @PostMapping("/appeals/{id}/review")
+    public ApiResponse<Map<String, Object>> reviewAppeal(@PathVariable Long id,
+                                                         @RequestBody Map<String, Object> body) {
+        Integer status = toInt(body.get("status"));
+        if (status == null || (status != 1 && status != 2)) {
+            throw new IllegalArgumentException("status 只能是 1（通过）或 2（驳回）");
+        }
+        String reply = body.get("reply") == null ? null : String.valueOf(body.get("reply")).trim();
+        if (reply != null && reply.isEmpty()) {
+            reply = null;
+        }
+
+        Map<String, Object> appeal = scoreAppealMapper.selectAppealById(id);
+        if (appeal == null) {
+            throw new IllegalArgumentException("申诉不存在: " + id);
+        }
+        int rows = scoreAppealMapper.reviewAppeal(id, status, reply);
+        if (rows == 0) {
+            throw new IllegalArgumentException("该申诉不是待处理状态（可能已被审核或撤回）: " + id);
+        }
+
+        String courseName = appeal.get("courseName") == null
+                ? "相关课程" : String.valueOf(appeal.get("courseName"));
+        try {
+            Long profileId = toLong(appeal.get("studentId"));
+            if (profileId != null) {
+                // 共用发通知实现：student_profile.id → users.id 的转换、偏好闸、落库都在里面。
+                // 用 Category.APPEAL：申诉结果是学生自己发起事件的回执，不受"系统消息"开关影响
+                // （关掉开关的学生不该连自己申诉的结果都收不到）。
+                studentNotifier.notifyStudent(profileId,
+                        com.academic.common.notify.NotificationPreferences.Category.APPEAL,
+                        null,
+                        status == 1 ? "成绩申诉已通过" : "成绩申诉已驳回",
+                        (status == 1 ? "你的成绩申诉已通过：" : "你的成绩申诉未通过：") + courseName
+                                + (reply == null ? "" : "\n审核意见：" + reply),
+                        null);
+            }
+        } catch (Exception e) {
+            log.warn("申诉审核后写通知失败（不影响审核结果）: {}", e.getMessage());
+        }
+
+        Map<String, Object> result = new HashMap<>();
+        result.put("id", id);
+        result.put("status", status);
+        result.put("reply", reply);
         return ApiResponse.success(result);
     }
 
@@ -4390,5 +4481,29 @@ public class AdminController {
             }
         }
         return new ArrayList<>();
+    }
+
+    /** 宽松地把请求体里的值转成 Integer；无法识别返回 null（用于申诉审核 status）。 */
+    private static Integer toInt(Object value) {
+        if (value == null) {
+            return null;
+        }
+        try {
+            return (int) Double.parseDouble(String.valueOf(value).trim());
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    /** 宽松地把请求体里的值转成 Long；无法识别返回 null。 */
+    private static Long toLong(Object value) {
+        if (value == null) {
+            return null;
+        }
+        try {
+            return (long) Double.parseDouble(String.valueOf(value).trim());
+        } catch (NumberFormatException e) {
+            return null;
+        }
     }
 }

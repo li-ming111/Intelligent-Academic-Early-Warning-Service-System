@@ -402,6 +402,14 @@ export default {
         // 其它实际存在的取值
         system: '系统消息',
         plan_update: '帮扶更新',
+        // 2026-10-02：申诉审核结果的通知类型（StudentNotifier 的 Category.APPEAL → "appeal"）
+        appeal: '成绩申诉',
+        // 帮扶计划创建通知（StudentNotifier 的 Category.ASSISTANCE → "assistance"）
+        assistance: '帮扶通知',
+        // 教师回复学生反馈（StudentNotifier 的 Category.FEEDBACK → "feedback"）
+        feedback: '反馈回复',
+        // 班级通知（StudentNotifier 的 Category.CLASS → "class"）
+        class: '班级通知',
         // 兼容别名
         system_message: '系统消息'
       }
@@ -415,6 +423,10 @@ export default {
         normal: 'info',
         system: 'info',
         plan_update: 'success',
+        appeal: 'warning',
+        assistance: 'success',
+        feedback: 'success',
+        class: 'info',
         system_message: 'info'
       }
       return types[type] || 'info'

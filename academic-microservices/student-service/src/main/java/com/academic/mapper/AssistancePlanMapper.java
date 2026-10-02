@@ -5,6 +5,7 @@ import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
+import org.apache.ibatis.annotations.Update;
 
 import java.util.List;
 
@@ -39,4 +40,26 @@ public interface AssistancePlanMapper extends BaseMapper<AssistancePlan> {
      */
     @Select("SELECT u.name FROM users u WHERE u.id = #{counselorId}")
     String selectCounselorName(@Param("counselorId") Long counselorId);
+
+    /**
+     * 学生更新自己帮扶计划的进度 + 完成情况说明。
+     *
+     * <p>WHERE 同时带 {@code id} 与 {@code student_id}：归属校验落在 SQL 里，
+     * 别人的计划改不动（影响行数 0）。{@code updated_at} 由 DDL 的
+     * {@code ON UPDATE CURRENT_TIMESTAMP} 自动推进，这里不显式写。
+     *
+     * <p>{@code progress_note = COALESCE(#{note}, progress_note)} —— 本次没填说明时
+     * **保留上一次的**，不会把已有的说明抹成 NULL。
+     *
+     * @param profileId {@code assistance_plans.student_id}（即 {@code student_profile.id}）
+     * @return 影响行数；0 = 计划不存在或不属于该学生
+     */
+    @Update("UPDATE assistance_plans SET progress = #{progress}, status = #{status}, "
+          + "progress_note = COALESCE(#{note}, progress_note) "
+          + "WHERE id = #{planId} AND student_id = #{profileId}")
+    int updateProgress(@Param("planId") Long planId,
+                       @Param("profileId") Long profileId,
+                       @Param("progress") Integer progress,
+                       @Param("status") Integer status,
+                       @Param("note") String note);
 }

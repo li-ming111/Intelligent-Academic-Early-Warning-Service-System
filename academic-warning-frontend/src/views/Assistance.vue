@@ -190,7 +190,13 @@ function openProgress(p) {
 async function submitProgress() {
   if (!progressForm.value.feedback) { ElMessage.error('请填写完成情况'); return }
   try {
-    await studentAPI.updatePlanProgress(progressForm.value.id, progressForm.value.percent)
+    // 2026-10-02 第二十五轮：第三个参数（完成情况）以前根本不存在 —— 文本域是必填的，
+    // 校验过了却不发，学生写的内容凭空消失。现在真发出去并落库到 progress_note。
+    await studentAPI.updatePlanProgress(
+      progressForm.value.id,
+      progressForm.value.percent,
+      progressForm.value.feedback
+    )
     ElMessage.success('进度已更新')
     progressVisible.value = false
     await loadPlans()

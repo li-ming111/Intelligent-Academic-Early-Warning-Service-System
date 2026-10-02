@@ -116,7 +116,8 @@ public interface ScoreMapper extends BaseMapper<Score> {
      * 列：profileId / studentNo / studentName / className / gpa / gradedCredits。
      */
     @Select("SELECT g.student_id AS profileId, sp.student_id AS studentNo, sp.name AS studentName, "
-          + "       sp.class_name AS className, g.gpa AS gpa, g.graded_credits AS gradedCredits "
+          + "       sp.class_name AS className, g.gpa AS gpa, g.graded_credits AS gradedCredits, "
+          + "       sp.privacy_level AS privacyLevel "
           + "  FROM " + ScoreCaliber.STUDENT_GPA + " g "
           + "  JOIN student_profile sp ON sp.id = g.student_id "
           + " WHERE sp.class_id = #{classId} AND g.gpa IS NOT NULL "
@@ -125,7 +126,8 @@ public interface ScoreMapper extends BaseMapper<Score> {
 
     /** 专业 GPA 排行榜（实算）。字段同 {@link #selectClassGpaRanking}。 */
     @Select("SELECT g.student_id AS profileId, sp.student_id AS studentNo, sp.name AS studentName, "
-          + "       sp.class_name AS className, g.gpa AS gpa, g.graded_credits AS gradedCredits "
+          + "       sp.class_name AS className, g.gpa AS gpa, g.graded_credits AS gradedCredits, "
+          + "       sp.privacy_level AS privacyLevel "
           + "  FROM " + ScoreCaliber.STUDENT_GPA + " g "
           + "  JOIN student_profile sp ON sp.id = g.student_id "
           + " WHERE sp.major_id = #{majorId} AND g.gpa IS NOT NULL "
