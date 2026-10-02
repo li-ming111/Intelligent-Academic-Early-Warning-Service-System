@@ -160,16 +160,51 @@ public class ClassManagementService {
      * @param status 1-批准，其余-拒绝
      * @return null 表示成功；否则是给前端看的业务提示
      */
+    // ⚠️ 这个重载**自己也要带 @Transactional**：它转调的是同一个 bean 里的方法，
+    //    Spring 的**自调用不会过代理** ⇒ 下面那个重载上的注解在这条路径上不生效。
+    //    只留下面那一份的话，从这条路径进来的调用会变成**假事务**（本工程踩过）。
+    //    两个都是 REQUIRED 传播，嵌套时内层加入外层，不会开两个事务。
     @Transactional(rollbackFor = Exception.class)
     public String reviewApplication(Long id, Integer status) {
+        return reviewApplication(id, status, null);
+    }
+
+    /**
+     * 审核辅导员班级申请。
+     *
+     * <p>2026-10-02（W1.14）：加了 {@code rejectReason} —— 这条路径**与管理端的
+     * `POST /admin/class-management/reject/{id}?type=counselor` 是同一个业务动作的两条实现**，
+     * 拒绝理由必须两边都存，否则"从哪个入口拒的"决定了理由留不留得住。
+     *
+     * <p>理由只在**拒绝**（{@code status=2}）时写入；批准时**显式置 null**，
+     * 免得一条曾经被拒、后来又被批的申请还挂着上次的理由（前端是按 status 显示它的，
+     * 但库里留着一个与 status 矛盾的值迟早会被别处读到）。
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public String reviewApplication(Long id, Integer status, String rejectReason) {
         CounselorClassApplication application = counselorClassApplicationMapper.selectById(id);
         if (application == null) {
             return "申请不存在";
         }
 
-        // 1. 更新申请状态
-        application.setStatus(status);
-        counselorClassApplicationMapper.updateById(application);
+        // 1. 更新申请状态（顺带把拒绝理由一并落库）
+        //
+        // ⚠️ 这里**必须**用 UpdateWrapper 显式 `.set("reject_reason", …)`，不能靠
+        //    `updateById(entity)`：MyBatis-Plus 默认的更新策略是 NOT_NULL，**值为 null 的
+        //    字段根本不会出现在 UPDATE 语句里** ⇒ "批准时把理由清掉"这句会变成一句空话，
+        //    一条曾经被拒、后来又被批的申请会一直挂着上次的拒绝理由。
+        //    （本工程没有全局改过 update-strategy，各服务 application.yml 里只有
+        //    `map-underscore-to-camel-case: true`，所以默认策略是生效的。）
+        String normalizedReason = null;
+        if (status != null && status == 2) {
+            normalizedReason = (rejectReason == null || rejectReason.trim().isEmpty())
+                    ? null : rejectReason.trim();
+        }
+        UpdateWrapper<CounselorClassApplication> statusUpdate = new UpdateWrapper<>();
+        statusUpdate.eq("id", id)
+                .set("status", status)
+                .set("reject_reason", normalizedReason);
+        counselorClassApplicationMapper.update(null, statusUpdate);
 
         // 2. 批准时，按申请类型把班级的辅导员改成/清空
         if (status == 1) {

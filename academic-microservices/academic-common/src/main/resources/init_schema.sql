@@ -801,6 +801,7 @@ CREATE TABLE IF NOT EXISTS `counselor_class_application` (
     `class_name` varchar(100) DEFAULT NULL,
     `counselor_name` varchar(100) DEFAULT NULL,
     `application_type` int DEFAULT '0' COMMENT '申请类型：0-申请管理，1-解除管理',
+    `reject_reason` varchar(500) DEFAULT NULL COMMENT '拒绝原因',
     PRIMARY KEY (`id`),
     KEY `idx_counselor_id` (`counselor_id`),
     KEY `idx_class_id` (`class_id`),

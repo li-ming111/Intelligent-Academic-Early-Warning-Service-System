@@ -56,6 +56,11 @@
               <view class="row__main">
                 <text class="row__title">{{ r.className || '未知班级' }}</text>
                 <text class="row__desc">{{ r.reason || '未填写理由' }}</text>
+                <!-- 拒绝原因（2026-10-02 W1.14）：管理员拒绝时填的理由，现在真的落库并回读。
+                     只有 status=2（已拒绝）才显示。 -->
+                <text v-if="Number(r.status) === 2 && r.rejectReason" class="row__reject">
+                  拒绝原因：{{ r.rejectReason }}
+                </text>
                 <text class="row__time">提交于 {{ fmt(r.createTime) }}</text>
               </view>
               <text class="tag" :class="statusClass(r.status)">{{ statusText(r.status) }}</text>
@@ -502,6 +507,15 @@ function goStudents() {
   margin-top: 6rpx;
   font-size: $font-xs;
   color: $color-text-secondary;
+  line-height: 1.5;
+}
+
+/* 拒绝原因（W1.14）：与「申请理由」用颜色区分开 */
+.row__reject {
+  display: block;
+  margin-top: 6rpx;
+  font-size: $font-xs;
+  color: $color-danger;
   line-height: 1.5;
 }
 

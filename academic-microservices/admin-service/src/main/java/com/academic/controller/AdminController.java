@@ -3186,6 +3186,9 @@ public class AdminController {
                     item.put("status", app.getStatus());
                     item.put("createTime", app.getCreateTime());
                     item.put("reason", app.getReason());
+                    // 待审核的行 rejectReason 必然是 null —— 但两个端点返回的是**同一种行形状**，
+                    // 少一个 key 就会让"同一个列表换了个入口"的前端读到 undefined（本工程踩过多次）。
+                    item.put("rejectReason", app.getRejectReason());
                     item.put("applicationType", app.getApplicationType());
                     pendingList.add(item);
                 }
@@ -3205,6 +3208,7 @@ public class AdminController {
                     item.put("status", app.getStatus());
                     item.put("createTime", app.getCreateTime());
                     item.put("reason", app.getReason());
+                    item.put("rejectReason", app.getRejectReason());
                     item.put("applicationType", app.getApplicationType());
                     pendingList.add(item);
                 }
@@ -3242,6 +3246,10 @@ public class AdminController {
                 item.put("createTime", app.getCreateTime());
                 item.put("updateTime", app.getUpdateTime());
                 item.put("reason", app.getReason());
+                // 2026-10-02（W1.14）：拒绝理由此前不在这张表的返回里，
+                // 于是管理端「全部申请」里 `status=2` 的行只显示一个「已拒绝」标签，
+                // 看不到自己当初填的理由。
+                item.put("rejectReason", app.getRejectReason());
                 item.put("applicationType", app.getApplicationType());
                 resultList.add(item);
             }
@@ -3264,6 +3272,7 @@ public class AdminController {
                         item.put("createTime", row.get("create_time") != null ? row.get("create_time").toString() : null);
                         item.put("updateTime", row.get("update_time") != null ? row.get("update_time").toString() : null);
                         item.put("reason", row.get("reason"));
+                        item.put("rejectReason", row.get("reject_reason"));
                         item.put("applicationType", row.get("application_type"));
                         resultList.add(item);
                     }
@@ -3281,6 +3290,7 @@ public class AdminController {
                     item.put("createTime", app.getCreateTime());
                     item.put("updateTime", app.getUpdateTime());
                     item.put("reason", app.getReason());
+                    item.put("rejectReason", app.getRejectReason());
                     item.put("applicationType", app.getApplicationType());
                     resultList.add(item);
                 }
@@ -3342,16 +3352,37 @@ public class AdminController {
         }
     }
 
+    /**
+     * 拒绝一条班级管理申请（教师 / 辅导员两张表，靠 {@code type} 区分）。
+     *
+     * <p>⚠️ 两张表**都有 id=1**，所以 {@code type} 传错就会改到另一张表里同号的那条上 ——
+     * 前端一律从数据行本身取 {@code type}，不由筛选器决定（见小程序 `class-requests.vue` 的注释）。
+     *
+     * <p>2026-10-02（W1.14）：{@code rejectData} 这个参数**此前收下后一次都没读**，
+     * 于是「拒绝理由」从页面上发出来就没了 —— 而 PC 与小程序两个前端**都收了它、
+     * 也真的发了出去**（PC 那个还做了非空校验）。现在把 {@code reason} 落到
+     * `teacher_class_application.reject_reason` / `counselor_class_application.reject_reason`
+     * （后者的列是同批新加的）。理由为空时**不写**（保持 NULL），不编一个空串。
+     */
     @PostMapping("/class-management/reject/{requestId}")
     public ApiResponse<String> rejectClassRequest(
             @PathVariable Long requestId,
-            @RequestBody Map<String, String> rejectData,
+            @RequestBody(required = false) Map<String, String> rejectData,
             @RequestParam(defaultValue = "teacher") String type) {
         try {
+            // 前端发的是 `{reason}`；空串与空白一律归成 null，别把 "" 当成"有理由"
+            String reason = rejectData == null ? null : rejectData.get("reason");
+            if (reason != null && reason.trim().isEmpty()) {
+                reason = null;
+            } else if (reason != null) {
+                reason = reason.trim();
+            }
+
             if ("counselor".equals(type)) {
                 com.academic.entity.CounselorClassApplication app = counselorClassApplicationMapper.selectById(requestId);
                 if (app != null) {
                     app.setStatus(2);
+                    app.setRejectReason(reason);
                     counselorClassApplicationMapper.updateById(app);
                     return ApiResponse.success("已拒绝辅导员班级申请");
                 }
@@ -3359,6 +3390,7 @@ public class AdminController {
                 TeacherClassApplication application = applicationMapper.selectById(requestId);
                 if (application != null) {
                     application.setStatus(2);
+                    application.setRejectReason(reason);
                     applicationMapper.updateById(application);
                     return ApiResponse.success("Application rejected successfully");
                 }

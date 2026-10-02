@@ -741,6 +741,9 @@ public class CounselorController {
                 m.put("reason", app.getReason());
                 m.put("status", app.getStatus());
                 m.put("applicationType", app.getApplicationType());
+                // 2026-10-02（W1.14）：拒绝原因回读。这个 Map 是**手写的**，
+                // 不 put 就不会出现在响应里 —— 实体上有字段≠前端收得到。
+                m.put("rejectReason", app.getRejectReason());
                 m.put("createTime", app.getCreateTime());
                 result.add(m);
             }
@@ -879,8 +882,13 @@ public class CounselorController {
             @RequestBody Map<String, Object> request) {
         try {
             Integer status = (Integer) request.get("status");
+            // 2026-10-02（W1.14）：拒绝理由。前端此前发的是 `{status}`，
+            // 与管理端 `POST /admin/class-management/reject/{id}?type=counselor` 是同一动作的两条实现，
+            // 理由两边都要能存 —— 只修一边的话，"从哪个入口拒的"会决定理由留不留得住。
+            Object rawReason = request.get("reason");
+            String rejectReason = rawReason == null ? null : String.valueOf(rawReason);
 
-            String errorMessage = classManagementService.reviewApplication(id, status);
+            String errorMessage = classManagementService.reviewApplication(id, status, rejectReason);
             if (errorMessage != null) {
                 return ApiResponse.error(errorMessage);
             }

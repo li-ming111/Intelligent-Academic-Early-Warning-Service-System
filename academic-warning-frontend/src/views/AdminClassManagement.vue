@@ -155,6 +155,15 @@
                 <el-tag v-else-if="row.status===3" type="info">已取消</el-tag>
               </template>
             </el-table-column>
+            <!-- 拒绝原因（2026-10-02 W1.14）：后端此前收下理由就丢，现在真的落库并回读。
+                 只有 status===2 才会渲染 —— 库里若因别的路径残留了值也不显示。 -->
+            <el-table-column label="拒绝原因" min-width="180" show-overflow-tooltip>
+              <template #default="{ row }">
+                <span v-if="row.status===2 && row.rejectReason" class="reject-reason">{{ row.rejectReason }}</span>
+                <span v-else-if="row.status===2" class="reject-reason reject-reason--empty">未填写</span>
+                <span v-else>—</span>
+              </template>
+            </el-table-column>
             <el-table-column label="处理时间" width="180" sortable>
               <template #default="{ row }">{{ formatDate(row.updateTime) }}</template>
             </el-table-column>
@@ -257,6 +266,15 @@
                 <el-tag v-else-if="row.status===1" type="success">已通过</el-tag>
                 <el-tag v-else-if="row.status===2" type="danger">已拒绝</el-tag>
                 <el-tag v-else-if="row.status===3" type="info">已取消</el-tag>
+              </template>
+            </el-table-column>
+            <!-- 拒绝原因（2026-10-02 W1.14）：后端此前收下理由就丢，现在真的落库并回读。
+                 只有 status===2 才会渲染 —— 库里若因别的路径残留了值也不显示。 -->
+            <el-table-column label="拒绝原因" min-width="180" show-overflow-tooltip>
+              <template #default="{ row }">
+                <span v-if="row.status===2 && row.rejectReason" class="reject-reason">{{ row.rejectReason }}</span>
+                <span v-else-if="row.status===2" class="reject-reason reject-reason--empty">未填写</span>
+                <span v-else>—</span>
               </template>
             </el-table-column>
             <el-table-column label="处理时间" width="180" sortable>
@@ -564,6 +582,16 @@ const handleCounselorSelectionChange = (selection) => {
   padding: 20px;
   background-color: #f8f9fa !important;
   min-height: 100vh;
+}
+
+/* 拒绝原因（W1.14） */
+.reject-reason {
+  color: #f56c6c;
+}
+
+.reject-reason--empty {
+  color: #c0c4cc;
+  font-style: italic;
 }
 
 .page-header {

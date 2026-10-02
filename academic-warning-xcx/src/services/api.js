@@ -335,7 +335,8 @@ class ApiClient {
     getStudents: (teacherId) => this._get(`/teachers/students/${teacherId}`),
     /** 可申请/可搜索的班级：`[{id, name, majorId, studentCount, hasTeacher}]`。 */
     searchClasses: (keyword) => this._get(`/teachers/class-management/search?keyword=${encodeURIComponent(keyword || '')}`),
-    /** 我的申请记录：`[{id,classId,className,reason,status,applicationType,createTime,teacherName}]`。 */
+    /** 我的申请记录：`[{id,classId,className,reason,status,applicationType,createTime,teacherName,rejectReason}]`。
+     *  `rejectReason` 2026-10-02（W1.14）才有值（`status=2` 时是管理员填的拒绝理由）。 */
     getClassRequests: (teacherId) => this._get(`/teachers/class-management/requests?teacherId=${teacherId}`),
     /**
      * 提交申请（**真落库**，status=0 待审核）。
@@ -501,7 +502,8 @@ class ApiClient {
     // 每班预警概览因此恒返回 {totalWarnings:0, pendingCount:0…}，且不报错。
     // 班级预警走上面的 getClassWarningCompare。
 
-    /** 我的班级申请记录：`[{id, classId, className, reason, status, applicationType, createTime}]`。 */
+    /** 我的班级申请记录：`[{id, classId, className, reason, status, applicationType, createTime, rejectReason}]`。
+     *  `rejectReason` 2026-10-02（W1.14）才有值（`status=2` 时是管理员填的拒绝理由）。 */
     getClassRequests: (counselorId) => this._get(`/counselors/class-management/requests?counselorId=${counselorId}`),
     /** 可申请的班级（当前无辅导员的）。 */
     getClassesWithoutCounselor: () => this._get('/counselors/class-management/without-counselor'),
@@ -863,7 +865,13 @@ class ApiClient {
      * 传 `counselor` 时还会**顺带把 `classes.counselor_id` 写上**。
      */
     approveClassRequest: (id, type = 'teacher') => this._post(`/admin/class-management/approve/${id}?type=${type}`),
-    /** 拒绝申请（`status` → 2）。体 `{reason}`（后端收了但**没有列存它**，只改状态）。 */
+    /**
+     * 拒绝申请（`status` → 2）。体 `{reason}`。
+     *
+     * 2026-10-02（W1.14）：`reason` 现在**真的会落库**（两张申请表各加了一列 `reject_reason`），
+     * 并通过申请方自己的列表回读。此前这一行下面的注释写的是"后端收了但没有列存它"——
+     * 那是当时的事实，现在不成立了。留空传 `''` 时后端归成 NULL，不会用空串冒充有理由。
+     */
     rejectClassRequest: (id, reason = '', type = 'teacher') =>
       this._post(`/admin/class-management/reject/${id}?type=${type}`, { reason }),
 

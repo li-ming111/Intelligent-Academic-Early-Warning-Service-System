@@ -124,6 +124,12 @@
               </div>
               <div class="request-info">
                 <p><span class="label">{{ req.applicationType === 1 ? '解除原因' : '申请原因' }}：</span> {{ req.reason || '无' }}</p>
+                <!-- 拒绝原因（2026-10-02 W1.14）：管理员拒绝时填的理由，此前收下即丢，
+                     现在真的落库并在这里回读给申请人。只有 status===2 才显示。 -->
+                <p v-if="Number(req.status) === 2 && req.rejectReason">
+                  <span class="label">拒绝原因：</span>
+                  <span class="reject-reason">{{ req.rejectReason }}</span>
+                </p>
                 <p><span class="label">申请时间：</span> {{ formatDate(req.createTime) }}</p>
               </div>
             </div>
@@ -1014,6 +1020,11 @@ onMounted(() => {
 
 .request-info p {
   margin: 6px 0;
+}
+
+/* 拒绝原因（W1.14） */
+.reject-reason {
+  color: #f56c6c;
 }
 
 /* 学生列表相关样式 */

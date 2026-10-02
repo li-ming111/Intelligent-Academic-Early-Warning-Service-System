@@ -21,4 +21,15 @@ public class CounselorClassApplication {
     private String className;
     private String counselorName;
     private Integer applicationType;
+
+    /**
+     * 拒绝原因（`status=2` 才有值）。
+     *
+     * <p>2026-10-02（W1.14）：`counselor_class_application` 此前**没有这一列**
+     * （同批的 `teacher_class_application` 早就有了，但也没人写），
+     * 而管理员拒绝时前端**真的把理由发过来了** —— `AdminController.rejectClassRequest`
+     * 的 `@RequestBody Map<String,String> rejectData` 收下后一次都没读。
+     * 列与写入方、读取方是同一次改动补齐的。
+     */
+    private String rejectReason;
 }

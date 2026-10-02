@@ -41,6 +41,12 @@
               <text class="app__kind">{{ kindText(a.applicationType) }}</text>
             </view>
             <text class="app__reason">{{ a.reason || '（未填申请理由）' }}</text>
+            <!-- 拒绝原因（2026-10-02 W1.14）：此前后端收下即丢，现在真的落库并回读。
+                 只有 status=2 才会有值，其它状态即便库里留着残留也不显示。 -->
+            <view v-if="Number(a.status) === 2 && a.rejectReason" class="app__reject">
+              <text class="app__reject__label">拒绝原因</text>
+              <text class="app__reject__text">{{ a.rejectReason }}</text>
+            </view>
             <text class="app__time">提交 {{ formatDate(a.createTime, true) }} · 最近变更 {{ formatDate(a.updateTime, true) }}</text>
 
             <view v-if="isPending(a)" class="app__acts">
@@ -81,8 +87,9 @@
           />
         </view>
         <text class="note note--in">
-          后端**收下了这个原因但不存它** —— 拒绝接口只把状态改成 2，理由没有列可以放。
-          所以这段文字不会出现在任何查询结果里，填写它只是为了当前的沟通。
+          这段文字会**存进申请单**（`teacher_class_application.reject_reason` /
+          `counselor_class_application.reject_reason`），并通过申请方自己的列表回读给他看。
+          留空也允许 —— 留空时库里存 NULL，不会用空串冒充"有理由"。
         </text>
       </view>
       <template #footer>
@@ -350,6 +357,31 @@ async function doReject() {
   font-size: $font-sm;
   color: $color-text;
   line-height: 1.6;
+}
+
+/* 拒绝原因（W1.14）：与「申请理由」在视觉上分开，别让人读成同一段文字 */
+.app__reject {
+  display: flex;
+  margin-top: $spacing-sm;
+  padding: $spacing-sm $spacing-md;
+  border-radius: $radius-sm;
+  background: rgba(239, 68, 68, 0.08);
+}
+
+.app__reject__label {
+  flex-shrink: 0;
+  margin-right: $spacing-sm;
+  font-size: $font-xs;
+  color: $color-danger;
+}
+
+.app__reject__text {
+  flex: 1;
+  min-width: 0;
+  font-size: $font-sm;
+  line-height: 1.6;
+  color: $color-text;
+  word-break: break-all;
 }
 
 .app__time {

@@ -60,6 +60,11 @@
               </view>
               <text class="req__type">{{ typeText(r.applicationType) }}</text>
               <text v-if="r.reason" class="req__reason">理由：{{ r.reason }}</text>
+              <!-- 拒绝原因（2026-10-02 W1.14）：管理员拒绝时填的理由，现在真的落库并回读。
+                   只有 status=2（已拒绝）才显示。 -->
+              <text v-if="Number(r.status) === 2 && r.rejectReason" class="req__reject">
+                拒绝原因：{{ r.rejectReason }}
+              </text>
               <text class="req__time">{{ fmt(r.createTime) }}</text>
             </view>
           </view>
@@ -585,6 +590,15 @@ watch(tab, key => {
   margin-top: 4rpx;
   font-size: $font-xs;
   color: $color-text-hint;
+  line-height: 1.5;
+}
+
+/* 拒绝原因（W1.14）：与「申请理由」用颜色区分开 */
+.req__reject {
+  display: block;
+  margin-top: 4rpx;
+  font-size: $font-xs;
+  color: $color-danger;
   line-height: 1.5;
 }
 
