@@ -25,7 +25,11 @@ class ApiClient {
   _patch = (url, data) => this.request(url, { method: 'PATCH', data })
 
   // ========== 认证 ==========
-  login = (username, password) => this._post('/auth/login', { username, password })
+  // 2026-10-02（W1.12）：登录要带服务端签发的验证码，缺一不可。
+  login = (username, password, captchaId, captcha) =>
+    this._post('/auth/login', { username, password, captchaId, captcha })
+  /** 签发一个验证码（匿名可达：网关白名单 + user-service permitAll 两处都放行了）。 */
+  getCaptcha = () => this._get('/auth/captcha')
   logout = (userId, role) => this._post('/auth/logout', { userId, role })
   changePassword = (data) => this._post('/auth/change-password', data)
   registerStudent = (data) => this._post('/auth/register/student', data)

@@ -112,8 +112,9 @@
               <el-input v-model="loginForm.captcha" placeholder="验证码" clearable size="large">
                 <template #prefix><el-icon><CircleCheck /></el-icon></template>
               </el-input>
-              <button type="button" class="lr-captcha-btn" @click="refreshCaptcha">
-                {{ captchaCode }}
+              <button type="button" class="lr-captcha-btn" @click="refreshCaptcha"
+                      :title="captchaError || '点击换一张'">
+                {{ captchaCode || (captchaLoading ? '加载中…' : '点击刷新') }}
               </button>
             </div>
           </div>
@@ -142,7 +143,7 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { authAPI } from '@/api/index'
 import { ElMessage } from 'element-plus'
@@ -152,7 +153,15 @@ const router = useRouter()
 const loginForm = ref({ username: '', password: '', captcha: '' })
 const loading = ref(false)
 const errorMessage = ref('')
+// 验证码（2026-10-02 W1.12 起由**服务端**签发）。
+// 改之前这里是 `Math.random()` 本地生成、本地比对 —— 页面 DOM 里就有答案，
+// 而且直接 POST /auth/login 根本不经过这里，验证码对脚本等于不存在。
+// 现在：GET /auth/captcha 拿 {captchaId, captchaText}，登录时把两个都带上，
+// 服务端校验并一次性消费。
 const captchaCode = ref('')
+const captchaId = ref('')
+const captchaLoading = ref(false)
+const captchaError = ref('')
 const showPwd = ref(false)
 const rememberMe = ref(false)
 
@@ -163,32 +172,67 @@ const clearLoginCache = () => {
 }
 clearLoginCache()
 
-const refreshCaptcha = () => {
-  captchaCode.value = Math.random().toString(36).substring(2, 8).toUpperCase()
+/**
+ * 向服务端要一个新的验证码。
+ *
+ * 失败时**如实把按钮置成"点击刷新"并记下原因**，不偷偷退回本地随机数 ——
+ * 那样会让"验证码服务挂了"表现成"登录总是说验证码错误"，最难查的那种。
+ */
+const refreshCaptcha = async () => {
+  captchaLoading.value = true
+  captchaError.value = ''
+  try {
+    const d = await authAPI.getCaptcha()
+    if (d && d.captchaText) {
+      captchaCode.value = d.captchaText
+      captchaId.value = d.captchaId
+    } else {
+      captchaCode.value = ''
+      captchaId.value = ''
+      captchaError.value = '验证码服务返回异常'
+    }
+  } catch (e) {
+    captchaCode.value = ''
+    captchaId.value = ''
+    captchaError.value = e?.message || '验证码加载失败'
+    console.error('[captcha] 加载失败:', e)
+  } finally {
+    captchaLoading.value = false
+  }
 }
+onMounted(refreshCaptcha)
 
 const handleLogin = async () => {
   errorMessage.value = ''
   if (!loginForm.value.username) { ElMessage.error('请输入学号或工号'); return }
   if (!loginForm.value.password) { ElMessage.error('请输入密码'); return }
   if (!loginForm.value.captcha) { ElMessage.error('请输入验证码'); return }
-  // 此前这里只判了非空、从不与 captchaCode 比对，填任何一个字符都能登录，验证码形同虚设。
-  // 注意分寸：这是**纯前端**校验，captchaCode 就在页面 DOM 里，挡不住有心人，
-  // 只能挡住脚本盲打。要当真正的安全边界，必须改成服务端出图 + 服务端校验。
-  if (loginForm.value.captcha.trim().toUpperCase() !== captchaCode.value) {
-    ElMessage.error('验证码错误')
+  if (!captchaId.value) {
+    // 码没签发出来（服务不可达/已过期被清）—— 重拿一个再让用户填，别拿空 id 去打登录
+    ElMessage.error(captchaError.value || '验证码未加载，请点击验证码刷新')
     refreshCaptcha()
-    loginForm.value.captcha = ''
     return
   }
+  // 这里**不再**做本地比对：对不对由服务端说了算（本地比对既挡不住脚本，
+  // 又会把"码已过期"错报成"验证码错误"）。前端只保证两个字段都带上。
   loading.value = true
   try {
-    const res = await authAPI.login(loginForm.value.username, loginForm.value.password)
+    const res = await authAPI.login(
+      loginForm.value.username, loginForm.value.password, captchaId.value, loginForm.value.captcha.trim())
     const apiData = res.data
     // 注意：/auth/login 的响应信封 code 恒为 200 —— 密码错误、用户不存在也都是 200
     // （见 api/client.js 对该路径的特判），所以 code 判不出成败。
     // 真正的结果只在 data 上：成功有 data.token，失败只有 data.message。
-    if (apiData.code !== 200) { errorMessage.value = apiData.message || '登录失败'; loading.value = false; return }
+    // ⚠️ 例外：**验证码不对**时服务端回的是 code:500（在 AuthController 里就拦下了，
+    // 没进 userService），所以这一句 code 判断对验证码失败是有效的。
+    if (apiData.code !== 200) {
+      errorMessage.value = apiData.message || '登录失败'
+      // 码已被消费（校验无论成败都会删），必须重新签发，否则下一次一定还是"已过期"
+      refreshCaptcha()
+      loginForm.value.captcha = ''
+      loading.value = false
+      return
+    }
     const d = apiData.data
     if (d && d.token) {
       localStorage.setItem('token', d.token)
@@ -211,11 +255,18 @@ const handleLogin = async () => {
       // 失败分支：此前缺失，导致密码错误时既不报错也不跳转，点了登录毫无反应。
       // data.message 是后端给出的原因（「密码错误」「用户不存在」「用户名和密码不能为空」）。
       errorMessage.value = (d && d.message) || '登录失败，请稍后重试'
+      // 验证码在这一轮已经被消费掉了，重新签发一个 —— 否则用户改完密码再点一次，
+      // 会被"验证码错误或已过期"挡下，看起来像"改了密码反而登不进去了"。
+      refreshCaptcha()
+      loginForm.value.captcha = ''
     }
     loading.value = false
   } catch (e) {
     loading.value = false
     errorMessage.value = e?.message || '网络连接失败，请稍后重试'
+    // 连接层失败时验证码也可能已被消费/过期，同样重拿一个
+    refreshCaptcha()
+    loginForm.value.captcha = ''
   }
 }
 

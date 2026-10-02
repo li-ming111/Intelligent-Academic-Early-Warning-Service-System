@@ -75,7 +75,7 @@ const main = async () => {
     return true
   })()`)
 
-  const filled = await evaluate(`(() => {
+  const filled = await evaluate(`(async () => {
     const setVal = (sel, val) => {
       const el = document.querySelector(sel)
       if (!el) return false
@@ -85,7 +85,16 @@ const main = async () => {
       el.dispatchEvent(new Event('change', { bubbles: true }))
       return true
     }
-    const shown = (document.querySelector('.lr-captcha-btn')?.textContent || '').trim()
+    const shown = (await (async () => {
+      // W1.12：验证码改由服务端签发，按钮会先显示「加载中…」——必须等它变成一个
+      // 4 位码再读，否则填进去的是「加载中…」，症状是"登录失败"，看着像账号坏了。
+      for (let i = 0; i < 60; i++) {
+        const t = (document.querySelector('.lr-captcha-btn')?.textContent || '').trim()
+        if (/^[A-Z0-9]{4}$/.test(t)) return t
+        await new Promise((r) => setTimeout(r, 200))
+      }
+      return (document.querySelector('.lr-captcha-btn')?.textContent || '').trim()
+    })())
     // 故意填错：保证和显示值不同，长度一致以免被"长度"这类旁路拦住
     const wrong = shown === 'AAAAAA' ? 'BBBBBB' : 'AAAAAA'
     const a = setVal('input[placeholder="请输入学号或工号"]', ${JSON.stringify(USER)})

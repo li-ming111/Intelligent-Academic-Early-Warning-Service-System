@@ -73,23 +73,26 @@ Gateway (8076)
 
 | 功能 | 端点 | 说明 |
 |------|------|------|
-| 用户登录 | `POST /auth/login` | 账号+密码+验证码，返回JWT Token |
+| 登录验证码 | `GET /auth/captcha` | 服务端签发 4 位码，返回 `{captchaId, captchaText, expiresInSeconds}`；匿名可达（网关白名单 + 本服务 permitAll 两处都放行） |
+| 用户登录 | `POST /auth/login` | 账号+密码+验证码，返回JWT Token。**必须带 `captchaId` 与 `captcha`**，校验无论成败都消费掉该码 |
 | 用户登出 | `POST /auth/logout` | 清除Token |
-| 学生注册 | `POST /auth/register/student` | 创建 users 记录 + student_profile 记录 |
-| 教师注册 | `POST /auth/register/teacher` | 创建 users 记录 + teacher_profile 记录 |
-| 辅导员注册 | `POST /auth/register/counselor` | 创建 users 记录 + counselor_profiles 记录 |
-| 管理员注册 | `POST /auth/register/admin` | 创建 users 记录 |
+| 学生注册 | `POST /auth/register/student` | 创建 users 记录 + student_profile 记录（`status=1`，直接可用） |
+| 教师注册 | `POST /auth/register/teacher` | 创建 users 记录 + teacher_profile 记录（`status=0`，待审批） |
+| 辅导员注册 | `POST /auth/register/counselor` | 创建 users 记录 + counselor_profiles 记录（`status=0`，待审批） |
 | 学院列表 | `GET /auth/colleges` | 注册时选择学院 |
-| 专业列表 | `GET /auth/majors?collegeId=` | 根据学院获取专业 |
-| 课程列表 | `GET /auth/courses` | 初始化课程数据 |
+| 专业列表 | `GET /auth/majors?collegeId=` | 根据学院获取专业（`collegeId` 生效） |
+| 班级列表 | `GET /auth/classes?majorId=` | 注册时选择班级 |
 
-**权限模型：** RBAC (Role-Based Access Control)，角色分为 1-学生 / 2-教师 / 3-辅导员 / 4-管理员。
+**权限模型：** RBAC (Role-Based Access Control)，角色分为 1-学生 / 2-教师 / 3-辅导员 / 4-管理员 / 5-学院管理员。
 
 **安全机制：**
 - JWT Token 认证，过期自动刷新
 - Gateway 统一鉴权，按角色限制路径前缀
-- 密码 MD5 加密存储
+- 密码 **BCrypt** 加密存储（`SecurityConfig.passwordEncoder()` 返回 `BCryptPasswordEncoder`）
+- 登录验证码**服务端**校验，一次性消费（`CaptchaService`，Caffeine 进程内 TTL 5 分钟）
 - 前端路由守卫 + 后端双层拦截
+
+> **已删除的端点（不要再引用）**：`POST /auth/register/admin`（2026-10-01 删，零调用方且与 `/users/add` 重复）、`GET /auth/courses`（从来不存在，是小程序 `services/api.js` 里的幽灵封装，已删）。管理员建号只剩 `POST /users/add` 一条路径。
 
 ---
 

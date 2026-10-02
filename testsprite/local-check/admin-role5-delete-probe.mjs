@@ -19,6 +19,7 @@
 // 输出: admin-role5-delete-probe.txt（UTF-8）
 import { writeFileSync } from 'node:fs'
 import { execSync } from 'node:child_process'
+import { captchaFields } from './_captcha.mjs'
 
 const BASE = process.env.API_BASE || 'http://localhost:8076'
 const MYSQL = process.env.MYSQL_BIN || 'D:/JAVA/mysql/mysql-8.0.44-winx64/mysql-8.0.44-winx64/bin/mysql.exe'
@@ -62,7 +63,8 @@ const post = req('POST')
 const del = req('DELETE')
 
 const tryLogin = async (username, password) => {
-  const r = await post('/api/auth/login', { username, password })
+  // W1.12：登录要带服务端签发的验证码，缺了会被回 code:500「验证码错误或已过期」
+  const r = await post('/api/auth/login', { username, password, ...(await captchaFields(BASE)) })
   const d = r.data || {}
   return { ok: !!d.token, status: d.status, message: d.message, token: d.token }
 }

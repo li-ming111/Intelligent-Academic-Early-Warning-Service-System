@@ -1,6 +1,7 @@
 package com.academic.controller;
 
 import com.academic.common.dto.ApiResponse;
+import com.academic.service.CaptchaService;
 import com.academic.service.UserService;
 import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
@@ -34,12 +35,32 @@ public class AuthController {
 
     private final UserService userService;
 
+    /** 登录验证码的签发与校验（W1.12，2026-10-02）。 */
+    private final CaptchaService captchaService;
+
     /**
      * 构造函数
      * @param userService 用户服务
      */
-    public AuthController(UserService userService) {
+    public AuthController(UserService userService, CaptchaService captchaService) {
         this.userService = userService;
+        this.captchaService = captchaService;
+    }
+
+    /**
+     * 签发一个登录验证码（W1.12）。
+     *
+     * <p>改之前验证码是**纯前端**的（`Login.vue` 用 `Math.random()` 生成、提交前自己比对），
+     * 直接 POST `/auth/login` 就绕过去了。现在码由服务端签发并校验。
+     *
+     * <p>⚠️ 这个端点必须**匿名可达** —— 它在登录之前就要被调用。两处白名单都要加：
+     * 网关 `AuthenticationFilter.WHITE_LIST` + 本服务 `SecurityConfig.permitAll`。
+     * 只加一处的话，网关放行了但下游没放行 ⇒ 撞 `.anyRequest().authenticated()` ⇒ 403
+     * （这个坑 2026-09-30 在 `/api/auth/majors` 上实测过）。
+     */
+    @GetMapping("/captcha")
+    public ApiResponse<Map<String, Object>> captcha() {
+        return ApiResponse.success(captchaService.issue());
     }
 
     /**
@@ -54,7 +75,19 @@ public class AuthController {
     public ApiResponse<Object> login(@RequestBody Map<String, Object> request,
                                      HttpServletRequest httpRequest) {
         try {
-            log.info("User login request: {}", request);
+            // 验证码先于账号口令校验（W1.12）。
+            // 放在**控制器**这一层而不是 userService 里，是因为验证码是 HTTP 层的
+            // 反自动化手段，而 `userService.login(request)` 那个单参重载是给单元测试用的
+            // 非 HTTP 路径（全仓非测试调用方只有下面这一处）。
+            // 先验码再验口令，也让"爆破口令"必须每一步都重新签发验证码。
+            if (!captchaService.verifyAndConsume(str(request.get("captchaId")), str(request.get("captcha")))) {
+                log.warn("Login rejected: bad or expired captcha");
+                return ApiResponse.error("验证码错误或已过期，请点击验证码刷新后重试");
+            }
+            // ⚠️ 只打用户名，**不要**打整个 request：那个 map 里带着用户口令，
+            // 现在还多了一个验证码明文（也就是这一层的答案）。原来这里打的是整个 map，
+            // 等于把口令写进日志文件。
+            log.info("User login request: username={}", request.get("username"));
             // 直接返回登录响应，不解析JSON。
             // 带 httpRequest 是为了把这次登录记进 `login_logs`（客户端 IP / UA 只有这里拿得到）——
             // 此前那张表**全仓无写入方**，学生端「登录历史」与管理员端「登录日志」永远空。
@@ -269,6 +302,16 @@ public class AuthController {
             log.error("Change password failed: {}", e.getMessage());
             return ApiResponse.error(e.getMessage());
         }
+    }
+
+    /**
+     * 请求体里取字符串（前端可能传 null / 数字 / 带空格）。
+     *
+     * <p>验证码那两格尤其不能只做 `(String) get(...)` —— 前端把 `captchaId` 传成数字
+     * 或带上首尾空格都会 {@code ClassCastException}，表现成"登录 500"。
+     */
+    private static String str(Object v) {
+        return v == null ? null : String.valueOf(v).trim();
     }
 
     /** 从网关注入的头取请求者 userId，与消息服务里的同名方法保持同一解析口径。 */

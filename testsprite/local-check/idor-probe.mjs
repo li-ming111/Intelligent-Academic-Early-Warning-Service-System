@@ -1,3 +1,4 @@
+import { captchaFields } from './_captcha.mjs'
 // 越权(横向)只读探针：用**学生**的令牌去打只有管理员/别人该能用的接口，看谁放行。
 //
 // 目的：手册 §7 里"改密码/个人设置信任 body 或路径里的 userId、不做归属校验"这条
@@ -14,7 +15,7 @@ const G = 'http://localhost:8076'
 const login = async (u, p) => {
   const r = await fetch(G + '/api/auth/login', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username: u, password: p }),
+    body: JSON.stringify({ username: u, password: p, ...(await captchaFields(G)) }),
   }).then((x) => x.json())
   return r?.data?.token || null
 }

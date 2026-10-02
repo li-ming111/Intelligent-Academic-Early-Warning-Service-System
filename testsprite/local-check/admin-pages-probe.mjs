@@ -13,6 +13,7 @@
 // 用法: node admin-pages-probe.mjs
 // 输出: admin-pages-probe.txt（UTF-8）
 import { writeFileSync } from 'node:fs'
+import { captchaFields } from './_captcha.mjs'
 
 const BASE = process.env.API_BASE || 'http://localhost:8076'
 const lines = []
@@ -21,7 +22,7 @@ let failed = 0
 
 const login = await (await fetch(`${BASE}/api/auth/login`, {
   method: 'POST', headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({ username: 'admin', password: '123456' })
+  body: JSON.stringify({ username: 'admin', password: '123456', ...(await captchaFields(BASE)) })
 })).json()
 if (!login.data || !login.data.token) {
   say(`FAIL 登录失败：${JSON.stringify(login.data).slice(0, 200)}`)

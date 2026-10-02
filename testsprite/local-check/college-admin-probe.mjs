@@ -16,6 +16,7 @@
 // 用法: node college-admin-probe.mjs
 // 输出: college-admin-probe.txt（UTF-8）
 import { writeFileSync } from 'node:fs'
+import { captchaFields } from './_captcha.mjs'
 
 const BASE = process.env.API_BASE || 'http://localhost:8076'
 
@@ -69,7 +70,8 @@ async function probe(label, path, opts = {}) {
 }
 
 const tryLogin = async (username, password) => {
-  const r = await post('/api/auth/login', { username, password })
+  // W1.12：登录要带服务端签发的验证码，缺了会被回 code:500「验证码错误或已过期」
+  const r = await post('/api/auth/login', { username, password, ...(await captchaFields(BASE)) })
   const d = r.data || {}
   return { ok: !!d.token, status: d.status, message: d.message, token: d.token, uid: d.userId ?? d.id, role: d.role, name: d.name }
 }

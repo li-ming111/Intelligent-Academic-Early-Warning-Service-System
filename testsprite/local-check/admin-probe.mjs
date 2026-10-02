@@ -11,6 +11,7 @@
 // 用法: node admin-probe.mjs [用户名] [密码]
 // 输出: admin-probe.txt（UTF-8）
 import { writeFileSync } from 'node:fs'
+import { captchaFields } from './_captcha.mjs'
 
 const USER = process.argv[2] || 'admin'
 const PASS = process.argv[3] || '123456'
@@ -69,7 +70,7 @@ function shape(v) {
 
 const login = await (await fetch(`${BASE}/api/auth/login`, {
   method: 'POST', headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({ username: USER, password: PASS })
+  body: JSON.stringify({ username: USER, password: PASS, ...(await captchaFields(BASE)) })
 })).json()
 // 登录信封的 code/success 恒为真，唯一可信的判据是 data.token 在不在
 if (!login.data || !login.data.token) {

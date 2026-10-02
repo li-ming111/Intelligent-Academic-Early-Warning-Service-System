@@ -10,11 +10,15 @@
 ⚠️ 不打印 token 本身（活库凭据不进对话/日志），只打印布尔与计数。
 """
 import json
+import os
 import urllib.request
 import urllib.error
 import sys
 
-BASE = "http://localhost:8182"
+# 直连 user-service（不是网关）：第 3 条判据期望"不带 token → 403"，
+# 而走网关的话那一层会先回 401「缺少认证信息」，判据就串了。
+# 端口原来写死 8182（user-service 换端口前的旧值）⇒ 一直连不上，改成 8082 且可用环境变量覆盖。
+BASE = os.environ.get("API_BASE", "http://localhost:8082")
 STUDENT = {"username": "2023020616", "password": "123456"}
 
 
@@ -54,7 +58,15 @@ def check(name, ok, detail=""):
         failures.append(name)
 
 
-status, body = post("/api/auth/login", STUDENT)
+def with_captcha(payload):
+    """W1.12：登录要带服务端签发的验证码，否则一律 code:500「验证码错误或已过期」。"""
+    req = urllib.request.Request(BASE + "/api/auth/captcha")
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        cap = json.loads(resp.read().decode("utf-8"))["data"]
+    return {**payload, "captchaId": cap["captchaId"], "captcha": cap["captchaText"]}
+
+
+status, body = post("/api/auth/login", with_captcha(STUDENT))
 token = (body.get("data") or {}).get("token") if isinstance(body, dict) else None
 check("学生登录拿到 token", status == 200 and bool(token), "http=%s" % status)
 if not token:

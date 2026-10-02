@@ -103,14 +103,23 @@ const main = async () => {
   closeBrowser = async () => { try { await send('Browser.close') } catch {} }
   await send('Page.navigate', { url: `${APP}/login` })
   await sleep(3000)
-  const filled = await evaluate(`(() => {
+  const filled = await evaluate(`(async () => {
     const setVal = (sel, val) => {
       const el = document.querySelector(sel); if (!el) return false
       Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set.call(el, val)
       el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true }))
       return true
     }
-    const shown = (document.querySelector('.lr-captcha-btn')?.textContent || '').trim()
+    const shown = (await (async () => {
+      // W1.12：验证码改由服务端签发，按钮会先显示「加载中…」——必须等它变成一个
+      // 4 位码再读，否则填进去的是「加载中…」，症状是"登录失败"，看着像账号坏了。
+      for (let i = 0; i < 60; i++) {
+        const t = (document.querySelector('.lr-captcha-btn')?.textContent || '').trim()
+        if (/^[A-Z0-9]{4}$/.test(t)) return t
+        await new Promise((r) => setTimeout(r, 200))
+      }
+      return (document.querySelector('.lr-captcha-btn')?.textContent || '').trim()
+    })())
     const a = setVal('input[placeholder="请输入学号或工号"]', ${JSON.stringify(USER)})
     const b = setVal('input[placeholder="请输入密码"]', ${JSON.stringify(PASS)})
     const c = setVal('input[placeholder="验证码"]', shown)

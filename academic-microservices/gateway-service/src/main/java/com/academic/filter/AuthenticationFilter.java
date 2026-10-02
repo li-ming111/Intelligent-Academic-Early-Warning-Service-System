@@ -59,6 +59,10 @@ public class AuthenticationFilter implements GlobalFilter, Ordered {
     //    匿名 GET /api/auth/majors → 下游 403，学院/专业下拉全空、教师/辅导员注册页提交不了。
     private static final List<String> WHITE_LIST = Arrays.asList(
             "/api/auth/login",
+            // 登录验证码（W1.12）。**必须在登录之前就能拿到**，所以是匿名可达的。
+            // 加这条时同步在 user-service 的 SecurityConfig 里 permitAll 了
+            // `/auth/captcha` —— 只加这里的话网关放行、下游 403，页面上就是"验证码加载不出来"。
+            "/api/auth/captcha",
             "/api/auth/register/student",
             "/api/auth/register/teacher",
             "/api/auth/register/counselor",

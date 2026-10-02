@@ -10,6 +10,7 @@ import { spawn } from 'node:child_process'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { captchaFields } from './_captcha.mjs'
 
 const CHROME = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'
 const APP = 'http://localhost:5173'
@@ -62,7 +63,7 @@ const main = async () => {
 
   const r0 = await fetch(`${GATEWAY}/api/auth/login`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username: '1000000001', password: '123456' }),
+    body: JSON.stringify({ username: '1000000001', password: '123456', ...(await captchaFields(GATEWAY)) }),
   })
   const d = (await r0.json()).data
   await send('Page.navigate', { url: `${APP}/login` })

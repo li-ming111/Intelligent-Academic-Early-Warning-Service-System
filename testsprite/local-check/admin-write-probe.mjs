@@ -18,6 +18,7 @@
 // 用法: node admin-write-probe.mjs
 // 输出: admin-write-probe.txt（UTF-8）
 import { writeFileSync } from 'node:fs'
+import { captchaFields } from './_captcha.mjs'
 
 const BASE = process.env.API_BASE || 'http://localhost:8076'
 const TMP_USER = 'uiprobetmp'
@@ -142,7 +143,7 @@ step('二、重名建号必须被拒（createUser 的重名检查）')
     username: TMP_USER, name: '重名测试', role: 2, password: PWD_A
   }, H)
   if (r.code === 200) bad(`重名建号竟然返回成功：${JSON.stringify(r.body).slice(0, 160)}`)
-  else ok(`重名被拒：code=${r.code} message=${String(r.message).slice(0, 80)}`)
+  else ok(`重名被拒：code=${r.code, ...(await captchaFields(BASE)) } message=${String(r.message).slice(0, 80)}`)
 }
 
 // ============ 三、改资料但口令留空：不许动口令 ============

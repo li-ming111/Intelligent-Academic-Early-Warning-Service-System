@@ -98,15 +98,34 @@ const loading = ref(false)
 const showPwd = ref(false)
 const rememberMe = ref(false)
 const errorMessage = ref('')
+// 验证码（2026-10-02 W1.12 起由**服务端**签发）。
+// 改之前这里是 `Math.random()` 本地生成、本地比对 —— 直接 POST /auth/login
+// 根本不经过这一页，验证码对脚本等于不存在。
 const captchaCode = ref('')
+const captchaId = ref('')
 
-const generateCaptcha = () => {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
-  let code = ''
-  for (let i = 0; i < 4; i++) {
-    code += chars.charAt(Math.floor(Math.random() * chars.length))
+/**
+ * 向服务端要一个新的验证码。
+ *
+ * 失败时**如实把码置空并给出原因**，不偷偷退回本地随机数 ——
+ * 那样会让"验证码服务挂了"表现成"登录总说验证码错误"。
+ */
+const generateCaptcha = async () => {
+  try {
+    const d = await apiClient.getCaptcha()
+    if (d && d.captchaText) {
+      captchaCode.value = d.captchaText
+      captchaId.value = d.captchaId
+    } else {
+      captchaCode.value = ''
+      captchaId.value = ''
+      errorMessage.value = '验证码服务返回异常'
+    }
+  } catch (e) {
+    captchaCode.value = ''
+    captchaId.value = ''
+    errorMessage.value = '验证码加载失败，请点击验证码重试'
   }
-  captchaCode.value = code
 }
 
 const handleLogin = async () => {
@@ -114,16 +133,18 @@ const handleLogin = async () => {
   if (!loginForm.value.username) { errorMessage.value = '请输入学号或工号'; return }
   if (!loginForm.value.password) { errorMessage.value = '请输入密码'; return }
   if (!loginForm.value.captcha) { errorMessage.value = '请输入验证码'; return }
-  if (loginForm.value.captcha.toUpperCase() !== captchaCode.value.toUpperCase()) {
-    errorMessage.value = '验证码错误'
+  if (!captchaId.value) {
+    errorMessage.value = '验证码未加载，请点击验证码刷新'
     generateCaptcha()
-    loginForm.value.captcha = ''
     return
   }
+  // 本地**不再**比对：对不对由服务端说了算（本地比对既挡不住脚本，
+  // 又会把"码已过期"错报成"验证码错误"）。
 
   loading.value = true
   try {
-    const response = await apiClient.login(loginForm.value.username, loginForm.value.password)
+    const response = await apiClient.login(
+      loginForm.value.username, loginForm.value.password, captchaId.value, loginForm.value.captcha.trim())
     if (response && response.token) {
       uni.setStorageSync('token', response.token)
       uni.setStorageSync('userId', response.userId)
@@ -151,12 +172,18 @@ const handleLogin = async () => {
         uni.reLaunch({ url: routes[role] || '/pages/student/dashboard' })
       }, 1200)
     } else {
-      errorMessage.value = '账号或密码错误'
+      // 走到这里说明 HTTP 200 且 code 200，但 data 里没有 token —— 后端把失败原因
+      // 放在 data.message（「密码错误」「用户不存在」「账号正在审批中」…），照实显示。
+      errorMessage.value = (response && response.message) || '账号或密码错误'
+      // 验证码这一轮已被服务端消费（校验无论成败都删），必须重新签发，
+      // 否则用户改完密码再点一次会被"验证码错误或已过期"挡下。
       generateCaptcha()
       loginForm.value.captcha = ''
     }
   } catch (error) {
-    errorMessage.value = '网络连接失败，请检查网络后重试'
+    // 别把一切都吞成"网络连接失败"：验证码不对时服务端回 code:500，
+    // 被 request.js 抛成 ApiError('验证码错误或已过期…')，照实显示才有指导性。
+    errorMessage.value = (error && error.message) || '网络连接失败，请检查网络后重试'
     generateCaptcha()
     loginForm.value.captcha = ''
   } finally {

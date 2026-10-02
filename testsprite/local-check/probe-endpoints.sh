@@ -11,8 +11,14 @@ UID_=27      # users.id   (司明 / 2023020616)
 PID=3        # student_profile.id
 
 login() {
+  # W1.12：登录要带服务端签发的验证码（先 GET /auth/captcha，再把 id 与明文一起带上），
+  # 否则一律回 code:500「验证码错误或已过期」——表现成"登录失败"，其实是少带两个字段。
+  local cap id code
+  cap=$(curl -s "$BASE/auth/captcha" --max-time 10)
+  id=$(printf '%s' "$cap" | sed -n 's/.*"captchaId":"\([^"]*\)".*/\1/p')
+  code=$(printf '%s' "$cap" | sed -n 's/.*"captchaText":"\([^"]*\)".*/\1/p')
   curl -s -X POST "$BASE/auth/login" -H "Content-Type: application/json" \
-    -d "{\"username\":\"$1\",\"password\":\"123456\"}" --max-time 10 \
+    -d "{\"username\":\"$1\",\"password\":\"123456\",\"captchaId\":\"$id\",\"captcha\":\"$code\"}" --max-time 10 \
     | sed -n 's/.*"token":"\([^"]*\)".*/\1/p'
 }
 

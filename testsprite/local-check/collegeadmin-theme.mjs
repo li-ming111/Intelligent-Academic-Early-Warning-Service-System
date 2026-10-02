@@ -130,7 +130,7 @@ const main = async () => {
     cleanup(); process.exit(1)
   }
 
-  const filled = await evaluate(`(() => {
+  const filled = await evaluate(`(async () => {
     const setVal = (sel, val) => {
       const el = document.querySelector(sel)
       if (!el) return false
@@ -142,7 +142,16 @@ const main = async () => {
     }
     const a = setVal('input[placeholder="请输入学号或工号"]', ${JSON.stringify(USER)})
     const b = setVal('input[placeholder="请输入密码"]', ${JSON.stringify(PASS)})
-    const shown = (document.querySelector('.lr-captcha-btn')?.textContent || '').trim()
+    const shown = (await (async () => {
+      // W1.12：验证码改由服务端签发，按钮会先显示「加载中…」——必须等它变成一个
+      // 4 位码再读，否则填进去的是「加载中…」，症状是"登录失败"，看着像账号坏了。
+      for (let i = 0; i < 60; i++) {
+        const t = (document.querySelector('.lr-captcha-btn')?.textContent || '').trim()
+        if (/^[A-Z0-9]{4}$/.test(t)) return t
+        await new Promise((r) => setTimeout(r, 200))
+      }
+      return (document.querySelector('.lr-captcha-btn')?.textContent || '').trim()
+    })())
     const c = setVal('input[placeholder="验证码"]', shown)
     const btn = document.querySelector('.lr-submit')
     if (btn) btn.click()

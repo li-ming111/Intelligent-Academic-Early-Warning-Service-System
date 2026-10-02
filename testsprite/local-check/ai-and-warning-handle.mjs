@@ -20,6 +20,7 @@ import { spawn, execSync } from 'node:child_process'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { captchaFields } from './_captcha.mjs'
 
 const CHROME = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'
 const APP = 'http://localhost:5173'
@@ -57,7 +58,7 @@ const cleanup = () => {
 const loginApi = async (username, password = '123456') => {
   const r = await fetch(`${GATEWAY}/api/auth/login`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username, password }),
+    body: JSON.stringify({ username, password, ...(await captchaFields(GATEWAY)) }),
   })
   const j = await r.json()
   if (!j?.data?.token) throw new Error(`登录失败(${username})`)

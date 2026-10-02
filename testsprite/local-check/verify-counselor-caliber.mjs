@@ -12,6 +12,7 @@
 //
 // 凭据走 MYSQL_PWD 环境变量而不是 -p 命令行，避免出现在进程列表里。
 import { spawnSync } from 'node:child_process'
+import { captchaFields } from './_captcha.mjs'
 
 const ROLE = process.argv[2]
 if (!['before', 'after'].includes(ROLE)) {
@@ -45,7 +46,7 @@ async function api(path, token) {
 async function login(username) {
   const r = await fetch(GW + '/api/auth/login', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username, password: '123456' })
+    body: JSON.stringify({ username, password: '123456', ...(await captchaFields(GW)) })
   })
   return ((await r.json()).data || {}).token || ''
 }

@@ -1,8 +1,14 @@
 import apiClient from './client'
 
 export const authAPI = {
-  login: async (username, password) => {
-    return apiClient.post('/auth/login', { username, password })
+  // 2026-10-02（W1.12）：登录要带服务端签发的验证码。
+  // `captchaId` / `captcha` 缺一不可 —— 服务端先验码再验口令，对不上直接拒。
+  login: async (username, password, captchaId, captcha) => {
+    return apiClient.post('/auth/login', { username, password, captchaId, captcha })
+  },
+  // 签发一个验证码（匿名可达：网关白名单 + user-service permitAll 两处都放行了）
+  getCaptcha: () => {
+    return apiClient.get('/auth/captcha')
   },
   getColleges: () => {
     return apiClient.get('/auth/colleges')

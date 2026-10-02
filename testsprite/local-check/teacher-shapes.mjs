@@ -99,7 +99,7 @@ const main = async () => {
   await send('Page.enable'); await send('Runtime.enable')
   await send('Page.navigate', { url: `${APP}/login` })
   if (!await waitFor(`!!document.querySelector('.lr-submit')`)) { console.log('FAIL 登录页未渲染'); cleanup(); process.exit(1) }
-  await evaluate(`(() => {
+  await evaluate(`(async () => {
     const setVal = (sel, val) => {
       const el = document.querySelector(sel); if (!el) return false
       const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set
@@ -109,7 +109,16 @@ const main = async () => {
     }
     setVal('input[placeholder="请输入学号或工号"]', ${JSON.stringify(USER)})
     setVal('input[placeholder="请输入密码"]', ${JSON.stringify(PASS)})
-    setVal('input[placeholder="验证码"]', (document.querySelector('.lr-captcha-btn')?.textContent || '').trim())
+    setVal('input[placeholder="验证码"]', (await (async () => {
+      // W1.12：验证码改由服务端签发，按钮会先显示「加载中…」——必须等它变成一个
+      // 4 位码再读，否则填进去的是「加载中…」，症状是"登录失败"，看着像账号坏了。
+      for (let i = 0; i < 60; i++) {
+        const t = (document.querySelector('.lr-captcha-btn')?.textContent || '').trim()
+        if (/^[A-Z0-9]{4}$/.test(t)) return t
+        await new Promise((r) => setTimeout(r, 200))
+      }
+      return (document.querySelector('.lr-captcha-btn')?.textContent || '').trim()
+    })()))
     document.querySelector('.lr-submit')?.click()
   })()`)
   let path = ''

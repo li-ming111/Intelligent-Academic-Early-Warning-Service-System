@@ -52,6 +52,9 @@ public class SecurityConfig {
                 // 2026-10-01：`/auth/register/admin` 端点本身已删（零调用方 + 与 `/users/add` 重复），
                 // 所以现在这条注释守的是裸的 `/auth/register`（它按最低权限建学生）。
                 .requestMatchers("/auth/login",
+                        // 登录验证码（W1.12）：要在登录之前拿，必须匿名可达。
+                        // 网关 WHITE_LIST 里也加了同一条 —— 两处口径必须一致。
+                        "/auth/captcha",
                         "/auth/register/student", "/auth/register/teacher", "/auth/register/counselor",
                         "/auth/refresh-token", "/auth/colleges", "/auth/majors").permitAll()
                 .anyRequest().authenticated()

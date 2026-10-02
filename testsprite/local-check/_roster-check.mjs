@@ -1,3 +1,4 @@
+import { captchaFields } from './_captcha.mjs'
 // 一次性排查：教师端「花名册」两个接口到底给不给数据。
 // 用文件而不是命令行传中文，避免 Windows shell 把中文按 GBK 编进去、
 // 到了服务端按 UTF-8 解出来对不上 className（实测命令行里 0 行、文件里 24 行）。
@@ -5,7 +6,7 @@ const BASE = process.env.API_BASE || 'http://localhost:8076'
 
 const login = await (await fetch(`${BASE}/api/auth/login`, {
   method: 'POST', headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({ username: '10001', password: '123456' })
+  body: JSON.stringify({ username: '10001', password: '123456', ...(await captchaFields(BASE)) })
 })).json()
 const token = login.data.token
 const H = { Authorization: `Bearer ${token}` }
