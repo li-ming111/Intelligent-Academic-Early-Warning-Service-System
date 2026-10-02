@@ -255,13 +255,32 @@ public class RolePermissionController {
     }
 
     /**
-     * 获取角色权限关联总数
-     */
-    /**
-     * Gateway 专用：返回 role_code → [permission_code, ...] 映射，供网关 RBAC 鉴权使用
+     * Gateway 专用：返回角色权限映射，供网关 RBAC 鉴权使用。
+     *
+     * <p>响应体：
+     * <pre>
+     * {
+     *   "roles": { "1": "ROLE_STUDENT", "2": "ROLE_TEACHER", ..., "6": "ROLE_ASSISTANT" },
+     *   "map":   { "ROLE_STUDENT": ["PERM_STUDENT_VIEW", ...], ... }
+     * }
+     * </pre>
+     *
+     * <p><b>为什么要有 {@code roles} 这一段</b>（2026-10-02 W3.3）：网关拿到的角色是
+     * {@code users.role} 的**整数 id**，而权限表的键是 {@code roles.code}（字符串）。
+     * 原来网关是用一个写死的 {@code switch(1..5)} 做这层翻译、{@code default} 回
+     * {@code "unknown"} —— 也就是说**管理员在权限管理页新建的角色（id ≥ 6）永远翻译不出来**，
+     * 无论给它勾多少权限都等于没勾。现在把 {@code roles} 全表原样带出去，
+     * 网关按 id 查，任何角色（含新建的）都能表达。
+     *
+     * <p>注意 {@code roles} 是**全表**（含一条权限都没绑的角色），而 {@code map} 只含有绑定的
+     * 角色 —— 没绑定的角色查出来是"空权限集"，语义是"什么都做不了"，与"角色不存在"要能区分开。
+     *
+     * <p>⚠️ 这个端点在 auth-service 的 {@code SecurityConfig} 里是 <b>{@code permitAll}</b>，
+     * 见那边的注释：它是网关在**启动时**（还没有任何用户身份）就要读的只读字典，
+     * 内容是功能模块清单、不含任何账号或凭据。
      */
     @GetMapping("/rbac-map")
-    public ApiResponse<Map<String, List<String>>> getRbacMap() {
+    public ApiResponse<Map<String, Object>> getRbacMap() {
         try {
             List<Role> roles = roleMapper.selectList(new QueryWrapper<>());
             List<Permission> permissions = permissionMapper.selectList(new QueryWrapper<>());
@@ -282,7 +301,18 @@ public class RolePermissionController {
                     rbacMap.computeIfAbsent(roleCode, k -> new ArrayList<>()).add(permCode);
                 }
             }
-            return ApiResponse.success(rbacMap);
+
+            // 角色 id → 角色码：**全表**，这样网关能把任意 users.role 翻译成角色码
+            Map<String, String> rolesById = new LinkedHashMap<>();
+            roles.stream()
+                    .filter(r -> r.getId() != null && r.getCode() != null)
+                    .sorted(Comparator.comparing(Role::getId))
+                    .forEach(r -> rolesById.put(String.valueOf(r.getId()), r.getCode()));
+
+            Map<String, Object> body = new LinkedHashMap<>();
+            body.put("roles", rolesById);
+            body.put("map", rbacMap);
+            return ApiResponse.success(body);
         } catch (Exception e) {
             log.error("构建RBAC映射失败: {}", e.getMessage());
             return ApiResponse.error("RBAC数据加载失败");

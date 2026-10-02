@@ -29,7 +29,18 @@ import java.util.regex.Pattern;
 /**
  * JWT 认证全局过滤器
  * 与 auth-service 共用同一密钥，验证所有进入网关的请求。
- * 角色编码：1=学生 2=教师 3=辅导员 4=管理员
+ * 角色编码：1=学生 2=教师 3=辅导员 4=管理员 5=学院管理员
+ *
+ * <p><b>两层准入</b>（2026-10-02 W3.3 起）：
+ * <ul>
+ *   <li><b>路径前缀层</b>：内置角色 1–5 的准入。每个角色有自己的 URL 前缀
+ *       （{@code /api/students} 是学生本人的家、{@code /api/teachers} 是教师的家…），
+ *       另有"本人的资料/设置"这类与角色无关的归属校验。</li>
+ *   <li><b>权限表层</b>：只对**自定义角色（{@code users.role ≥ 6}）**生效 ——
+ *       管理员在权限管理页新建的角色，能力完全来自 {@code role_permissions} 表
+ *       （见 {@link #customRoleAllows} 与 {@link RolePermissionCache}）。</li>
+ * </ul>
+ * 内置角色**不经过**权限表层，所以这一层的引入对现有页面不可能产生 403。
  */
 @Component
 public class AuthenticationFilter implements GlobalFilter, Ordered {
@@ -115,6 +126,11 @@ public class AuthenticationFilter implements GlobalFilter, Ordered {
     private static final String PREFIX_ROLES = "/api/roles";
     private static final String PREFIX_PERMISSIONS = "/api/permissions";
     private static final String PREFIX_ROLE_PERMISSIONS = "/api/role-permissions";
+
+    // 下面两条**只给自定义角色（role ≥ 6）用** —— 见 hasPermission 里那一块。
+    // 内置角色走的是各自的角色前缀（/api/teachers、/api/students…），不经这两条。
+    private static final String PREFIX_COURSE = "/api/courses";
+    private static final String PREFIX_WARNING = "/api/warnings";
 
     // ==================== 学院管理员的自助账号路径 ====================
     //
@@ -263,12 +279,20 @@ public class AuthenticationFilter implements GlobalFilter, Ordered {
     }
 
     /**
-     * 角色-路径权限校验（增强版：路径前缀 + RBAC 双重校验）
-     * - 管理员(4)：可访问所有路径
-     * - 学院管理员(5)：可访问 college-admin 和 admin 前缀路径
-     * - 其他角色：先路径前缀检查，再 RBAC 细粒度检查
+     * 角色-路径权限校验。
+     *
+     * <ul>
+     *   <li><b>管理员(4)</b>：可访问所有路径；</li>
+     *   <li><b>学院管理员(5)</b>：college-admin 与 admin 前缀，外加仅限本人的自助账号路径；</li>
+     *   <li><b>内置角色 1/2/3</b>：路径前缀层（各自的角色前缀 + 自助账号路径）；</li>
+     *   <li><b>自定义角色（id ≥ 6，管理员在权限管理页新建的）</b>：**权限表驱动**，
+     *       见 {@link #customRoleAllows}。</li>
+     * </ul>
+     *
+     * <p>包级可见（不是 {@code private}）是为了让单测直接打这个判定 ——
+     * 走 {@code filter()} 要造 {@code ServerWebExchange}，把判据埋在 mock 里反而看不清。
      */
-    private boolean hasPermission(ServerHttpRequest request, Integer role, Long userId) {
+    boolean hasPermission(ServerHttpRequest request, Integer role, Long userId) {
         String path = request.getPath().value();
         String method = request.getMethod() != null ? request.getMethod().name() : "GET";
 
@@ -297,6 +321,25 @@ public class AuthenticationFilter implements GlobalFilter, Ordered {
                 }
             }
             return false;
+        }
+
+        // ==================== 自定义角色（users.role ≥ 6）：权限表驱动 ====================
+        //
+        // 2026-10-02（W3.3）。管理员可以在权限管理页新建角色并勾权限，但从前的代码里
+        // 这些角色**根本表达不出来**（RolePermissionCache.roleToCode 是个 switch(1..5)、
+        // default "unknown"），所以"新建角色"这个功能实际上是空转的。
+        //
+        // 现在自定义角色改由**库里 role_permissions 表**决定：URL 前缀 → 功能模块，
+        // 再要求该模块的 PERM_{模块}_{VIEW|MANAGE}。权限表没覆盖到的面一律拒绝
+        // （fail-closed，语义是"自定义角色的能力完全来自权限表"）。
+        //
+        // ⚠️ 内置角色 1–5 **不走这里**（上面几段已经把 4/5 拦下、1/2/3 继续往下走），
+        //    所以这次改动对现有页面**不可能**产生 403 —— 这是刻意的：
+        //    库里的权限是"功能模块"维度（学生/课程/预警/帮扶/系统），
+        //    而 URL 前缀是"角色自己的家"维度（`/api/students/**` 是学生**本人**的自助面，
+        //    不是"学生信息管理面"）。两个维度硬对齐只能靠编数据，见 RolePermissionCache 类注释。
+        if (role != null && role > RolePermissionCache.BUILT_IN_ROLE_MAX) {
+            return customRoleAllows(path, method, role, userId);
         }
 
         // 路径前缀快速检查
@@ -380,47 +423,89 @@ public class AuthenticationFilter implements GlobalFilter, Ordered {
         //    **只在 user-service 自己的 SecurityConfig 里**（那边刻意逐个列出、不用通配），
         //    网关白名单只是"放进来"而已，不是"管住"。
 
-        // RBAC 细粒度校验（有 RBAC 数据时才生效）
+        // ==================== 这里原来有一段「RBAC 细粒度校验」 ====================
         //
-        // ⚠️ 2026-10-01 第十六轮查证：`hasRbacData()` **恒为 false**
-        //    （RolePermissionCache 的拉取必 403，且失败后无重试、无刷新），
-        //    所以**下面这个块从来没有执行过** —— 网关实际生效的只有上面的路径前缀层。
-        //
-        // ⚠️ 别为了"让 RBAC 生效"去放开 /role-permissions/** 的匿名访问：
-        //    角色码（库 ROLE_STUDENT vs 代码 "student"）与权限码
-        //    （库 PERM_STUDENT_VIEW vs 代码 "student:read"）两处都不匹配，
-        //    RBAC 一旦真的加载进来，会反过来 403 掉 role 1/2/3 的**全部业务接口**。
-        //    详见 RolePermissionCache 类注释与手册 §6.16。
-        if (rbacCache.hasRbacData()) {
-            String permissionCode = buildPermissionCode(path, method);
-            if (permissionCode != null) {
-                boolean rbacAllowed = rbacCache.hasPermission("user", role, permissionCode);
-                if (!rbacAllowed) {
-                    log.debug("RBAC拒绝: role={}, path={}, perm={}", role, path, permissionCode);
-                    return false;
-                }
-            }
-        }
+        // 2026-10-01 第十六轮查证：那个块**自上线起从未执行过** —— `hasRbacData()` 恒为 false
+        // （RolePermissionCache 的拉取必 403，且失败后无重试、无刷新）。
+        // 2026-10-02（W3.3）把它删掉了，**不是**因为"没生效所以删死代码"，
+        // 而是因为它的判据本身是错的：`buildPermissionCode` 把 URL 前缀翻译成
+        // `"student:read"` 这种权限码，而库里的权限码是 `PERM_STUDENT_VIEW` ——
+        // 两套词表不是"拼写不同"，是**两个不同的维度**（见 RolePermissionCache 类注释）。
+        // 把词表对齐只会得到假数据或 403 雪崩，所以整段拿掉，
+        // 改为**只对自定义角色（id ≥ 6）**按权限表判定（上面那一段）。
 
         // 公共接口允许已认证用户访问
         return true;
     }
 
     /**
-     * 根据 URL 路径和 HTTP 方法构建权限编码
-     * 例如 GET /api/students → "student:read"
+     * 自定义角色（{@code users.role ≥ 6}）的准入判定 —— 完全由 {@code role_permissions} 表决定。
+     *
+     * <p>顺序：
+     * <ol>
+     *   <li><b>自助账号路径</b>（改自己的密码 / 登出 / 刷新 token / 本人的资料与设置）
+     *       与角色无关，任何已认证角色都可用 —— 与内置角色同一口径，归属校验照旧；</li>
+     *   <li>RBAC 数据没加载 ⇒ **拒绝**（fail-closed，并打日志说明原因）；</li>
+     *   <li>URL 前缀不在权限表覆盖的模块里 ⇒ **拒绝**（"权限表没这个面"和"你没这个权限"
+     *       都是拒绝，但日志里分得开）；</li>
+     *   <li>否则查该模块的 {@code PERM_{模块}_{VIEW|MANAGE}}。</li>
+     * </ol>
      */
-    private String buildPermissionCode(String path, String method) {
-        String resource;
-        if (path.startsWith(PREFIX_STUDENT)) resource = "student";
-        else if (path.startsWith(PREFIX_TEACHER)) resource = "teacher";
-        else if (path.startsWith(PREFIX_COUNSELOR)) resource = "counselor";
-        else if (path.startsWith(PREFIX_ADMIN)) resource = "admin";
-        else if (path.startsWith(PREFIX_COLLEGE_ADMIN)) resource = "college_admin";
-        else return null; // 公共路径不需要权限编码
+    private boolean customRoleAllows(String path, String method, int role, Long userId) {
+        if (AUTH_CHANGE_PASSWORD.equals(path) || SELF_AUTH_PATTERN.matcher(path).matches()) {
+            return true;
+        }
+        Matcher m = USER_SELF_PATTERN.matcher(path);
+        if (m.matches() && userId != null) {
+            try {
+                return Long.parseLong(m.group(1)) == userId.longValue();
+            } catch (NumberFormatException ignored) {
+                return false;
+            }
+        }
 
-        String action = "GET".equalsIgnoreCase(method) ? "read" : "write";
-        return resource + ":" + action;
+        if (!rbacCache.hasRbacData()) {
+            log.warn("自定义角色 role={} 被拒：RBAC 映射尚未加载（auth-service 未起？）path={}", role, path);
+            return false;
+        }
+        String family = rbacFamilyOf(path);
+        if (family == null) {
+            log.warn("自定义角色 role={} 被拒：该 URL 前缀不在权限表覆盖的模块里 path={}", role, path);
+            return false;
+        }
+        boolean allowed = rbacCache.allows(role, family, method);
+        if (!allowed) {
+            log.debug("自定义角色 RBAC 拒绝: role={}（{}）, path={}, 模块={}",
+                    role, rbacCache.roleToCode(role), path, family);
+        }
+        return allowed;
+    }
+
+    /**
+     * URL 前缀 → 库里 {@code permissions.code} 的**功能模块**名。
+     *
+     * <p><b>刻意只映射权限表真有的模块</b>，并且刻意**不映射**
+     * {@code /api/students|teachers|counselors/**} —— 那三条是各角色**本人**的自助面
+     * （我的成绩、我的课程、我的班级），不是"学生/教师/辅导员信息管理面"。
+     * 把它们算成 {@code PERM_STUDENT_VIEW} 会得出「学生角色持有『管理学生信息』权限」
+     * 这种自相矛盾的数据（详见 RolePermissionCache 类注释）。
+     *
+     * <p>返回 {@code null} = "权限表管不到这个面" ⇒ 自定义角色拿不到（fail-closed）。
+     */
+    static String rbacFamilyOf(String path) {
+        if (path.startsWith(PREFIX_ADMIN)
+                || path.startsWith(PREFIX_ROLES)
+                || path.startsWith(PREFIX_PERMISSIONS)
+                || path.startsWith(PREFIX_ROLE_PERMISSIONS)) {
+            return "SYSTEM";
+        }
+        if (path.startsWith(PREFIX_COURSE)) {
+            return "COURSE";
+        }
+        if (path.startsWith(PREFIX_WARNING)) {
+            return "WARNING";
+        }
+        return null;
     }
 
     private boolean isWhiteListed(String path) {

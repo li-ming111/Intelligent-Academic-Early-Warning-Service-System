@@ -100,6 +100,14 @@
             <artifactId>jjwt-jackson</artifactId>
             <scope>runtime</scope>
         </dependency>
+
+        <!-- 2026-10-02（W3.3）：本模块此前**一个测试都没有**。准入判定是最该被钉住的东西
+             （写错了就是"某类用户全体 403"或"全体放行"），所以补上。 -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <build>
