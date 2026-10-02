@@ -49,10 +49,14 @@ public class RabbitMQConfig {
         return new DirectExchange(RabbitMQConstants.EXCHANGE_ADMIN, true, false);
     }
 
-    @Bean
-    public FanoutExchange notificationExchange() {
-        return new FanoutExchange(RabbitMQConstants.EXCHANGE_NOTIFICATION, true, false);
-    }
+    // 2026-10-02（W3.1）：这里原来还声明了 notification.exchange + notification.queue
+    // 以及两者的绑定，但 admin-service **既不往这个交换机发、也没有消费者**。
+    // ⚠️ 它和别的死队列不一样：`notification.exchange` 是 **fanout**，绑上去就等于
+    // 订阅了「所有通知」——broker 一起来，每个服务发出的每条通知都会往这个没人读的
+    // 队列里堆一份，永久堆积。所以删的是这一条，而不是"顺手清理所有没人用的队列"
+    // （其余 direct 队列没有生产者，收不到东西，是惰性的，留着不涨）。
+    // 通知链的两端分别在：生产侧 warning-service（`WarningNotifier`）、
+    // 消费侧 message-service（`NotificationMessageListener`）。
 
     @Bean
     public DirectExchange dlxExchange() {
@@ -83,11 +87,6 @@ public class RabbitMQConfig {
                 .withArgument("x-dead-letter-exchange", RabbitMQConstants.DLX_EXCHANGE)
                 .withArgument("x-dead-letter-routing-key", RabbitMQConstants.DLQ_EXPORT)
                 .build();
-    }
-
-    @Bean
-    public Queue notificationQueue() {
-        return QueueBuilder.durable(RabbitMQConstants.QUEUE_NOTIFICATION).build();
     }
 
     @Bean
@@ -126,12 +125,6 @@ public class RabbitMQConfig {
         return BindingBuilder.bind(exportQueue())
                 .to(adminExchange())
                 .with(RabbitMQConstants.ROUTING_KEY_EXPORT);
-    }
-
-    @Bean
-    public Binding notificationBinding() {
-        return BindingBuilder.bind(notificationQueue())
-                .to(notificationExchange());
     }
 
     @Bean

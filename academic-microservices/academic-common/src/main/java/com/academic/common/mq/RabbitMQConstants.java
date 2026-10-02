@@ -17,7 +17,10 @@ public final class RabbitMQConstants {
     public static final String QUEUE_USER_IMPORT = "admin.user.import.queue";
     public static final String QUEUE_SCORE_IMPORT = "admin.score.import.queue";
     public static final String QUEUE_EXPORT = "admin.export.queue";
-    public static final String QUEUE_NOTIFICATION = "notification.queue";
+    // 2026-10-02（W3.1）：原来的 QUEUE_NOTIFICATION = "notification.queue" 已删。
+    // 那条队列只有 admin-service 声明过、绑在 notification.exchange（fanout）上，
+    // 却既没有生产者也没有消费者 ⇒ 只会替所有通知留一份永远没人读的副本。
+    // 通知链真正的队列是 message-service 的 message.notification.queue。
     public static final String QUEUE_WARNING_ANALYSIS = "warning.analysis.queue";
     public static final String QUEUE_MESSAGE_SEND = "message.send.queue";
     public static final String QUEUE_USER_SYNC = "user.sync.queue";
