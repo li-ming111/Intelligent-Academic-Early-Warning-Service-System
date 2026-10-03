@@ -166,9 +166,17 @@ public class AuthenticationFilter implements GlobalFilter, Ordered {
      *
      * <p>⚠️ 改自己的 role/status 这条**网关拦不住**（角色在请求体里，网关不看 body），
      * 由 `user-service` 的 `UserController.updateUser` 剥掉 —— 见那边的注释。
+     *
+     * <p>2026-10-03（W8.3）再补 `login-logs`：`GET /api/users/{id}/login-logs` 是
+     * 2026-10-02 才加的"我最近从哪儿登录过"读取口（`UserController` 里带 `isAdminOrSelf`
+     * 归属校验），学生端设置页的「登录历史」卡片就打它。**但这条白名单当时没跟着扩**
+     * ⇒ 学生/教师/辅导员一律在网关吃 403（下游 `:8082` 直连同一 token 是 200 有数据），
+     * 页面于是永远空着 + 控制台「加载登录历史失败」。与上面 `update/` 是同一次遗漏的两种表现。
+     * 放开的是**本人**这一条：`(\d+)` 仍必须等于 token 的 userId，别人的 id 照样 403，
+     * 且下游还会再判一次（网关不是网络边界，见下面那段注释）。
      */
     private static final Pattern USER_SELF_PATTERN =
-            Pattern.compile("^/api/users/(?:(?:info|update)/)?(\\d+)(?:/settings)?$");
+            Pattern.compile("^/api/users/(?:(?:info|update)/)?(\\d+)(?:/settings|/login-logs)?$");
 
     @Value("${spring.cloud.gateway.jwt.secret:academic-jwt-secret-key-for-academic-warning-system-2026}")
     private String jwtSecret;

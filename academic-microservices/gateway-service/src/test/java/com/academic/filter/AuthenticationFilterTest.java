@@ -116,6 +116,12 @@ class AuthenticationFilterTest {
         assertTrue(allowAs(STUDENT, 7L, HttpMethod.GET, "/api/users/7"));
         assertTrue(allowAs(STUDENT, 7L, HttpMethod.PUT, "/api/users/update/7"));
         assertTrue(allowAs(STUDENT, 7L, HttpMethod.GET, "/api/users/7/settings"));
+        // 2026-10-03（W8.3）：本人的登录历史（设置页「登录历史」卡片）—— 曾经漏在白名单外，
+        // 学生/教师/辅导员一律 403（下游直连同 token 是 200）。本人可查、别人的仍拒。
+        assertTrue(allowAs(STUDENT, 7L, HttpMethod.GET, "/api/users/7/login-logs"));
+        assertTrue(allowAs(TEACHER, 7L, HttpMethod.GET, "/api/users/7/login-logs"));
+        assertFalse(allowAs(STUDENT, 7L, HttpMethod.GET, "/api/users/8/login-logs"));
+        assertFalse(allowAs(STUDENT, 7L, HttpMethod.GET, "/api/users/7/login-logs/extra"));
         assertFalse(allowAs(STUDENT, 7L, HttpMethod.GET, "/api/users/8"));
         assertFalse(allowAs(STUDENT, 7L, HttpMethod.POST, "/api/users/add"));
         assertFalse(allowAs(STUDENT, 7L, HttpMethod.GET, "/api/users/by-username/admin"));

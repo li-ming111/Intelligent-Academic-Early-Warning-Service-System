@@ -15,12 +15,17 @@ import { join } from 'node:path'
 // 两端的页名高度重叠但**不是同一套**（PC 有 statistics/data-export/majors，
 // 小程序有 class-requests/credit-monitor/benchmark-analysis）。
 // 小程序的页面清单与检测走 testsprite/local-check/ 里另建的 xcx 脚本。
+// ⚠️ 清单里只放**路由表真有的**页。2026-10-03（W8.3）删掉两个幻影页：
+//   student/notification-center —— NotificationCenter 组件其实挂在 `messages` 上，
+//        `notification-center` 这条路由不存在（导航里也没有）；列着它只会导航到空页 ⇒ 假红。
+//   teacher/feedback-management —— 已删的孤儿路由（见 router/index.js 顶部注释），
+//        现在只有 `feedback`。同理假红。
 const PAGES = {
   student: ['dashboard','scores','warnings','assistance','appeals','messages',
-            'notification-center','benchmark-analysis','assistance-feedback',
+            'benchmark-analysis','assistance-feedback',
             'class-members','class-ranking','settings','statistics'],
   teacher: ['dashboard','scores','warnings','analysis','credit-prediction','audit-log',
-            'feedback-management','feedback','courses','class-management','messages','settings'],
+            'feedback','courses','class-management','messages','settings'],
   counselor: ['dashboard','students','warnings','assistance','scores','analytics','courses',
               'credit-monitor','notifications','communication','class-management','settings'],
   admin: ['dashboard','colleges','majors','users','rules','statistics','warnings','courses',
