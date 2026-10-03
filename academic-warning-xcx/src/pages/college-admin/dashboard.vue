@@ -31,7 +31,6 @@
               <app-icon :name="q.icon" :size="44" />
             </view>
             <text class="quick-item__label">{{ q.label }}</text>
-            <text v-if="q.badge" class="quick-item__badge">{{ q.badge }}</text>
           </view>
         </view>
 
@@ -318,19 +317,11 @@ async function load() {
   color: $color-text;
 }
 
-.quick-item__badge {
-  position: absolute;
-  top: $spacing-md;
-  right: 22rpx;
-  min-width: 30rpx;
-  padding: 0 8rpx;
-  border-radius: $radius-pill;
-  background: $color-danger;
-  color: #fff;
-  font-size: $font-xs;
-  line-height: 30rpx;
-  text-align: center;
-}
+/* 说明：这里原来有一条 `.quick-item__badge` 与模板里的
+   `<text v-if="q.badge">`，但 `quickLinks` 四项**都没有 badge 字段**
+   ⇒ v-if 恒假、样式是死代码。学生/辅导员首页的角标是真的在用，
+   而本页四个入口没有对应的"待办数"可挂（预警数已经在上方待办条与 hero 里了）。
+   2026-10-02（W5.13）删掉，不留看着像有、其实永远不会显示的分支。 */
 
 /* ---------- 概览卡 ---------- */
 .section {

@@ -16,7 +16,7 @@
       <page-loading v-if="loading" :count="3" mode="card" />
 
       <template v-else>
-        <!-- 待办：三项都列出来，包括为 0 的那两项。
+        <!-- 待办：四项都列出来，包括为 0 的那几项。
              待办列表里"0"是有信息量的 —— 它说明管理员现在确实没东西要审。
              只显示 count>0 的项会让人以为"没渲染出来"。 -->
         <view class="section section--first">
@@ -232,9 +232,11 @@ const levelRows = computed(() => [
  *
  * 口径都是实测过的：
  *   · pendingWarnings = 4（库里 4 条预警 status 全为 0）—— 真待办
- *   · 待审批账号：当前 35 个账号 status 全是 1，所以是 0。**没有"待审用户"接口**，
- *     也不能拿 /users/page 的 total 冒充（那是全部用户数），所以这里写死 0
- *     并在 hint 里说明依据，而不是显示一个看着像真数据的数字。
+ *   · 待审批账号 = `GET /admin/users/page?status=0` 的 `total`。
+ *     2026-10-02（W5.7）：这里此前**写死 0**，因为 `/users/page` 没有 status 过滤、
+ *     拿不到"待审"这个数（拿全部用户数冒充又不对）。现已给该端点补上 status 参数，
+ *     这一格改成真取数 —— 库里 35 个账号 status 全是 1，所以它现在仍然显示 0，
+ *     但**这个 0 是从库里数出来的**，新建一个待审批账号它会立刻变 1。
  *   · 待审班级申请 = /pending-requests 的 classRequests + teacherClassRequests +
  *     counselorClassRequests（实测 0+0+0；9 条申请都已处理完）
  */
@@ -255,8 +257,9 @@ const todoItems = computed(() => {
       key: 'account',
       icon: 'users',
       title: '待审批账号',
-      count: 0,
-      hint: `${num(dash.value.totalUsers)} 个账号状态均为正常`,
+      // 取不到时显示「—」而不是 0：把"接口挂了"画成"没有待审批"是在编数。
+      count: pending.value.pendingUsers === null ? '—' : num(pending.value.pendingUsers),
+      hint: pendingHint.value,
       url: '/pages/admin/users'
     },
     {
@@ -266,11 +269,37 @@ const todoItems = computed(() => {
       count: studentReq + teacherReq + counselorReq,
       hint: '教师/辅导员申请管理班级，等待审批',
       url: '/pages/admin/class-requests'
+    },
+    {
+      // 2026-10-02（W5.4）：`pending.appeals` 一直在取数，却**从来没有渲染过**
+      // （这一格以前不存在），同时小程序端也没有申诉审核页。
+      // 现在两项都补上了：这一格是入口，`/pages/admin/appeals` 是页面。
+      key: 'appeal',
+      icon: 'edit',
+      title: '待审成绩申诉',
+      count: num(pending.value.appeals),
+      hint: '学生对成绩提出申诉，等待审核',
+      url: '/pages/admin/appeals'
     }
   ]
 })
 
-const todoTotal = computed(() => todoItems.value.reduce((s, t) => s + t.count, 0))
+/**
+ * 「待审批账号」那一格的副标题。
+ *
+ * 取不到（`pendingUsers === null`）时**明说取不到**，不写成「0 个待审批」——
+ * 后者把一次失败的请求说成了事实。
+ */
+const pendingHint = computed(() => {
+  const n = pending.value.pendingUsers
+  if (n === null || n === undefined) return '待审批账号数暂未取到'
+  if (Number(n) > 0) return '新注册的教师/辅导员账号等待审批'
+  return `${num(dash.value.totalUsers)} 个账号状态均为正常`
+})
+
+// 取不到的格子计 0，不让字符串「—」把求和变成字符串拼接
+const todoTotal = computed(() => todoItems.value.reduce(
+  (s, t) => s + (typeof t.count === 'number' ? t.count : 0), 0))
 
 const heroStats = computed(() => [
   { label: '用户账号', value: num(dash.value.totalUsers), onTap: () => go('/pages/admin/users') },
@@ -285,15 +314,23 @@ async function load() {
   loading.value = true
   try {
     if (!userId) return
-    const [d, s, p, a] = await Promise.all([
+    const [d, s, p, a, u] = await Promise.all([
       adminAPI.getDashboard().catch(e => { console.error('[admin dashboard] 概览失败:', e); return null }),
       adminAPI.getStatistics().catch(e => { console.error('[admin dashboard] 统计失败:', e); return null }),
       adminAPI.getPendingRequests().catch(e => { console.error('[admin dashboard] 待办失败:', e); return null }),
-      adminAPI.getActivities().catch(e => { console.error('[admin dashboard] 动态失败:', e); return null })
+      adminAPI.getActivities().catch(e => { console.error('[admin dashboard] 动态失败:', e); return null }),
+      // 只取 1 条，要的是 `total` —— 待审批账号数（status=0）
+      adminAPI.getUsers(1, 1, undefined, undefined, 0)
+        .catch(e => { console.error('[admin dashboard] 待审批账号失败:', e); return null })
     ])
     dash.value = d && typeof d === 'object' ? d : {}
     stats.value = s && typeof s === 'object' ? s : {}
-    pending.value = p && typeof p === 'object' ? p : {}
+    pending.value = {
+      ...(p && typeof p === 'object' ? p : {}),
+      // 取不到时留 null（不是 0）—— 模板用 pendingHint 把它显示成「暂未取到」，
+      // 不把"请求失败"伪装成"没有待审批账号"。
+      pendingUsers: u && u.total !== undefined ? Number(u.total) : null
+    }
     // 动态是一个**数组**（不是对象），单独判 Array；取不到就保持空数组 → 回落空态。
     activities.value = Array.isArray(a) ? a : (Array.isArray(a?.data) ? a.data : [])
   } finally {

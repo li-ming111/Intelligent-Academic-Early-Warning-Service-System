@@ -58,7 +58,7 @@
         <text>{{ errorMessage }}</text>
       </view>
 
-      <view class="remember" @tap="rememberMe = !rememberMe">
+      <view class="remember" @tap="toggleRemember">
         <view :class="['check', { active: rememberMe }]">
           <text v-if="rememberMe" class="check-mark">✓</text>
         </view>
@@ -78,20 +78,35 @@
         <navigator url="/pages/auth/register" class="reg-link">快速注册</navigator>
       </view>
     </view>
-
-    <view class="footer-links">
-      <text class="footer-link">隐私政策</text>
-      <text class="footer-dot">·</text>
-      <text class="footer-link">服务条款</text>
-      <text class="footer-dot">·</text>
-      <text class="footer-link">联系我们</text>
-    </view>
   </view>
 </template>
 
 <script setup>
 import { ref, onMounted } from 'vue'
 import { apiClient } from '../../services/api'
+import { logout, rememberSession, stillRemembered } from '../../composables/useUser'
+
+/**
+ * 登录成功后各角色回哪个首页。
+ *
+ * 提到模块作用域是**两处共用**：`handleLogin` 与 `onMounted` 的
+ * 「记住我还在期内就直接进去」。写在函数里就只能有一处用，另一处必然抄一份。
+ */
+const ROLE_HOME = {
+  '1': '/pages/student/dashboard',
+  student: '/pages/student/dashboard',
+  '2': '/pages/teacher/dashboard',
+  teacher: '/pages/teacher/dashboard',
+  '3': '/pages/counselor/dashboard',
+  counselor: '/pages/counselor/dashboard',
+  '4': '/pages/admin/dashboard',
+  admin: '/pages/admin/dashboard',
+  '5': '/pages/college-admin/dashboard',
+  college_admin: '/pages/college-admin/dashboard'
+}
+
+/** 「记住我」勾选状态的记忆键（只是 UI 偏好，不属于登录态，退出登录不清它）。 */
+const REMEMBER_PREF_KEY = 'rememberMePref'
 
 const loginForm = ref({ username: '', password: '', captcha: '' })
 const loading = ref(false)
@@ -128,6 +143,12 @@ const generateCaptcha = async () => {
   }
 }
 
+/** 勾选「记住我」并记住这个偏好（下次进本页仍勾着）。 */
+const toggleRemember = () => {
+  rememberMe.value = !rememberMe.value
+  uni.setStorageSync(REMEMBER_PREF_KEY, rememberMe.value ? '1' : '')
+}
+
 const handleLogin = async () => {
   errorMessage.value = ''
   if (!loginForm.value.username) { errorMessage.value = '请输入学号或工号'; return }
@@ -154,22 +175,16 @@ const handleLogin = async () => {
       if (response.teacherId) uni.setStorageSync('teacherId', response.teacherId)
       if (response.counselorId) uni.setStorageSync('counselorId', response.counselorId)
 
+      // 「记住我」：勾了就写一个 30 天后的到期时间（不勾则**什么都不写**，
+      // 于是下次进这一页照样要求重新登录）。见 useUser.js 的说明。
+      if (rememberMe.value) {
+        rememberSession(30)
+      }
+
       const role = String(response.role)
       uni.showToast({ title: '登录成功', icon: 'success', duration: 1200 })
       setTimeout(() => {
-        const routes = {
-          '1': '/pages/student/dashboard',
-          student: '/pages/student/dashboard',
-          '2': '/pages/teacher/dashboard',
-          teacher: '/pages/teacher/dashboard',
-          '3': '/pages/counselor/dashboard',
-          counselor: '/pages/counselor/dashboard',
-          '4': '/pages/admin/dashboard',
-          admin: '/pages/admin/dashboard',
-          '5': '/pages/college-admin/dashboard',
-          college_admin: '/pages/college-admin/dashboard'
-        }
-        uni.reLaunch({ url: routes[role] || '/pages/student/dashboard' })
+        uni.reLaunch({ url: ROLE_HOME[role] || ROLE_HOME['1'] })
       }, 1200)
     } else {
       // 走到这里说明 HTTP 200 且 code 200，但 data 里没有 token —— 后端把失败原因
@@ -192,8 +207,20 @@ const handleLogin = async () => {
 }
 
 onMounted(() => {
-  const keys = ['token','userId','username','role','studentId','teacherId','counselorId','adminId','userName']
-  keys.forEach(k => uni.removeStorageSync(k))
+  // 「记住我」还在期内 ⇒ 直接回各自首页，不用再登一次。
+  // 这是这个勾选**唯一**有实际作用的地方（改之前它只翻转一个 ref）。
+  if (stillRemembered()) {
+    uni.reLaunch({ url: ROLE_HOME[String(uni.getStorageSync('role') || '')] || ROLE_HOME['1'] })
+    return
+  }
+
+  // 没记住（或已过期）：清空登录态再进来。
+  // 用 logout() 而不是在这里另抄一份键名数组 —— 原先那份既漏了
+  // 后来新增的键，又清着 `studentId`/`adminId` 两个**全仓从未写过**的键。
+  logout()
+
+  // 恢复上次的勾选状态（偏好本身不属于登录态，退出登录不清它）
+  rememberMe.value = uni.getStorageSync(REMEMBER_PREF_KEY) === '1'
   generateCaptcha()
 })
 </script>
@@ -420,20 +447,9 @@ onMounted(() => {
   font-weight: 500;
 }
 
-/* 底部 */
-.footer-links {
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  gap: $spacing-md;
-  padding: $spacing-2xl 0;
-}
-.footer-link {
-  font-size: $font-xs;
-  color: $color-text-hint;
-}
-.footer-dot {
-  font-size: $font-xs;
-  color: $color-text-hint;
-}
+/* 底部：原来这里是一行「隐私政策 · 服务条款 · 联系我们」三个 <text>，
+   它们**没有 @tap、也没有任何对应页面**（小程序里没有隐私政策页，
+   PC 端也没有同类入口）—— 三个看着像链接、点了没反应的字。
+   2026-10-02（W5.12）连同 `.footer-links/.footer-link/.footer-dot` 一起删掉，
+   不留假入口。 */
 </style>

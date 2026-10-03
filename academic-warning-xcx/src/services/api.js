@@ -691,8 +691,11 @@ class ApiClient {
      *    但当前库里 35 个账号 status 全是 1，所以看不到效果。
      * ⚠️ **没有 keyword 参数**，按姓名搜索做不到服务端过滤，所以界面只给
      *    角色/学院两个筛选（都实测落进 SQL：collegeId=1→31、2→2、3→0）。
+     * 2026-10-02（W5.7）新增第 5 个参数 `status`（后端 `/users/page` 同步加了该过滤）——
+     *    admin 首页「待审批账号」用它取 `total`。⚠️ 这里**不能用 `status ?` 判真**
+     *    （`status=0` 恰好是待审批，falsy 会被丢掉），所以写成 `status === 0 || status`。
      */
-    getUsers: (page = 1, size = 20, collegeId, role) => this._get(`/admin/users/page?page=${page}&size=${size}${collegeId ? '&collegeId=' + collegeId : ''}${role ? '&role=' + role : ''}`),
+    getUsers: (page = 1, size = 20, collegeId, role, status) => this._get(`/admin/users/page?page=${page}&size=${size}${collegeId ? '&collegeId=' + collegeId : ''}${role ? '&role=' + role : ''}${status === 0 || status ? '&status=' + status : ''}`),
     /** 单用户。`password` **恒为 null**（后端显式抹掉），不是被过滤掉的字段名。 */
     getUserById: (id) => this._get(`/admin/users/${id}`),
     /**
@@ -839,6 +842,23 @@ class ApiClient {
      *    所以界面上这一列要显示成「处理备注」，显示成"处理人"就与库里的事实不符。
      */
     handleWarning: (id, data) => this._put(`/admin/warnings/${id}/handle`, data),
+
+    // —— 成绩申诉审核（2026-10-02 W5.4 新增）——
+    /**
+     * 申诉列表。`status` 可选：0 待处理 / 1 已通过 / 2 已驳回 / 3 已撤销；不传返回全部。
+     *
+     * 行：`{id, studentId(profile id), studentName, studentNo(学号), courseId, courseName,
+     *      courseCode, reason, description, status, reply, createdAt, updatedAt}`。
+     * 后端排序把待处理排最前，其余按时间倒序。
+     */
+    getAdminAppeals: (status) => this._get(`/admin/appeals${status === 0 || status ? '?status=' + status : ''}`),
+    /**
+     * 审核申诉。体 `{status: 1 通过 | 2 驳回, reply: 审核意见}`。
+     * ⚠️ 只有**待处理**的申诉能被审：重复审核会回 `code=500` +
+     *    「该申诉不是待处理状态（可能已被审核或撤回）」，要按 message 提示。
+     * 审核成功后端会给申诉学生写一条通知（不受"系统消息"开关影响）。
+     */
+    reviewAppeal: (id, data) => this._post(`/admin/appeals/${id}/review`, data),
 
     // —— 班级申请审批 ——
     /**
@@ -1021,12 +1041,23 @@ class ApiClient {
     getCounselors: (uid) => this._get(`/college-admin/counselors/${uid}`),
 
     /**
-     * 「帮扶情况」。⚠️ 它查的是**预警表**（跟 getWarnings 同一个 mapper），
+     * 「帮扶线索」。⚠️ 它查的是**预警表**（跟 getWarnings 同一个 mapper），
      * 不是 `assistance_plan` —— 返回的行只有 `{studentName, className, level, description,
      * status, createdAt}`，**连 id 都没有**，所以只能看不能操作。
      * 字段名也换了一套：等级叫 `level`（不是 warningLevel），说明叫 `description`。
      */
     getAssistance: (uid) => this._get(`/college-admin/assistance/${uid}`),
+
+    /**
+     * 「帮扶情况」——**真的帮扶计划**（`assistance_plans` 表），2026-10-02（W5.3）新增。
+     *
+     * 返回 `{id, studentId, studentName, studentNo, className, counselorName,
+     * content, status, progress, progressNote, createdAt, updatedAt}`。
+     * 归属链路：`assistance_plans.student_id`(profile id) → `student_profile.class_id`
+     * → `classes.college_id`，所以只回本学院的计划。
+     * `status` 0 待开始 / 1 进行中 / 2 已完成（前端字典 `PLAN_STATUS_TEXT`）。
+     */
+    getAssistancePlans: (uid) => this._get(`/college-admin/assistance-plans/${uid}`),
 
     /** 学院成绩总览：`{avgScore, passRate(0-100 的整数), recordCount, studentCount}`。 */
     getScoreStats: (uid) => this._get(`/college-admin/scores-stats/${uid}`),

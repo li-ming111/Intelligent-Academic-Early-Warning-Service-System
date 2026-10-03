@@ -69,11 +69,43 @@ export function restoreSession() {
   return user.value
 }
 
+/** 「记住我」到期时间戳（毫秒）的 storage 键。 */
+const SESSION_EXPIRE_KEY = 'sessionExpireAt'
+
 /** 清掉登录态。退出登录与 401 都走这里，避免两处各清一半。 */
 export function logout() {
   const keys = ['token', 'userId', 'username', 'userName', 'role', 'teacherId', 'counselorId']
   keys.forEach(k => uni.removeStorageSync(k))
+  // 「记住我」的到期时间也算登录态，一起清 —— 否则退出后它还在，
+  // 下次进登录页会拿它去判断"是不是还在记住期内"。
+  uni.removeStorageSync(SESSION_EXPIRE_KEY)
   user.value = null
+}
+
+// ==================== 「记住我 30 天」 ====================
+//
+// 2026-10-02（W5.4）。改之前这个勾选**只翻转一个 ref**，登录逻辑从不读它，
+// 而登录页 onMounted 又会把所有登录态清空 ⇒ 勾不勾完全一样、永远记不住。
+//
+// 现在的语义（与 PC 端 Login.vue 的 `rememberMe` 一致，但那边只存了个标记）：
+//   - 勾了：登录成功时写一个**到期时间**，之后进登录页若还在期内就直接回各自首页；
+//   - 没勾：不写到期时间，进登录页照旧清空登录态、要求重新登录。
+
+/** 记住 30 天。 */
+export function rememberSession(days = 30) {
+  uni.setStorageSync(SESSION_EXPIRE_KEY, Date.now() + days * 24 * 60 * 60 * 1000)
+}
+
+/**
+ * 是否处于「记住我」的有效期内。
+ *
+ * 两个条件都要满足：**有 token** 且**到期时间还没到**。
+ * 只看到期时间是不够的 —— 退出登录（或 401）会清掉 token，
+ * 那时即便时间戳还在，也必须重新登录。
+ */
+export function stillRemembered() {
+  const at = Number(uni.getStorageSync(SESSION_EXPIRE_KEY) || 0)
+  return !!getToken() && at > Date.now()
 }
 
 /** 组合式用法：const { token, userId } = useUser() */

@@ -41,10 +41,13 @@
         />
 
         <!-- 可评价的计划 -->
-        <view v-if="canEvaluate.length" class="card">
-          <section-title title="可以评价的帮扶计划" :extra="`${canEvaluate.length} 项`" />
+        <view v-if="evaluatable.length" class="card">
+          <section-title
+            title="帮扶计划评价"
+            :extra="`已评价 ${evaluatedPlanIds.size} / ${evaluatable.length}`"
+          />
           <view
-            v-for="p in canEvaluate"
+            v-for="p in evaluatable"
             :key="p.id"
             class="pending-item"
             @tap="openForm(p)"
@@ -53,8 +56,17 @@
               <text class="pending-item__title">{{ p.title }}</text>
               <text class="pending-item__meta">进度 {{ numOr(p.progress) }}% · {{ p.statusText }}</text>
             </view>
-            <text class="pending-item__action">去评价</text>
+            <text
+              class="pending-item__action"
+              :class="{ 'pending-item__action--done': evaluatedPlanIds.has(String(p.id)) }"
+            >
+              {{ evaluatedPlanIds.has(String(p.id)) ? '已评价' : '去评价' }}
+            </text>
           </view>
+          <text class="note">
+            已评价的那几条**点进去是修改**，不是重复提交 —— 后端对同一个 planId
+            是更新（返回「该计划已有评价，本次为更新」），不会在库里堆出两行。
+          </text>
         </view>
       </template>
     </view>
@@ -125,13 +137,24 @@ const form = ref({ score: 5, content: '' })
 const canSubmit = computed(() => Boolean(form.value.score) && Boolean(current.value.id))
 
 /**
- * 哪些计划可以评价。
+ * 已评价过的计划 id 集合。
  *
- * 后端**没有**"是否已评价"的标记，所以这里无法真正去重 —— 只挑出进度 > 0
- * 的计划作为可评价对象，并接受同一计划可能被重复提交（后端也不拦）。
- * 这是后端现状，不在前端假装拦住了。
+ * 评价行（`/students/evaluations/{sid}/list`）**只回 `planId`、不回计划名**，
+ * 所以这个集合同时也是 `planTitleOf` 做映射的依据。
  */
-const canEvaluate = computed(() =>
+const evaluatedPlanIds = computed(() => new Set(rows.value.map(e => String(e.planId))))
+
+/**
+ * 可以评价的计划：进度 > 0 的。
+ *
+ * ⚠️ 2026-10-02（W5.10）更正了这里的旧注释。旧注释说「后端没有'是否已评价'的标记，
+ * 无法去重，接受重复提交，后端也不拦」—— **后半句是错的**：
+ * `StudentServiceImpl.submitEvaluation` 对同一个 planId 是**先查后更**，
+ * 已有评价时复用那一行并返回「该计划已有评价，本次为更新」，库里不会堆重复行。
+ * 真正缺的是**前端没把状态显示出来** —— 提交过的人看不出自己提交过。
+ * 所以这里不再"过滤掉已评价的"，而是照列、由模板按 `evaluatedPlanIds` 标「已评价」。
+ */
+const evaluatable = computed(() =>
   plans.value.filter(p => Number(p.progress) > 0)
 )
 
@@ -336,6 +359,22 @@ async function load() {
   border-radius: $radius-pill;
   font-size: $font-sm;
   color: var(--color-primary);
+}
+
+/* 已评价：灰掉，与「去评价」区分开（同一行仍然可点，点进去是修改） */
+.pending-item__action--done {
+  border-color: $color-border;
+  color: $color-text-hint;
+}
+
+.note {
+  display: block;
+  margin-top: $spacing-md;
+  padding-top: $spacing-md;
+  border-top: 1rpx solid $color-divider;
+  font-size: $font-xs;
+  line-height: 1.6;
+  color: $color-text-hint;
 }
 
 /* ---------- 表单 ---------- */

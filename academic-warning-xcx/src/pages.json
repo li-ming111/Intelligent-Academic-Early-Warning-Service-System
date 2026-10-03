@@ -179,6 +179,14 @@
           }
         },
         {
+          "path": "appeals",
+          "style": {
+            "navigationStyle": "custom",
+            "navigationBarTitleText": "成绩申诉审核",
+            "navigationBarBackgroundColor": "#667eea"
+          }
+        },
+        {
           "path": "profile",
           "style": {
             "navigationStyle": "custom",

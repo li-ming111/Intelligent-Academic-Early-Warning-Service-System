@@ -1035,17 +1035,28 @@ public class AdminController {
         }
     }
 
+    /**
+     * 账号分页。
+     *
+     * <p>2026-10-02（W5.7）新增 {@code status} 过滤：此前**只能按 role / collegeId 筛**，
+     * 于是「待审批账号有几个」这个问题在接口层答不出来（小程序 admin 首页那格只能写死 0）。
+     * {@code status=0} 就是待审批，{@code total} 直接可当计数用。
+     */
     @GetMapping("/users/page")
     @SentinelResource(value = "adminApi:getUsersByPage", fallback = "getUsersByPageFallback")
     public ApiResponse<Map<String, Object>> getUsersByPage(
             @RequestParam(defaultValue = "1") Integer page,
             @RequestParam(defaultValue = "10") Integer size,
             @RequestParam(required = false) Long collegeId,
-            @RequestParam(required = false) Integer role) {
+            @RequestParam(required = false) Integer role,
+            @RequestParam(required = false) Integer status) {
         try {
             QueryWrapper<User> queryWrapper = new QueryWrapper<>();
             if (role != null) {
                 queryWrapper.eq("role", role);
+            }
+            if (status != null) {
+                queryWrapper.eq("status", status);
             }
 
             // 按学院过滤必须落进 SQL（见 userIdsInCollege 的注释）。
@@ -4488,7 +4499,8 @@ public class AdminController {
      * 的 9 个码全是 {@code PERM_*} 前缀 ⇒ 两边**一个都对不上**，那一列 9 行全是空的。
      * 现在改成从 {@code role_permissions} 真查：{@code roleCodes} = 持有该权限的角色码。
      *
-     * <p>字段只增不减：{@code id/code/name/description} 原样保留。
+     * <p>字段只增不减：{@code id/code/name/description} 原样保留，
+     * 2026-10-02（W5.6）补 {@code status}（此前漏回，导致小程序那列恒显示「停用」）。
      */
     @GetMapping("/permissions/list")
     public ApiResponse<List<Map<String, Object>>> getPermissions() {
@@ -4511,6 +4523,11 @@ public class AdminController {
                 item.put("code", p.getCode());
                 item.put("name", p.getName());
                 item.put("description", p.getDescription());
+                // 2026-10-02（W5.6）：此前**没有回 status**，而小程序 admin/permissions.vue
+                // 的权限点列表写的是 `p.status === 1 ? '启用' : '停用'` ⇒ 恒 undefined ≠ 1
+                // ⇒ 活库 9 个权限点（status 全是 1）在页面上**全部显示「停用」**。
+                // 与角色列表（/permissions/roles 一直有 status）对齐，补上这一个 key。
+                item.put("status", p.getStatus());
                 item.put("roleCodes", roleCodesByPerm.getOrDefault(p.getId(), List.of()));
                 result.add(item);
             }

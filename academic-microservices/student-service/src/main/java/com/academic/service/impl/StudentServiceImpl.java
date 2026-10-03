@@ -1160,15 +1160,23 @@ public class StudentServiceImpl implements StudentService {
     public Object getAppealStatistics(Long userId) {
         log.info("获取申诉统计: userId={}", userId);
         Long sid = resolveStudentProfileId(userId);
-        if (sid == null) return Map.of("total", 0, "pending", 0, "approved", 0, "rejected", 0);
+        if (sid == null) return Map.of("total", 0, "pending", 0, "approved", 0, "rejected", 0, "withdrawn", 0);
         int total = scoreAppealMapper.countByStudentId(sid);
-        int pending = scoreAppealMapper.selectPendingByStudentId(sid).size();
-        int success = scoreAppealMapper.countSuccessByStudentId(sid);
+        // 2026-10-02（W5.8）：四个状态**各自 COUNT**，不再用
+        // `rejected = total - pending - approved` 的减法 —— 那个减法把已撤回(3)
+        // 折进了「已驳回」，页面上四个数加起来对不上 total。
+        // 现在 pending + approved + rejected + withdrawn == total（status 只有 0..3 四种）。
+        int pending = scoreAppealMapper.countByStudentIdAndStatus(sid, 0);
+        int approved = scoreAppealMapper.countByStudentIdAndStatus(sid, 1);
+        int rejected = scoreAppealMapper.countByStudentIdAndStatus(sid, 2);
+        int withdrawn = scoreAppealMapper.countByStudentIdAndStatus(sid, 3);
         Map<String, Object> stats = new HashMap<>();
         stats.put("total", total);
         stats.put("pending", pending);
-        stats.put("approved", success);
-        stats.put("rejected", total - pending - success);
+        stats.put("approved", approved);
+        stats.put("rejected", rejected);
+        // 新增键（字段只增不减）：已撤回。前端不读也不影响。
+        stats.put("withdrawn", withdrawn);
         return stats;
     }
 

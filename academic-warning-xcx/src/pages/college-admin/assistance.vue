@@ -5,67 +5,69 @@
     <filter-bar v-model="statusFilter" :options="statusOptions" />
 
     <view class="page-body">
-      <page-loading v-if="loading" :count="4" />
+      <page-loading v-if="loading" :count="4" mode="card" />
 
       <template v-else>
         <view class="summary">
           <text class="summary__text">
-            共 <text class="summary__num">{{ rows.length }}</text> 条线索 ·
-            待处理 <text class="summary__num summary__num--danger">{{ pendingCount }}</text> 条
+            共 <text class="summary__num">{{ rows.length }}</text> 个帮扶计划 ·
+            进行中 <text class="summary__num summary__num--danger">{{ activeCount }}</text> 个
           </text>
           <text class="summary__hint">状态筛选在本地做</text>
         </view>
 
         <empty-state
           v-if="!filtered.length"
-          :text="rows.length ? '这个状态下没有线索' : '本院暂无帮扶线索'"
-          :hint="rows.length ? '换一个状态看看' : '没有学生触发预警规则'"
+          :text="rows.length ? '这个状态下没有计划' : '本院暂无帮扶计划'"
+          :hint="rows.length ? '换一个状态看看' : '本院辅导员还没有为学生制定帮扶计划'"
           icon="check"
         />
 
         <view v-else class="card card--flush">
           <view
             v-for="(r, i) in filtered"
-            :key="i"
+            :key="r.id"
             class="row"
             :class="{ 'row--divided': i > 0 }"
             @tap="openDetail(r)"
           >
             <view class="row__head">
-              <warning-tag :level="r.level" />
               <text class="row__name">{{ r.studentName || '未知学生' }}</text>
-              <text class="tag" :class="warningStatusTagClass(r.status)">
-                {{ r.statusText }}
-              </text>
+              <text class="tag" :class="`tag--${r.tagType}`">{{ r.statusText }}</text>
             </view>
-            <text class="row__desc">{{ r.description || '无说明' }}</text>
+            <text class="row__desc">{{ r.content || '（无计划内容）' }}</text>
+            <view class="row__progress">
+              <view class="bar">
+                <view class="bar__fill" :style="{ width: r.progress + '%' }" />
+              </view>
+              <text class="row__progress-num">{{ r.progress }}%</text>
+            </view>
             <view class="row__foot">
               <text class="row__class">{{ r.className || '未分班' }}</text>
-              <text class="row__time">{{ formatDate(r.createdAt, true) }}</text>
+              <text class="row__time">{{ formatDate(r.updatedAt || r.createdAt, true) }}</text>
             </view>
           </view>
         </view>
 
         <text class="note">
-          **这一页的数据源就是预警表**，不是帮扶计划表。后端 `CollegeAdminController`
-          里 `/assistance/{userId}` 的实现是把预警查询结果换个字段名原样返回
-          （`warning_level` 改名成 `level`，其余照搬），接口本身没有 JOIN 帮扶计划。
-          所以页面上每一条都是"预警记录"，请不要把它当成"已下达的帮扶措施"来读。
+          这一页的数据源是 **`assistance_plans` 表本身**（2026-10-02 W5.3 起）。
+          在此之前它挂的是 `/college-admin/assistance/{uid}` —— 那支接口查的是
+          **预警表**、只是把 `warning_level` 改名成 `level` 原样返回，
+          所以标题写「帮扶情况」、列的却是预警记录。现在新增了
+          `/college-admin/assistance-plans/{uid}`，按
+          `assistance_plans.student_id → student_profile.class_id → classes.college_id`
+          这条链真查本学院的计划。
         </text>
         <text class="note">
-          真要看帮扶计划，库里确实有 `assistance_plan` 表、辅导员端也有完整的增删改查
-          （`/counselors/{cid}/assistance-plans`），但**没有任何一个接口按学院维度查它**
-          —— 学院管理员拿不到本院的帮扶计划清单。这是后端的能力缺口，页面补不出来。
-        </text>
-        <text class="note">
-          这些行**没有 id**（接口没往外给），所以这里只能看、不能处理也不能点进学生详情。
-          要处理请去「预警管理」页 —— 那边才有 `process-warning` 与 `delete-warning`。
+          归属按**学生所在班级**算：学生没分班、或班级不属于本学院，他的计划不会出现在这里。
+          要处理预警请去「预警管理」页；要改计划请让辅导员在辅导员端操作 ——
+          学院管理员这一页是只读的。
         </text>
       </template>
     </view>
 
     <!-- ============ 详情 ============ -->
-    <detail-sheet v-model="sheetOpen" title="线索详情" height="58vh">
+    <detail-sheet v-model="sheetOpen" title="帮扶计划" height="64vh">
       <view v-if="current" class="sheet">
         <view class="facts">
           <view class="facts__row">
@@ -73,30 +75,42 @@
             <text class="facts__v">{{ current.studentName || '未知' }}</text>
           </view>
           <view class="facts__row">
+            <text class="facts__k">学号</text>
+            <text class="facts__v">{{ current.studentNo || '--' }}</text>
+          </view>
+          <view class="facts__row">
             <text class="facts__k">班级</text>
             <text class="facts__v">{{ current.className || '未分班' }}</text>
           </view>
           <view class="facts__row">
-            <text class="facts__k">预警等级</text>
-            <text class="facts__v">{{ levelText(current.level) }}</text>
+            <text class="facts__k">负责辅导员</text>
+            <text class="facts__v">{{ current.counselorName || '未取到' }}</text>
           </view>
           <view class="facts__row">
-            <text class="facts__k">处理状态</text>
+            <text class="facts__k">计划状态</text>
             <text class="facts__v">{{ current.statusText }}</text>
           </view>
           <view class="facts__row">
-            <text class="facts__k">产生时间</text>
+            <text class="facts__k">完成进度</text>
+            <text class="facts__v">{{ current.progress }}%</text>
+          </view>
+          <view class="facts__row">
+            <text class="facts__k">制定时间</text>
             <text class="facts__v">{{ formatDate(current.createdAt, true) }}</text>
+          </view>
+          <view class="facts__row">
+            <text class="facts__k">最近更新</text>
+            <text class="facts__v">{{ formatDate(current.updatedAt, true) }}</text>
           </view>
         </view>
 
-        <section-title plain title="预警说明" />
-        <text class="paragraph">{{ current.description || '（无）' }}</text>
+        <section-title plain title="计划内容" />
+        <text class="paragraph">{{ current.content || '（无）' }}</text>
 
-        <text class="note note--in">
-          这一行的字段只有上面这些 —— 没有帮扶措施、没有责任人、没有完成进度。
-          那些字段在帮扶计划表里，而接口没有查它。
-        </text>
+        <template v-if="current.progressNote">
+          <section-title plain title="进度说明" />
+          <text class="paragraph">{{ current.progressNote }}</text>
+        </template>
       </view>
     </detail-sheet>
   </view>
@@ -108,19 +122,19 @@ import { collegeAdminAPI } from '@/services/api.js'
 import { useUser } from '@/composables/useUser.js'
 import { roleThemeStyle } from '@/composables/useRoleTheme.js'
 import { formatDate } from '@/utils/format.js'
-import { warningLevelText } from '@/utils/score.js'
-// 2026-10-02（W1.6）：这一页的数据源**就是预警表**（后端把 `warning_level` 改名成 `level`
-// 原样返回，见下面那条 note），所以 `status` 是 `academic_warning.status`，同样是三态。
-import { normalizeWarnings, warningStatusTagClass } from '@/utils/warning.js'
+import {
+  PLAN_STATUS_TEXT, PLAN_STATUS_KEY, STATUS_TAG_TYPE, dictText
+} from '@/constants/dict.js'
 
 const { userId } = useUser()
 const themeStyle = roleThemeStyle('collegeAdmin')
 
+// `assistance_plans.status`：0 待开始 / 1 进行中 / 2 已完成（见 constants/dict.js）
 const statusOptions = [
   { label: '全部', value: '' },
-  { label: '待处理', value: '0' },
-  { label: '已处理', value: '1' },
-  { label: '已解除', value: '2' }
+  { label: '待开始', value: '0' },
+  { label: '进行中', value: '1' },
+  { label: '已完成', value: '2' }
 ]
 
 const loading = ref(true)
@@ -132,20 +146,43 @@ const current = ref(null)
 
 const filtered = computed(() => {
   if (!statusFilter.value) return rows.value
-  // 归一化后 status 已是 0/1/2，直接比字符串即可（原来先压成两态再比，2 会被并进 0）
   return rows.value.filter(r => String(r.status) === statusFilter.value)
 })
 
-// 2026-10-02（W1.6）：`status !== 1` 会把"已解除(2)"算进待处理 ⇒ 只认 0。
-const pendingCount = computed(() => rows.value.filter(r => r.status === 0).length)
-
-/** 等级文案统一走 utils/score.js —— 这个接口把键名改成了 `level`，值仍是同一套。 */
-function levelText(v) {
-  return warningLevelText(v)
-}
+/** 「进行中」= status 1。别写成 `!== 2` —— 那会把"待开始"也算进去。 */
+const activeCount = computed(() => rows.value.filter(r => r.status === 1).length)
 
 function toast(msg, ms = 2600) {
   uni.showToast({ title: String(msg || ''), icon: 'none', duration: ms })
+}
+
+/**
+ * 归一化一条计划。
+ *
+ * 状态文案取**本地字典**而不是后端字段：`assistance_plans.status` 是 int，
+ * 字典里三个值都核对过来源；同一个 int 在别的表里是另一层意思（见 dict.js 抬头），
+ * 所以按 status 现算，不信任任何"顺带回过来的文案"。
+ */
+function normalizePlan(raw) {
+  const p = raw && typeof raw === 'object' ? raw : {}
+  const status = Number(p.status)
+  const known = Number.isFinite(status) && PLAN_STATUS_KEY[status] !== undefined
+  const progressNum = Number(p.progress)
+  const progress = Number.isFinite(progressNum)
+    ? Math.max(0, Math.min(100, Math.round(progressNum)))
+    : 0
+  const statusKey = known ? PLAN_STATUS_KEY[status] : 'pending'
+  return {
+    ...p,
+    id: p.id,
+    content: p.content || '',
+    progressNote: p.progressNote || '',
+    progress,
+    status,
+    statusKey,
+    statusText: known ? dictText(PLAN_STATUS_TEXT, status) : '未知',
+    tagType: STATUS_TAG_TYPE[statusKey] || 'info'
+  }
 }
 
 onMounted(load)
@@ -154,16 +191,16 @@ async function load() {
   loading.value = true
   try {
     if (!userId) return
-    const list = await collegeAdminAPI.getAssistance(userId)
-    // 待处理置顶，其余按时间倒序（`isPending` 由归一化给出，三态下"已解除"也排后）
-    rows.value = normalizeWarnings(Array.isArray(list) ? list : []).sort((a, b) => {
-      const pa = a.isPending ? 0 : 1
-      const pb = b.isPending ? 0 : 1
+    const list = await collegeAdminAPI.getAssistancePlans(userId)
+    // 进行中置顶，其余按最近更新倒序
+    rows.value = (Array.isArray(list) ? list : []).map(normalizePlan).sort((a, b) => {
+      const pa = a.status === 1 ? 0 : 1
+      const pb = b.status === 1 ? 0 : 1
       if (pa !== pb) return pa - pb
-      return String(b.createdAt || '').localeCompare(String(a.createdAt || ''))
+      return String(b.updatedAt || b.createdAt || '').localeCompare(String(a.updatedAt || a.createdAt || ''))
     })
   } catch (e) {
-    console.error('[college-admin assistance] 帮扶线索失败:', e)
+    console.error('[college-admin assistance] 帮扶计划失败:', e)
     rows.value = []
     toast((e && e.message) || '加载失败')
   } finally {
@@ -245,7 +282,6 @@ function openDetail(r) {
 .row__name {
   flex: 1;
   min-width: 0;
-  margin-left: $spacing-sm;
   font-size: $font-md;
   font-weight: 600;
   color: $color-text;
@@ -259,6 +295,38 @@ function openDetail(r) {
   color: $color-text-secondary;
   line-height: 1.6;
   @include ellipsis-multi(3);
+}
+
+/* ---------- 进度条 ---------- */
+.row__progress {
+  display: flex;
+  align-items: center;
+  margin-top: $spacing-sm;
+}
+
+.bar {
+  flex: 1;
+  min-width: 0;
+  height: 12rpx;
+  border-radius: $radius-pill;
+  background: $color-bg;
+  overflow: hidden;
+}
+
+.bar__fill {
+  height: 100%;
+  border-radius: $radius-pill;
+  background: var(--color-primary);
+}
+
+.row__progress-num {
+  flex-shrink: 0;
+  width: 90rpx;
+  margin-left: $spacing-sm;
+  text-align: right;
+  font-size: $font-xs;
+  color: $color-text-secondary;
+  font-variant-numeric: tabular-nums;
 }
 
 .row__foot {
@@ -335,10 +403,5 @@ function openDetail(r) {
   font-size: $font-xs;
   line-height: 1.6;
   color: #92400e;
-}
-
-.note--in {
-  margin-left: 0;
-  margin-right: 0;
 }
 </style>

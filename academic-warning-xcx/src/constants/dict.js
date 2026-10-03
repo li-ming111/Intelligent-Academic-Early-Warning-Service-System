@@ -59,10 +59,13 @@ export const PLAN_STATUS_KEY = {
  * 来源：mapper `selectPendingByStudentId`(status=0)、`countSuccessByStudentId`(status=1)、
  *       `withdrawAppeal`(SET status=3)；PC `Appeals.vue` 的 0/1/2 文案。
  *
- * ⚠️ 两个已知口径问题，页面上不要"顺手修正"，按后端口径显示即可：
- * 1. 后端**没有任何代码写 status=2**（grep 全仓无"驳回"），2 只在 PC 的展示分支里出现；
- * 2. `getAppealStatistics` 的 `rejected = total - pending - approved`，
- *    所以**已撤回(3)被算进了"已驳回"**，两个数字加起来会对不上 total。
+ * 2026-10-02（W1.1 / W5.8）两条旧口径问题都已修，此处的历史说明保留以免回退：
+ * 1. 曾经**没有任何代码写 status=2** —— 管理员申诉审核接口
+ *    （`POST /admin/appeals/{id}/review`，body `{status: 1|2, reply}`）补上了，
+ *    2 现在是真会被写入的取值；
+ * 2. `getAppealStatistics` 曾经是 `rejected = total - pending - approved`，
+ *    减法把**已撤回(3)** 折进了「已驳回」。现改为四态各自 COUNT，
+ *    且接口多回一个 `withdrawn` ⇒ pending + approved + rejected + withdrawn == total。
  * ========== */
 export const APPEAL_STATUS_TEXT = {
   0: '待处理',

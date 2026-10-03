@@ -174,11 +174,12 @@ const reasons = APPEAL_REASONS
 const avatarText = computed(() => (userName ? String(userName).slice(0, 1) : ''))
 
 /**
- * 四个数直接取 `/students/appeals/{uid}/statistics`。
+ * 四个数直接取 `/students/appeals/{uid}/statistics`，后端按状态**各自 COUNT**。
  *
- * ⚠️ 已知后端口径问题（照原样显示，不在前端"顺手修正"）：
- * `rejected = total - pending - approved`，所以**已撤回(3) 被算进了「已驳回」**。
- * 前端自己重算会让两个页面对同一个数字说法不同，反而更难解释。
+ * 2026-10-02（W5.8）：后端此前是 `rejected = total - pending - approved`，
+ * 减法把**已撤回(3)** 折进了「已驳回」。已改成四态分别计数，
+ * 现在 pending + approved + rejected + withdrawn == total。
+ * 接口另回了 `withdrawn`，本页不展示（四个格子够了），状态筛选里能看到。
  */
 const heroStats = computed(() => {
   const s = stats.value || {}

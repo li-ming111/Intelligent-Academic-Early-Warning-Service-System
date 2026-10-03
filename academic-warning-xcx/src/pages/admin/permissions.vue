@@ -37,12 +37,10 @@
             </view>
           </view>
 
-          <!-- 这套后端的 role 表只有 4 行，而 users.role 有 5 个取值。 -->
           <text class="note">
-            role 表里只有 4 个角色（学生 / 教师 / 辅导员 / 管理员），但 `users.role` 实际有
-            5 个取值 —— 学院管理员（role=5）**没有对应的角色行**。
-            所以"角色表驱动权限"这条链在 5 号角色上是断的：`/permissions/user/` 遇到 role=5 会返回
-            roleName = UNKNOWN、权限点为空数组。
+            `roles` 表现在是 **5 行**，与 `users.role` 的 5 个取值一一对应
+            （学生 / 教师 / 辅导员 / 管理员 / 学院管理员）。
+            点任意一行可以看到该角色绑定的权限点。
           </text>
         </template>
 
@@ -65,6 +63,7 @@
                   <text class="perm__name">{{ p.name }}</text>
                   <text class="perm__code">{{ p.code }}</text>
                   <text class="perm__desc">{{ p.description || '无描述' }}</text>
+                  <text class="perm__roles">适用角色：{{ rolesTextOf(p) }}</text>
                 </view>
                 <text class="tag" :class="p.status === 1 ? 'tag--success' : 'tag--pending'">
                   {{ p.status === 1 ? '启用' : '停用' }}
@@ -72,9 +71,8 @@
               </view>
             </view>
             <text class="note">
-              这里只是**权限点清单**，页面上不展示"哪个角色有哪些权限点" ——
-              角色与权限点的映射要读 `role_permission` 表，而这一版后端没有开放那支查询接口
-              （列表里没有它）。要讲清楚映射关系，得看数据库表本身。
+              「适用角色」来自后端真查 `role_permissions` 表 —— 每行列出**持有该权限的角色名**，
+              不是写死的映射表。反过来"某个角色有哪些权限"，点「角色」页的任意一行就能看到。
             </text>
           </view>
         </template>
@@ -112,7 +110,11 @@
               </view>
               <view class="facts__row">
                 <text class="facts__k">角色名</text>
-                <text class="facts__v">{{ queried.roleName || 'UNKNOWN' }}</text>
+                <text class="facts__v">{{ queried.roleName || '未取到' }}</text>
+              </view>
+              <view v-if="queried.roleCode" class="facts__row">
+                <text class="facts__k">角色码</text>
+                <text class="facts__v">{{ queried.roleCode }}</text>
               </view>
             </view>
 
@@ -126,14 +128,15 @@
             />
             <view v-else class="card">
               <view v-for="(p, i) in permList" :key="i" class="plain-row" :class="{ 'plain-row--divided': i > 0 }">
-                <text class="plain-row__text">{{ typeof p === 'string' ? p : (p.name || p.code || JSON.stringify(p)) }}</text>
+                <text class="plain-row__text">{{ permLabel(p) }}</text>
               </view>
             </view>
 
             <text class="note">
-              1 号账号（admin / role=4）实测返回 `roleName = ADMIN`、`permissions = []`
-              —— 权限点表里没有 ADMIN 的映射行。**空数组是真话**，不在这里补一组默认权限。
-              另外 `roleName` 是英文枚举（ADMIN / TEACHER / …），不是界面上的中文角色名。
+              权限点按账号的 `users.role` 经 `roles.code` 反查 `role_permissions` 得来，
+              是**这个角色实际绑定的那几条**。角色名与角色码都由后端回中文/真实码
+              （如 `管理员` / `ROLE_ADMIN`），不是前端拼的。
+              若某个内置角色一条都没绑，这里会如实显示 0 个。
             </text>
           </template>
 
@@ -208,7 +211,7 @@ onMounted(async () => {
 /**
  * 每个角色的账号数。
  * 只能逐个 role 调列表接口取 `total` —— 没有"按角色聚合"的接口。
- * 数量太少（4 个）所以并发打完就完了，不做缓存失效那套。
+ * 数量太少（5 个）所以并发打完就完了，不做缓存失效那套。
  */
 async function loadRoleCounts() {
   const ids = roles.value.map(r => r.id)
@@ -224,16 +227,44 @@ async function loadRoleCounts() {
 
 function openRole(r) {
   const n = countOf(r.id)
+  // `/admin/permissions/roles` 从第二十四轮起就一并回 `permissions`（权限码数组）,
+  // 所以这里列得出「这个角色有哪些权限点」—— 之前的文案说"没有开放查询接口"已经过期。
+  const codes = Array.isArray(r.permissions) ? r.permissions : []
+  const names = codes.map(code => {
+    const hit = perms.value.find(p => p.code === code)
+    return hit ? hit.name : code
+  })
   uni.showModal({
     title: r.name,
     content:
       `编码：${r.code}\n` +
       `账号数：${n === '--' ? '未取到' : n + ' 个'}\n` +
       `说明：${r.description || '无'}\n\n` +
-      '角色与权限点的映射表（role_permission）没有开放查询接口，' +
-      '所以这里列不出"这个角色有哪些权限点"。',
+      `权限点（${names.length} 个）：\n` +
+      (names.length ? names.map(x => `· ${x}`).join('\n') : '（这个角色没有绑定任何权限点）'),
     showCancel: false
   })
+}
+
+/** 权限码 → 中文名。`perms` 已整表加载，本地查表即可，不再多打一次接口。 */
+function permLabel(p) {
+  const code = typeof p === 'string' ? p : (p && p.code)
+  if (!code) return typeof p === 'string' ? p : JSON.stringify(p)
+  const hit = perms.value.find(x => x.code === code)
+  return hit ? `${hit.name}（${code}）` : code
+}
+
+/**
+ * 一条权限被哪些角色持有 —— 后端 `roleCodes` 是 `ROLE_*` 英文码，
+ * 换成 `roles` 里的中文名显示（查不到就退回码本身，不静默吞掉）。
+ */
+function rolesTextOf(p) {
+  const codes = Array.isArray(p.roleCodes) ? p.roleCodes : []
+  if (!codes.length) return '未绑定任何角色'
+  return codes.map(code => {
+    const hit = roles.value.find(r => r.code === code)
+    return hit ? hit.name : code
+  }).join(' / ')
 }
 
 async function doLookup() {
@@ -393,6 +424,13 @@ async function doLookup() {
   font-size: $font-xs;
   color: $color-text-hint;
   @include ellipsis-multi(2);
+}
+
+.perm__roles {
+  display: block;
+  margin-top: 6rpx;
+  font-size: $font-xs;
+  color: var(--color-primary);
 }
 
 /* ---------- 查询 ---------- */

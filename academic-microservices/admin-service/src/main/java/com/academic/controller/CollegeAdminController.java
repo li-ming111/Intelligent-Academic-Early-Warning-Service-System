@@ -49,6 +49,7 @@ public class CollegeAdminController {
     @Autowired private AcademicWarningMapper academicWarningMapper;
     @Autowired private com.academic.mapper.MajorMapper majorMapper;
     @Autowired private ScoreStatMapper scoreStatMapper;
+    @Autowired private com.academic.mapper.AssistancePlanMapper assistancePlanMapper;
 
     /** 聚合查询返回的计数类字段。JDBC 对 COUNT() 可能给 Long，也可能给 BigDecimal。 */
     private static int intOf(Object value) {
@@ -495,7 +496,18 @@ public class CollegeAdminController {
         return ApiResponse.success(result);
     }
 
-    /** 本学院预警学生的帮扶计划 */
+    /**
+     * 本学院预警学生的帮扶线索。
+     *
+     * <p>⚠️ <b>这一支返回的是预警行，不是帮扶计划</b> —— 它把
+     * {@code selectWarningsByCollege()} 的结果换个字段名（{@code warning_level} →
+     * {@code level}）原样吐出来。历史上小程序「帮扶情况」页就挂在这支上，
+     * 于是页面标题写「帮扶情况」、列的却是预警记录。
+     *
+     * <p>2026-10-02（W5.3）新增 {@link #getAssistancePlans} 提供**真的**帮扶计划；
+     * 这一支保留（它有调用方，且"本院预警线索"本身也是个有用的视图），
+     * 但不要再把它当成帮扶计划用。
+     */
     @GetMapping("/assistance/{userId}")
     public ApiResponse<List<Map<String, Object>>> getAssistance(@PathVariable Long userId) {
         Long collegeId = getCollegeId(userId);
@@ -512,6 +524,22 @@ public class CollegeAdminController {
             result.add(m);
         }
         return ApiResponse.success(result);
+    }
+
+    /**
+     * 本学院学生名下的**帮扶计划**（真查 {@code assistance_plans}）。
+     *
+     * <p>2026-10-02（W5.3）：学院管理员此前拿不到本院的帮扶计划清单 ——
+     * 辅导员端有完整的增删改查，但没有一支接口按学院维度查。
+     * 归属链路走 {@code student_profile.class_id → classes.college_id}，
+     * 与预警那支口径一致。返回 {@code status}（0 待开始/1 进行中/2 已完成）与
+     * {@code progress}，文案由前端字典 {@code PLAN_STATUS_TEXT} 翻。
+     */
+    @GetMapping("/assistance-plans/{userId}")
+    public ApiResponse<List<Map<String, Object>>> getAssistancePlans(@PathVariable Long userId) {
+        Long collegeId = getCollegeId(userId);
+        if (collegeId == null) return ApiResponse.forbidden("无权限");
+        return ApiResponse.success(assistancePlanMapper.selectPlansByCollege(collegeId));
     }
 
     /** 导出本学院数据 */

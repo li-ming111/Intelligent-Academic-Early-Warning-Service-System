@@ -28,6 +28,16 @@ public interface ScoreAppealMapper extends BaseMapper<ScoreAppeal> {
     @Select("SELECT COUNT(*) FROM score_appeals WHERE student_id = #{studentId} AND status = 1")
     int countSuccessByStudentId(@Param("studentId") Long studentId);
 
+    /**
+     * 按状态精确计数。
+     *
+     * <p>2026-10-02（W5.8）：此前 {@code getAppealStatistics} 的
+     * {@code rejected = total - pending - approved} —— 减法把**已撤回(3)** 也折进了
+     * 「已驳回」，两个数字加起来对不上 total。改为各状态分别 COUNT。
+     */
+    @Select("SELECT COUNT(*) FROM score_appeals WHERE student_id = #{studentId} AND status = #{status}")
+    int countByStudentIdAndStatus(@Param("studentId") Long studentId, @Param("status") Integer status);
+
     @Select("SELECT reason, COUNT(*) as cnt FROM score_appeals WHERE student_id = #{studentId} GROUP BY reason")
     List<Map<String, Object>> countByReason(@Param("studentId") Long studentId);
 
