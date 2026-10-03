@@ -69,8 +69,14 @@ const get = async (path, headers = {}) => {
 }
 
 /** 登录判据只有一个：data.token 存在（登录失败时 HTTP 仍是 200、code 仍是 200）。 */
+// ⚠️ 2026-10-03：W1.12（58b889c2）把验证码改成服务端签发+校验之后，这里**必须**带
+// captchaId/captcha —— 少带两个字段一律回 `code:500 验证码错误或已过期`，症状是
+// "管理员登录失败"，看着像账号坏了。那次批量改脚本**漏掉了这个函数**（只 import 了
+// captchaFields 却没用上），同一次还把这文件第 146 行改成了语法错（模板串里的 `${r.code, ...}`）
+// ⇒ 这个探针从 2026-10-02 起**根本跑不起来**，只是一直没人再跑过，所以没暴露。
+// 每次登录都取一张新验证码（旧的是单次凭据，复用会失败）。
 const tryLogin = async (username, password) => {
-  const r = await post('/api/auth/login', { username, password })
+  const r = await post('/api/auth/login', { username, password, ...(await captchaFields(BASE)) })
   const d = r.data || {}
   return { ok: !!(d.token), status: d.status, message: d.message, token: d.token, userId: d.userId }
 }
@@ -143,7 +149,7 @@ step('二、重名建号必须被拒（createUser 的重名检查）')
     username: TMP_USER, name: '重名测试', role: 2, password: PWD_A
   }, H)
   if (r.code === 200) bad(`重名建号竟然返回成功：${JSON.stringify(r.body).slice(0, 160)}`)
-  else ok(`重名被拒：code=${r.code, ...(await captchaFields(BASE)) } message=${String(r.message).slice(0, 80)}`)
+  else ok(`重名被拒：code=${r.code} message=${String(r.message).slice(0, 80)}`)
 }
 
 // ============ 三、改资料但口令留空：不许动口令 ============
@@ -270,7 +276,11 @@ step('九、POST /admin/messages/broadcast 广播给 role=5 → 以消息表实�
   } else if (claimed !== afterTotal - beforeTotal) {
     bad(`自称 ${claimed} 条，实际新增 ${afterTotal - beforeTotal} 条`)
   } else {
-    ok(`实到 ${mine.length} 条，与自称的 ${claimed} 条一致`)
+    // ⚠️ 2026-10-03：这里原来打的是 `实到 ${mine.length} 条`，而 mine 是**标题匹配的全部行**，
+    //   会把上一轮残留的同类广播一起数进来（这次实测 4 条里有 2 条是 2026-09-29 的残留），
+    //   于是输出成 "实到 4 条，与自称的 2 条一致" —— 判据用的是增量（对的），措辞是错的。
+    //   判据与措辞都改成**本次新增**（afterTotal - beforeTotal）。
+    ok(`本次实到 ${afterTotal - beforeTotal} 条（标题匹配共 ${mine.length} 条，含历史残留），与自称的 ${claimed} 条一致`)
     if (mine[0].receiverId) ok(`抄一条看内容：receiverId=${mine[0].receiverId} type=${mine[0].type} status=${mine[0].status}`)
   }
 }

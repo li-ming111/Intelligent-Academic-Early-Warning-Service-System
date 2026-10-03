@@ -20,6 +20,7 @@ import { spawn, execSync } from 'node:child_process'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { existsSync } from 'node:fs'
 import { captchaFields } from './_captcha.mjs'
 
 const CHROME = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'
@@ -42,6 +43,9 @@ const qOne = (sql) => (q(sql).split('\n')[0] || '').trim()
 const PROBE_TITLE_A = 'PROBE_WARNING_A_DELETE_ME'
 const PROBE_TITLE_B = 'PROBE_WARNING_B_DELETE_ME'
 const CANNED = '已收到您的问题，请提供具体成绩数据以便精确分析'
+// 备份落盘目录（BackupService 的配置值；B 段要用"提示里说的文件名在磁盘上是否存在"做断言）。
+// 可用 BACKUP_DIR 环境变量覆盖，免得换机器就假红。
+const BACKUP_DIR = process.env.BACKUP_DIR || 'D:/ABS/academic-microservices/exports/backups'
 
 let probeA = null, probeB = null, aiBefore = null
 const cleanup = () => {
@@ -233,20 +237,38 @@ const main = async () => {
     })()`)
     console.log(`  页面横幅区: ${JSON.stringify(v?.txt?.slice(0, 160))}`)
     checkNot('横幅不再宣称「系统自动每日备份」', v?.txt, '系统自动每日备份')
-    if (!/不会生成备份文件/.test(v?.txt || '')) {
-      fails.push('横幅没有如实说明「立即备份数据」不会生成备份文件')
-      console.log('  ✗ 横幅话没说清')
-    } else console.log('  ✓ 横幅如实说明按钮不产生备份文件')
+    // ⚠️ 2026-10-03：这里原本硬编码「横幅必须含『不会生成备份文件』」「提示必须含『未实现/不会生成』」。
+    //    那是 2026-09-30（d781c3c5）当时的状态 —— 那时 /admin/backup 的 implemented:false。
+    //    第二十八轮 f6d40ed9「运行时备份/恢复真实现」(W1.10) 之后备份**真的会生成 .sql**，
+    //    横幅也改成由后端 implemented 决定、并如实写明目录 ⇒ 这两条成了**过期判据**
+    //    （页面是对的，判据停留在旧世界。同 admin-clicks 第 4 步、xcx-page-smoke 那族）。
+    //    重写成**贴着真值**的两条：横幅必须与后端 implemented 自洽；提示必须与磁盘事实一致。
+    const impl = bk?.data?.implemented
+    const bannerOk = impl === false
+      ? /未实现|不会生成备份文件/.test(v?.txt || '')
+      : /mysqldump|备份目录|exports/.test(v?.txt || '')
+    if (!bannerOk) {
+      fails.push(`横幅与后端 implemented=${impl} 不自洽：${JSON.stringify((v?.txt || '').slice(0, 140))}`)
+      console.log(`  ✗ 横幅与后端 implemented=${impl} 不自洽`)
+    } else console.log(`  ✓ 横幅与后端 implemented=${impl} 自洽（不替后端许诺）`)
 
     await evaluate(`[...document.querySelectorAll('button')].find(b => b.innerText.trim() === '立即备份数据')?.click()`)
     await sleep(2000)
     const toast = await readToast()
     console.log(`  点「立即备份数据」提示: ${JSON.stringify(toast)}`)
     checkNot('没有谎报"备份已完成"', toast, '备份已完成')
-    if (!/未实现|不会生成/.test(toast || '')) {
-      fails.push(`失败提示没带出后端原话，实际=${JSON.stringify(toast)}`)
-      console.log('  ✗ 提示没带出后端原因')
-    } else console.log('  ✓ 提示带出了后端给的原因')
+    // 判据是**提示与磁盘一致**，不是"提示必须长成某个固定样子"：
+    //   提示里点了文件名 → 那个文件就必须真的躺在 BACKUP_DIR 里（这是最强的一条，它抓的
+    //   正是本工程最怕的"说成功了其实没写"）；没点文件名 → 必须如实带出失败原因。
+    const m = /(backup_[A-Za-z0-9_]+\.sql)/.exec(toast || '')
+    if (m) {
+      check(`提示里说的备份文件在磁盘上真的存在（${m[1]}）`, existsSync(join(BACKUP_DIR, m[1])), true)
+    } else if (/未实现|不会生成|失败|未完成/.test(toast || '')) {
+      console.log('  ✓ 没生成文件时如实带出了后端给的失败原因')
+    } else {
+      fails.push(`提示既没说生成了哪个文件、也没带出失败原因，实际=${JSON.stringify(toast)}`)
+      console.log('  ✗ 提示没说清（既非成功文件名、也非失败原因）')
+    }
   }
 
   // ================= C) 预警处理：处理人落库 + 页面回读 + 失败不谎报 =================

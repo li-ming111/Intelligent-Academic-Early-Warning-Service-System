@@ -11,12 +11,14 @@
 // 不留垃圾账号（库里账号数是能对上的数，35 个）。
 //
 // 用法: node admin-clicks.mjs [管理员账号] [密码]     退出码 0=全绿, 1=有失败
-import { spawn } from 'node:child_process'
+import { spawn, execSync } from 'node:child_process'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 const PROBE = 'ZZTEST911'          // 探针学号（2-50 字符，且不与 35 个账号重名）
+const MYSQL = process.env.MYSQL_BIN || 'D:/JAVA/mysql/mysql-8.0.44-winx64/mysql-8.0.44-winx64/bin/mysql.exe'
+const DB = 'academic_warning_system'
 const PROBE_NAME = '测试探针'
 const CHROME = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'
 const APP = 'http://localhost:5173'
@@ -331,17 +333,38 @@ const main = async () => {
     await send('Page.navigate', { url: `${APP}/admin/permissions` })
     await sleep(3500)
     await waitIdle()
-    const cell = await evaluate(`(() => {
+    const dom = await evaluate(`(() => {
       const rows = [...document.querySelectorAll('.el-table__row')].filter((r) => r.offsetParent !== null)
       if (!rows.length) return { err: '角色表一行都没有' }
-      const cells = rows[0].querySelectorAll('td')
       // 列序: 选择框 / 角色ID / 角色名称 / 角色描述 / 权限数 / 权限列表 / 操作
-      return { first: rows[0].innerText.split('\\n').slice(0, 6), permCell: cells[4]?.innerText?.trim() }
+      return { first: rows[0].innerText.split('\\n').slice(0, 6),
+               roles: rows.map((r) => { const c = r.querySelectorAll('td')
+                 return { id: Number((c[1]?.innerText || '').trim()), perm: (c[4]?.innerText || '').trim() } }) }
     })()`)
-    const ok = !cell?.err && cell?.permCell === '0' && jsErrors.length === 0
-    report(ok, '步骤4 打开 /admin/permissions（角色表「权限数」列）', [
-      `首行      ${cell?.err || JSON.stringify(cell.first)}`,
-      `权限数格  ${JSON.stringify(cell?.permCell)}${cell?.permCell === '0' ? '' : '   ← 期望 "0"'}`,
+    // ⚠️ 2026-10-03 改：原来这里写死 `permCell === '0'`。
+    //    W1.16 那轮「学生」角色确实 0 条权限，所以当时是对的；之后 `role_permissions`
+    //    给内置角色 1–5 都种上了权限（实查：学生 4 / 教师 3 / 辅导员 5 / 管理员 9 / 学院管理员 5），
+    //    于是这条**变成了过期判据** —— 页面是对的，判据是旧的（同 `xcx-page-smoke` 那族）。
+    //    改成跟**库里的权威值**比：逐行按角色 id 对齐，页面那格必须等于该角色在
+    //    `role_permissions` 里的行数。这样数据再怎么变，判据都不会过期，
+    //    而且它同时保住了原来的目的（页面崩了就没有行、JS 报错会另记）。
+    let dbCounts = new Map()
+    let dbErr = ''
+    try {
+      const rows = execSync(`"${MYSQL}" -uroot -proot -N -B ${DB} -e "SELECT r.id, COUNT(rp.permission_id) FROM roles r LEFT JOIN role_permissions rp ON rp.role_id = r.id GROUP BY r.id ORDER BY r.id"`,
+        { encoding: 'utf8', timeout: 20000 }).trim().split('\n')
+      for (const line of rows) {
+        const [id, n] = line.split('\t')
+        if (id !== undefined) dbCounts.set(Number(id), Number(n))
+      }
+    } catch (e) { dbErr = e.message.slice(0, 120) }
+    const mism = (dom?.roles || []).filter((r) => !dbCounts.has(r.id) || String(dbCounts.get(r.id)) !== r.perm)
+    const ok = !dom?.err && dbCounts.size > 0 && mism.length === 0 && jsErrors.length === 0
+    report(ok, '步骤4 打开 /admin/permissions（角色表「权限数」列 == 库里的 role_permissions 行数）', [
+      `首行      ${dom?.err || JSON.stringify(dom.first)}`,
+      `库权威值  ${dbErr ? `读库失败(${dbErr})` : [...dbCounts].map(([i, n]) => `角色${i}=${n}`).join('  ')}`,
+      `页面对齐  ${(dom?.roles || []).map((r) => `角色${r.id}=${r.perm}`).join('  ') || '(没取到行)'}`,
+      `不一致    ${mism.length ? JSON.stringify(mism) : '(无)'}`,
       `未捕获异常 ${jsErrors.length ? [...new Set(jsErrors)].join(' | ') : '(无)'}`,
       `说明      角色接口返回的对象没有 permissions 字段；原来写 row.permissions.length 会整页崩，已用 (row.permissions || []).length 兜底`,
     ])

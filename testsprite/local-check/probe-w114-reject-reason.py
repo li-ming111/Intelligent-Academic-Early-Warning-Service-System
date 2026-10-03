@@ -24,6 +24,13 @@ import sys
 import urllib.error
 import urllib.request
 
+# ⚠️ 2026-10-03：Windows 控制台默认 GBK，而本脚本的判据标签里用了 `⇒`(U+21D2) ——
+# 它**不在 GBK 里** ⇒ `print()` 抛 UnicodeEncodeError。更糟的是崩在"打印一条 PASS"上，
+# 于是断言全对、脚本却异常退出，**还跳过了收尾的 DELETE**（本次在
+# teacher_class_application 里留下 2 行 W114-PROBE-*）。
+# 只把编不出来的字符换成 '?'，不改编码（与其他探针的控制台行为保持一致）。
+sys.stdout.reconfigure(errors="replace")
+
 ADMIN = "http://localhost:8070"
 COUNSELOR = "http://localhost:8074"
 TEACHER = "http://localhost:8090"
@@ -72,6 +79,13 @@ def check(name, ok, detail=""):
 
 AUTH = {"X-User-Id": "1", "X-Role": "4"}
 
+
+# --------------------------------------------------------------------------
+# 起手先清上一轮的残留：上一轮若中途崩了（比如打印时 UnicodeEncodeError），
+# 收尾那两句 DELETE 根本没执行，会留下 W114-PROBE-* 行 —— 而 `class_id` 那一列
+# 这些行都写 999999，不影响别的数据，但会污染"申请表总行数"这个核对。
+for _t in ("teacher_class_application", "counselor_class_application"):
+    sql("DELETE FROM %s WHERE class_name LIKE '%s-%%';" % (_t, MARK))
 
 # --------------------------------------------------------------------------
 print("== 1. 教师申请：拒绝理由落库并回读 ==")
@@ -134,13 +148,13 @@ check("空白理由存的是 NULL 而不是空串", brow[1] == "NULL", "实际 %
 # --------------------------------------------------------------------------
 print("== 3. 负向对照：身份头 ==")
 st_none, _ = http("POST", "%s/admin/class-management/reject/%s?type=teacher" % (ADMIN, bid), {}, {"reason": "x"})
-check("不带头 ⇒ 403", st_none == 403, "实际 HTTP %s" % st_none)
+check("不带头 => 403", st_none == 403, "实际 HTTP %s" % st_none)
 st_half, _ = http("POST", "%s/admin/class-management/reject/%s?type=teacher" % (ADMIN, bid),
                   {"X-User-Id": "1"}, {"reason": "x"})
-check("只带 X-User-Id、缺 X-Role ⇒ 403", st_half == 403, "实际 HTTP %s" % st_half)
+check("只带 X-User-Id、缺 X-Role => 403", st_half == 403, "实际 HTTP %s" % st_half)
 st_role, _ = http("POST", "%s/admin/class-management/reject/%s?type=teacher" % (ADMIN, bid),
                   {"X-Role": "4"}, {"reason": "x"})
-check("只带 X-Role、缺 X-User-Id ⇒ 403", st_role == 403, "实际 HTTP %s" % st_role)
+check("只带 X-Role、缺 X-User-Id => 403", st_role == 403, "实际 HTTP %s" % st_role)
 
 # --------------------------------------------------------------------------
 print("== 4. 辅导员申请：另一条实现（counselor-service）也要存理由 ==")
