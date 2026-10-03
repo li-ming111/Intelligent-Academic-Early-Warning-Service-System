@@ -31,6 +31,12 @@
       <el-table :data="appeals" stripe empty-text="暂无申诉记录" style="width: 100%">
         <el-table-column prop="id" label="编号" width="70" align="center" />
         <el-table-column prop="courseName" label="科目" min-width="120" show-overflow-tooltip />
+        <!-- 2026-10-03（第四十三轮 W9）：同一门课有多个学期，只写科目说不清"申诉的是哪一次"。
+             后端 appealToMap 在 score_id 非空时带出 scoreSemester / scoreTotal / scoreGrade；
+             老行与课程级入口提交的行没有这些字段 ⇒ 显示「未指定成绩」，不显示空白也不显示 null。 -->
+        <el-table-column label="申诉成绩" min-width="170" show-overflow-tooltip>
+          <template #default="{ row }">{{ appealScoreText(row) }}</template>
+        </el-table-column>
         <el-table-column prop="reason" label="申诉原因" min-width="130">
           <template #default="{ row }">
             {{ reasonLabel(row.reason) }}
@@ -83,6 +89,7 @@
       <div v-if="detail" class="detail-body">
         <div class="detail-item"><span class="dl">编号</span><span class="dv">#{{ detail.id }}</span></div>
         <div class="detail-item"><span class="dl">科目</span><span class="dv">{{ detail.courseName || '未知' }}</span></div>
+        <div class="detail-item"><span class="dl">申诉成绩</span><span class="dv">{{ appealScoreText(detail) }}</span></div>
         <div class="detail-item"><span class="dl">原因</span><span class="dv">{{ reasonLabel(detail.reason) }}</span></div>
         <!-- 学生自己写的正文。加列（2026-09-30）之前的申诉没有这段文字，那就整块不显示，
              不要渲染成空的"详细说明："，看着像数据丢了 -->
@@ -146,6 +153,24 @@ function fmt(d) {
   return new Date(d).toLocaleString('zh-CN')
 }
 
+/**
+ * 申诉指向的那条成绩：`第5学期 · 56.5分 · D`；没有就回「未指定成绩」。
+ *
+ * 第四十三轮 W9：字段由后端 `appealToMap` 在 `score_id` 非空时带上。
+ * 学期只印**全局学期序号**、不印年份 —— `scores.year` 与 `semester` 并不自洽，
+ * 拿它拼学年会印出错的学年（同 `StudentServiceImpl.getStudentScores` 的注释）。
+ */
+function appealScoreText(a) {
+  if (!a) return '未指定成绩'
+  const parts = []
+  if (a.scoreSemester !== null && a.scoreSemester !== undefined && a.scoreSemester !== '') {
+    parts.push(`第${a.scoreSemester}学期`)
+  }
+  if (a.scoreTotal !== null && a.scoreTotal !== undefined) parts.push(`${a.scoreTotal}分`)
+  if (a.scoreGrade) parts.push(a.scoreGrade)
+  return parts.length ? parts.join(' · ') : '未指定成绩'
+}
+
 onMounted(load)
 
 async function load() {
@@ -201,7 +226,10 @@ async function doSubmit() {
   if (!form.value.courseId || !form.value.reason || !form.value.description) { ElMessage.warning('请完善申诉信息'); return }
   try {
     const sid = localStorage.getItem('studentId') || getUserId()
-    await studentAPI.submitAppeal({ ...form.value, studentId: sid, courseId: Number(form.value.courseId) })
+    const res = await studentAPI.submitAppeal({ ...form.value, studentId: sid, courseId: Number(form.value.courseId) })
+    // 提交失败是 HTTP 200 + 载荷里带 error（同 Scores.vue）—— 原来不读返回值，
+    // 后端拒绝了也照样弹「申诉已提交」（假成功）。
+    if (res && res.error) { ElMessage.error(String(res.error)); return }
     ElMessage.success('申诉已提交')
     submitVisible.value = false
     await load()

@@ -146,6 +146,11 @@
         <el-form-item label="课程">
           <span>{{ appealForm.courseName }}</span>
         </el-form-item>
+        <!-- 2026-10-03（W9）：一门课有多个学期，光写"课程"说不出申诉的是**哪一次**成绩。
+             把它显式写出来，学生提交前能确认自己指的就是这一条。 -->
+        <el-form-item label="学期">
+          <span>{{ appealForm.semester ? semesterLabel(appealForm.semester) : '-' }}</span>
+        </el-form-item>
         <el-form-item label="当前成绩">
           <span class="score-red">{{ appealForm.currentScore }} 分</span>
         </el-form-item>
@@ -235,7 +240,7 @@ const dashWarningLevel = ref('')
 const detailVisible = ref(false)
 const detailRow = ref(null)
 const appealVisible = ref(false)
-const appealForm = ref({ courseId: null, courseName: '', currentScore: '', reason: '', description: '' })
+const appealForm = ref({ courseId: null, courseName: '', currentScore: '', reason: '', description: '', scoreId: null, semester: '' })
 const gpaChartRef = ref(null)
 const distChartRef = ref(null)
 let gpaChart = null
@@ -494,7 +499,7 @@ function gradeTagType(g) {
 
 // ---- 申诉 ----
 function openAppeal(row) {
-  appealForm.value = { courseId: row.courseId ?? null, courseName: row.courseName, currentScore: row.scoreTotal, reason: '', description: '' }
+  appealForm.value = { courseId: row.courseId ?? null, courseName: row.courseName, currentScore: row.scoreTotal, reason: '', description: '', scoreId: row.id ?? null, semester: row.semester ?? '' }
   appealVisible.value = true
 }
 function openDetail(row) { detailRow.value = row; detailVisible.value = true }
@@ -510,12 +515,27 @@ async function submitAppeal() {
       ElMessage.error('这条成绩没有课程编号，没法提交申诉，请联系管理员')
       return
     }
-    await studentAPI.submitAppeal({
+    // 2026-10-03（W9）：带上 scoreId —— 这一行本来就有 `scores.id`（归一化后的 `row.id`），
+    // 申诉从此能指向**具体哪一次**成绩，而不是只到课程级。后端会校验它属于本人。
+    if (!appealForm.value.scoreId) {
+      ElMessage.error('这条成绩没有记录编号，没法提交申诉，请联系管理员')
+      return
+    }
+    const res = await studentAPI.submitAppeal({
       studentId: localStorage.getItem('userId'),
       courseId: appealForm.value.courseId,
+      scoreId: appealForm.value.scoreId,
       reason: appealForm.value.reason,
       description: appealForm.value.description
     })
+    // ⚠️ 后端失败是 **HTTP 200 + 载荷里带 error**（与 warningId 那族同形），
+    // 而这里从前**从不读返回值**，一律弹「申诉已提交」——
+    // 于是"成绩不存在/不属于该学生/课程与成绩不一致"这三条新校验被拒时，
+    // 页面照样报成功（典型的"报告与事实不符"）。必须显式判。
+    if (res && res.error) {
+      ElMessage.error(String(res.error))
+      return
+    }
     ElMessage.success('申诉已提交')
     appealVisible.value = false
   } catch (e) { ElMessage.error('提交失败') }

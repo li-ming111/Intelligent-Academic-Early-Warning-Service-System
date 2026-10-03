@@ -1,6 +1,7 @@
 package com.academic.service.impl;
 
 import com.academic.common.entity.Score;
+import com.academic.entity.ScoreAppeal;
 import com.academic.entity.StudentProfile;
 import com.academic.mapper.*;
 import org.apache.poi.ss.usermodel.Sheet;
@@ -8,6 +9,7 @@ import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -291,5 +293,148 @@ class StudentServiceImplTest {
         assertEquals("4", StudentServiceImpl.semesterLabel("4", null));
         assertEquals("abc", StudentServiceImpl.semesterLabel("abc", 2023));
         assertEquals("", StudentServiceImpl.semesterLabel(null, 2023));
+    }
+
+    // ==========================================================================
+    // 第四十三轮 W9：申诉指向**具体哪一次成绩**
+    //
+    // 守三件事：① `scoreId` 非空时 courseId 由成绩行**回填**（不再让调用方各传一个）；
+    // ② 指向**别人的成绩**必须被拒且**一条都不写库**（外键只管"存在"、不管"是谁的"，
+    //    这条校验是不变量 D 组第 7 项唯一的人工防线）；
+    // ③ 不带 `scoreId` 的老入口（预警页等）行为不变。
+    // ==========================================================================
+
+    /** `insert` 真的把 id 填上 —— 否则 `submitAppeal` 末尾的"回读"取不到 id。 */
+    private void stubInsertAssigningId(long newId) {
+        when(scoreAppealMapper.insert(any(ScoreAppeal.class))).thenAnswer(inv -> {
+            inv.getArgument(0, ScoreAppeal.class).setId(newId);
+            return 1;
+        });
+        ScoreAppeal stored = new ScoreAppeal();
+        stored.setId(newId);
+        when(scoreAppealMapper.selectById(newId)).thenReturn(stored);
+    }
+
+    /** 一行成绩。`profileId` 是 `scores.student_id`，用的是 **student_profile.id**。 */
+    private Score scoreRow(long id, long profileId, long courseId, String semester, String total) {
+        Score s = new Score();
+        s.setId(id);
+        s.setStudentId(profileId);
+        s.setCourseId(courseId);
+        s.setSemester(semester);
+        s.setScoreTotal(new BigDecimal(total));
+        s.setGrade("D");
+        return s;
+    }
+
+    @Test
+    void submitAppeal_withOwnScoreId_backfillsCourseIdFromTheScore() {
+        loginAs("27");
+        stubProfile(27L, 3L);
+        when(scoreMapper.selectById(157L)).thenReturn(scoreRow(157L, 3L, 1L, "5", "56.50"));
+        stubInsertAssigningId(9001L);
+
+        // 请求里**故意不带** courseId —— 选了"哪一次成绩"就等于选了课程
+        Object result = service.submitAppeal(Map.of("studentId", 27L, "scoreId", 157L, "reason", "entry_error"));
+
+        assertNull(((Map<?, ?>) result).get("error"));
+        ArgumentCaptor<ScoreAppeal> cap = ArgumentCaptor.forClass(ScoreAppeal.class);
+        verify(scoreAppealMapper).insert(cap.capture());
+        assertEquals(Long.valueOf(157L), cap.getValue().getScoreId());
+        assertEquals(Long.valueOf(1L), cap.getValue().getCourseId(), "courseId 必须由成绩行回填");
+        assertEquals(Long.valueOf(3L), cap.getValue().getStudentId(), "落库的是 profile id，不是 users.id");
+    }
+
+    @Test
+    void submitAppeal_withSomeoneElsesScoreId_isRejectedAndWritesNothing() {
+        loginAs("27");
+        stubProfile(27L, 3L);
+        // 成绩 157 属于 profile 26（张健），而提交人是 profile 3（司明）。
+        // ⚠️ 外键 `score_id → scores.id` 只校验"存在"，**拦不住这个**。
+        when(scoreMapper.selectById(157L)).thenReturn(scoreRow(157L, 26L, 1L, "5", "56.50"));
+
+        Object result = service.submitAppeal(Map.of("studentId", 27L, "scoreId", 157L, "reason", "entry_error"));
+
+        String err = String.valueOf(((Map<?, ?>) result).get("error"));
+        assertTrue(err.contains("不属于该学生"), "实际: " + err);
+        verify(scoreAppealMapper, never()).insert(any(ScoreAppeal.class));
+    }
+
+    @Test
+    void submitAppeal_unknownScoreId_isRejected() {
+        loginAs("27");
+        stubProfile(27L, 3L);
+        when(scoreMapper.selectById(888888L)).thenReturn(null);
+
+        Object result = service.submitAppeal(Map.of("studentId", 27L, "scoreId", 888888L, "reason", "other"));
+
+        assertTrue(String.valueOf(((Map<?, ?>) result).get("error")).contains("成绩不存在"));
+        verify(scoreAppealMapper, never()).insert(any(ScoreAppeal.class));
+    }
+
+    @Test
+    void submitAppeal_courseIdContradictingTheScore_isRejected() {
+        loginAs("27");
+        stubProfile(27L, 3L);
+        when(scoreMapper.selectById(157L)).thenReturn(scoreRow(157L, 3L, 1L, "5", "56.50"));
+
+        // 成绩 157 是课程 1（高等数学），请求却说课程 6（操作系统）
+        Object result = service.submitAppeal(
+                Map.of("studentId", 27L, "scoreId", 157L, "courseId", 6L, "reason", "other"));
+
+        assertTrue(String.valueOf(((Map<?, ?>) result).get("error")).contains("不一致"));
+        verify(scoreAppealMapper, never()).insert(any(ScoreAppeal.class));
+    }
+
+    /** 负向对照：**不带** scoreId 时行为与从前一致（课程级入口：预警页、小程序 chip…）。 */
+    @Test
+    void submitAppeal_withoutScoreId_stillWorksAndNeverLooksUpScores() {
+        loginAs("27");
+        stubProfile(27L, 3L);
+        stubInsertAssigningId(9002L);
+
+        Object result = service.submitAppeal(Map.of("studentId", 27L, "courseId", 1L, "reason", "other"));
+
+        assertNull(((Map<?, ?>) result).get("error"));
+        ArgumentCaptor<ScoreAppeal> cap = ArgumentCaptor.forClass(ScoreAppeal.class);
+        verify(scoreAppealMapper).insert(cap.capture());
+        assertNull(cap.getValue().getScoreId());
+        assertEquals(Long.valueOf(1L), cap.getValue().getCourseId());
+        verify(scoreMapper, never()).selectById(any());
+    }
+
+    /** 读路径：带 scoreId 的行要带出学期/总分/等级；不带的行**不许编造**字段、也不许抛。 */
+    @Test
+    void getStudentAppeals_exposesScoreAndToleratesNullScoreId() {
+        stubProfile(27L, 3L);
+        ScoreAppeal withScore = new ScoreAppeal();
+        withScore.setId(6L);
+        withScore.setStudentId(3L);
+        withScore.setCourseId(1L);
+        withScore.setScoreId(157L);
+        withScore.setReason("entry_error");
+        withScore.setStatus(0);
+        ScoreAppeal without = new ScoreAppeal();
+        without.setId(7L);
+        without.setStudentId(3L);
+        without.setStatus(0);
+
+        when(scoreAppealMapper.selectByStudentId(3L)).thenReturn(List.of(withScore, without));
+        when(scoreAppealMapper.selectCourseName(1L)).thenReturn("高等数学");
+        when(scoreMapper.selectById(157L)).thenReturn(scoreRow(157L, 3L, 1L, "5", "56.50"));
+
+        List<?> list = (List<?>) service.getStudentAppeals(27L);
+
+        Map<?, ?> first = (Map<?, ?>) list.get(0);
+        assertEquals("高等数学", first.get("courseName"));
+        assertEquals("5", first.get("scoreSemester"));
+        assertEquals(0, new BigDecimal("56.50").compareTo((BigDecimal) first.get("scoreTotal")));
+        assertEquals("D", first.get("scoreGrade"));
+
+        Map<?, ?> second = (Map<?, ?>) list.get(1);
+        assertNull(second.get("scoreId"));
+        assertFalse(second.containsKey("scoreSemester"), "score_id 为空时不许编造字段");
+        // 只有真正带 scoreId 的那一行才该去查成绩（少一次无用查询）
+        verify(scoreMapper, times(1)).selectById(any());
     }
 }

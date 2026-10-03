@@ -27,7 +27,7 @@
         <view v-else class="appeal-list">
           <view v-for="a in visible" :key="a.id" class="appeal-card" @tap="openDetail(a)">
             <view class="appeal-card__head">
-              <text class="appeal-card__course">{{ courseNameOf(a) }}</text>
+              <text class="appeal-card__course">{{ scoreLabelOf(a) }}</text>
               <text class="tag" :class="'tag--' + tagTypeOf(a)">{{ statusTextOf(a) }}</text>
             </view>
 
@@ -63,8 +63,8 @@
     <detail-sheet v-model="detailOpen" title="申诉详情">
       <view v-if="detail.id" class="detail">
         <view class="detail__row">
-          <text class="detail__label">申诉课程</text>
-          <text class="detail__value">{{ courseNameOf(detail) }}</text>
+          <text class="detail__label">申诉成绩</text>
+          <text class="detail__value">{{ scoreLabelOf(detail) }}</text>
         </view>
         <view class="detail__row">
           <text class="detail__label">当前状态</text>
@@ -143,7 +143,7 @@ import { studentAPI } from '@/services/api.js'
 import { useUser } from '@/composables/useUser.js'
 import { roleThemeStyle } from '@/composables/useRoleTheme.js'
 import { formatDate } from '@/utils/format.js'
-import { normalizeScoreRows } from '@/utils/score-normalize.js'
+import { normalizeScoreRows, scoreSemesterLabel } from '@/utils/score-normalize.js'
 import {
   APPEAL_STATUS_TEXT, APPEAL_STATUS_KEY, APPEAL_REASONS,
   STATUS_TAG_TYPE, appealReasonText, dictText
@@ -251,6 +251,31 @@ function courseNameOf(a) {
   const id = a && a.courseId
   const name = id != null ? courseMap.value[String(id)] : ''
   return name || (id != null ? `课程 #${id}` : '未指定课程')
+}
+
+/**
+ * 申诉指向的那条成绩：`高等数学 · 25秋 · 56.5分`。
+ *
+ * 第四十三轮 W9：后端 `appealToMap` 在 `score_id` 非空时带出 `scoreSemester` / `scoreYear` /
+ * `scoreTotal` / `scoreGrade`。老行与课程级入口提交的行没有这些字段 —— 那就**退化成
+ * `courseNameOf`**（只到课程级），不显示空白、也不显示 `null`。
+ *
+ * 学期标签走 `score-normalize.js` 的 `scoreSemesterLabel`，与成绩页同一套换算，
+ * 不在本页另写一份（否则两处会分叉）。
+ */
+function scoreLabelOf(a) {
+  const course = courseNameOf(a)
+  if (!a) return course
+  const sem = a.scoreSemester
+  const total = a.scoreTotal
+
+  const tail = []
+  if (sem !== null && sem !== undefined && sem !== '') {
+    tail.push(scoreSemesterLabel({ semester: sem, year: a.scoreYear }))
+  }
+  if (total !== null && total !== undefined) tail.push(`${total}分`)
+
+  return tail.length ? `${course} · ${tail.join(' · ')}` : course
 }
 
 function canWithdraw(a) {

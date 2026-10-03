@@ -41,19 +41,32 @@ public interface ScoreAppealMapper {
     @Select("<script>"
           + "SELECT a.id, a.student_id AS studentId, sp.name AS studentName, sp.student_id AS studentNo, "
           + "       a.course_id AS courseId, c.name AS courseName, c.code AS courseCode, "
+          + "       a.score_id AS scoreId, "
+          + "       s.semester AS scoreSemester, s.year AS scoreYear, "
+          + "       s.score_total AS scoreTotal, s.grade AS scoreGrade, "
           + "       a.reason, a.description, a.status, a.reply, "
           + "       a.created_at AS createdAt, a.updated_at AS updatedAt "
           + "FROM score_appeals a "
           + "LEFT JOIN student_profile sp ON sp.id = a.student_id "
           + "LEFT JOIN courses c ON c.id = a.course_id "
+          + "LEFT JOIN scores s ON s.id = a.score_id "
           + "<where><if test='status != null'>a.status = #{status}</if></where> "
           + "ORDER BY (a.status = 0) DESC, a.created_at DESC"
           + "</script>")
     List<Map<String, Object>> selectAppeals(@Param("status") Integer status);
 
-    /** 单条申诉（审核时取学生 profile id 与课程名，用于回写通知）。 */
-    @Select("SELECT a.id, a.student_id AS studentId, a.course_id AS courseId, c.name AS courseName, a.status "
-          + "FROM score_appeals a LEFT JOIN courses c ON c.id = a.course_id WHERE a.id = #{id}")
+    /**
+     * 单条申诉（审核时取学生 profile id 与课程名，用于回写通知）。
+     *
+     * <p>2026-10-03（第四十三轮 W9）：同样带出 {@code score_id} 与那次成绩的学期/总分/等级 ——
+     * 审核端是最需要看清"申诉的是哪一次成绩"的地方（一门课有多个学期）。
+     * {@code score_id} 为空的老行这三列自然为 null，前端不显示即可。
+     */
+    @Select("SELECT a.id, a.student_id AS studentId, a.course_id AS courseId, c.name AS courseName, a.status, "
+          + "       a.score_id AS scoreId, s.semester AS scoreSemester, s.year AS scoreYear, "
+          + "       s.score_total AS scoreTotal, s.grade AS scoreGrade "
+          + "FROM score_appeals a LEFT JOIN courses c ON c.id = a.course_id "
+          + "LEFT JOIN scores s ON s.id = a.score_id WHERE a.id = #{id}")
     Map<String, Object> selectAppealById(@Param("id") Long id);
 
     /**

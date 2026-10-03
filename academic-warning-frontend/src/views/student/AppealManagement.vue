@@ -74,6 +74,14 @@
         <el-card class="table-card" shadow="hover">
           <el-table :data="appeals" stripe style="width: 100%">
             <el-table-column prop="id" label="ID" width="60"></el-table-column>
+            <!-- 2026-10-03（第四十三轮 W9）：一门课有多个学期，原来这一页**连课程都不显示**，
+                 更说不出申诉的是哪一次成绩。后端已在 score_id 非空时带出
+                 scoreSemester/scoreTotal/scoreGrade，这里显示出来；老行取不到就显示「未指定成绩」。 -->
+            <el-table-column label="申诉成绩" min-width="220">
+              <template #default="{ row }">
+                <span>{{ appealScoreText(row) }}</span>
+              </template>
+            </el-table-column>
             <el-table-column prop="reason" label="申诉原因" min-width="200">
               <template #default="{ row }">
                 <span class="reason-text">{{ row.reason }}</span>
@@ -147,6 +155,10 @@
         <div class="detail-item">
           <span class="detail-label">申诉ID：</span>
           <span>{{ currentDetail.id }}</span>
+        </div>
+        <div class="detail-item">
+          <span class="detail-label">申诉成绩：</span>
+          <span>{{ appealScoreText(currentDetail) }}</span>
         </div>
         <div class="detail-item">
           <span class="detail-label">状态：</span>
@@ -387,6 +399,33 @@ function resetSubmitForm() {
   submitForm.reason = ''
   submitForm.description = ''
   submitForm.attachments = ''
+}
+
+/**
+ * 申诉指向的那条成绩，渲染成一句话。
+ *
+ * 后端（第四十三轮 W9）在 `score_id` 非空时会带出 `scoreSemester` / `scoreTotal` / `scoreGrade`；
+ * 老行与课程级入口提交的行没有这些字段 —— 那就退化成只显示课程名，**不显示空白也不显示 `null`**。
+ *
+ * 学期只用**全局学期序号**（`第5学期`），不带年份：`scores.year` 这一列与 `semester`
+ * 并不自洽（见 `StudentServiceImpl.getStudentScores` 的注释），拿它拼年份会印出一个错的学年。
+ */
+function appealScoreText(row) {
+  if (!row) return '未指定成绩'
+  const course = row.courseName
+    || (row.courseId !== null && row.courseId !== undefined ? `课程 #${row.courseId}` : '')
+
+  const tail = []
+  if (row.scoreSemester !== null && row.scoreSemester !== undefined && row.scoreSemester !== '') {
+    tail.push(`第${row.scoreSemester}学期`)
+  }
+  if (row.scoreTotal !== null && row.scoreTotal !== undefined) {
+    tail.push(`${row.scoreTotal}分`)
+  }
+
+  if (!course && !tail.length) return '未指定成绩'
+  if (!tail.length) return course
+  return `${course || '未指定课程'} · ${tail.join(' · ')}`
 }
 
 /** code → 中文。认不出原样返回 code（不吞成"未知"，否则没法排查） */

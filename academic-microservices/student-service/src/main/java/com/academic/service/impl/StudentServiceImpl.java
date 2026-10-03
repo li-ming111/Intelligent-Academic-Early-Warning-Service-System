@@ -1073,11 +1073,51 @@ public class StudentServiceImpl implements StudentService {
                 return Map.of("error", "学生档案不存在");
             }
             appeal.setStudentId(sp.getId());
-            if (req.containsKey("scoreId")) appeal.setScoreId(Long.valueOf(req.get("scoreId").toString()));
             if (req.containsKey("reason")) appeal.setReason(req.get("reason").toString());
-            if (req.containsKey("courseId")) appeal.setCourseId(Long.valueOf(req.get("courseId").toString()));
             if (req.containsKey("attachments")) appeal.setAttachments(req.get("attachments").toString());
             if (req.containsKey("description")) appeal.setDescription(req.get("description").toString());
+
+            // ===== scoreId → courseId：先取成绩行，再由它定课程 =====
+            // 2026-10-03（第四十三轮 W9）：`score_id` 从前只是 parse 后直接 set，**一次都没校验**。
+            // 它确实有外键指向 scores.id，但**外键只管"存在"、不管"是不是这个学生的"** ——
+            // 学生可以把自己档案挂到**别人的成绩**上，静默写入成功，正好违反
+            // verify_invariants.py D 组第 7 项那条不变量（"非空时必须同一学生同一课程"）；
+            // `course_id` 更是连外键都没有。这里照下面 warningId 那段的做法显式查一遍。
+            // 顺带：成绩行还用来**回填 courseId** —— 选了"哪一次成绩"就等于选了课程，
+            // 不该再让调用方传一个可能与它对不上的 courseId。
+            Score scoreRow = null;
+            if (req.containsKey("scoreId")) {
+                Object raw = req.get("scoreId");
+                if (raw != null && !"".equals(raw.toString())) {
+                    Long sid = asLong(raw);
+                    if (sid == null) {
+                        return Map.of("error", "scoreId 必须是数字: " + raw);
+                    }
+                    scoreRow = scoreMapper.selectById(sid);
+                    if (scoreRow == null) {
+                        return Map.of("error", "成绩不存在: " + sid);
+                    }
+                    // scores.student_id 存的是 student_profile.id（与 academic_warning 同一套）
+                    if (!sp.getId().equals(scoreRow.getStudentId())) {
+                        return Map.of("error", "成绩 " + sid + " 不属于该学生，申诉未提交");
+                    }
+                    appeal.setScoreId(sid);
+                }
+            }
+            Object rawCourseId = req.get("courseId");
+            Long reqCourseId = (rawCourseId == null || "".equals(rawCourseId.toString()))
+                    ? null : asLong(rawCourseId);
+            if (scoreRow != null) {
+                if (reqCourseId != null && !reqCourseId.equals(scoreRow.getCourseId())) {
+                    return Map.of("error", "申诉的课程与所选成绩不一致（成绩 " + scoreRow.getId()
+                            + " 属于课程 " + scoreRow.getCourseId() + "）");
+                }
+                // 没带 courseId（或带了空串）时，由成绩行回填
+                appeal.setCourseId(scoreRow.getCourseId());
+            } else if (reqCourseId != null) {
+                // 只到课程级的入口（预警页等）仍然照旧
+                appeal.setCourseId(reqCourseId);
+            }
             // warning_id 这一列**没有外键**（实测 information_schema 里 score_appeals 只挂了
             // score_id→scores.id 和 student_id→student_profile.id），所以随便填一个数都会被静默存下，
             // 事后看库完全看不出这条"关联预警"指向空气。这里显式把它查一遍：
@@ -2175,6 +2215,21 @@ public class StudentServiceImpl implements StudentService {
         // 这里补 courseName(course_id 是真实关联)与 statusText; 前端改用数值口径。
         if (a.getCourseId() != null) {
             m.put("courseName", scoreAppealMapper.selectCourseName(a.getCourseId()));
+        }
+        // 2026-10-03（第四十三轮 W9）: `score_id` 从前只是**原样吐一个裸数字**，从不查 scores ——
+        // 于是即使库里填好了"申诉的是哪一次成绩"（见 §6.41 I 补的 157/152），页面也看不出，
+        // 因为学期与分数都拿不到。这里把成绩行带出来给前端显示。
+        // 查不到就**不 put**：不编造，也不让前端渲染出一个 "null"。
+        // ⚠️ 这是 N+1（每行申诉一次 selectById）。单个学生的申诉条数是个位数，可接受；
+        //    日后若有端要一次拉很多行，再改成批量查询。
+        if (a.getScoreId() != null) {
+            Score s = scoreMapper.selectById(a.getScoreId());
+            if (s != null) {
+                m.put("scoreSemester", s.getSemester());
+                m.put("scoreYear", s.getYear());
+                m.put("scoreTotal", s.getScoreTotal());
+                m.put("scoreGrade", s.getGrade());
+            }
         }
         m.put("statusText", appealStatusText(a.getStatus()));
         m.put("reply", a.getReply());

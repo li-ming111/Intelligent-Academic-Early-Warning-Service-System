@@ -32,6 +32,12 @@
             <span class="apc-sts" :class="'st-' + a.status">{{ statusLabel(a.status) }}</span>
           </div>
           <div class="apc-course">课程：{{ a.courseName || ('#' + (a.courseId || '--')) }}</div>
+          <!-- 2026-10-03（第四十三轮 W9）：审核端最需要看清"申诉的是哪一次成绩"——
+               同一门课有多个学期，只写课程名说不清。后端已 LEFT JOIN scores 带出这三列；
+               score_id 为空的老行不显示这一行。 -->
+          <div v-if="a.scoreSemester != null || a.scoreTotal != null" class="apc-course">
+            成绩：{{ scoreText(a) }}
+          </div>
           <div class="apc-reason">申诉类型：{{ reasonLabel(a.reason) }}</div>
           <p class="apc-desc">{{ a.description || '（学生未填写详细说明）' }}</p>
           <div class="apc-meta">
@@ -49,6 +55,9 @@
     <el-dialog v-model="dialogVisible" title="审核申诉" width="460px" destroy-on-close>
       <div v-if="target" class="rv-info">
         <b>{{ target.studentName }}</b> · {{ target.courseName || ('#' + target.courseId) }}
+        <div v-if="target.scoreSemester != null || target.scoreTotal != null" style="margin-top:4px">
+          申诉成绩：{{ scoreText(target) }}
+        </div>
         <p class="rv-desc">{{ target.description || '（无详细说明）' }}</p>
       </div>
       <el-radio-group v-model="reviewStatus" style="margin:8px 0 12px">
@@ -100,6 +109,23 @@ function statusLabel(s) {
 function fmtTime(t) {
   if (!t) return '--'
   return String(t).replace('T', ' ').substring(0, 16)
+}
+
+/**
+ * 申诉指向的那条成绩：`第5学期 · 56.50分 · D`。
+ *
+ * 第四十三轮 W9：`selectAppeals` / `selectAppealById` 已 `LEFT JOIN scores` 带出这三列。
+ * 学期只印**全局学期序号**、不印年份 —— `scores.year` 与 `semester` 并不自洽，
+ * 拿它拼学年会印出错的学年（同 `StudentServiceImpl.getStudentScores` 的注释）。
+ */
+function scoreText(a) {
+  const parts = []
+  if (a.scoreSemester !== null && a.scoreSemester !== undefined && a.scoreSemester !== '') {
+    parts.push(`第${a.scoreSemester}学期`)
+  }
+  if (a.scoreTotal !== null && a.scoreTotal !== undefined) parts.push(`${a.scoreTotal}分`)
+  if (a.scoreGrade) parts.push(a.scoreGrade)
+  return parts.length ? parts.join(' · ') : '--'
 }
 
 async function load() {
