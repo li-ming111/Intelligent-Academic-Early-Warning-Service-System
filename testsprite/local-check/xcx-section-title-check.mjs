@@ -68,7 +68,9 @@ const main = async () => {
   const loginAs = async (user, home) => {
     await evaluate(`localStorage.clear()`)
     await send('Page.navigate', { url: APP })
-    if (!await waitFor(`document.querySelectorAll('uni-input').length >= 3`, 30000)) return false
+    // ⚠️ 必须连验证码一起等：W1.12 起验证码是服务端异步签发的，「表单元素到位」不再等于「码已到手」
+    //    （实测读到空串 ⇒ 服务端 401 拒绝 ⇒ 探针报假「登录未落地」，见 _w4_login_diag.mjs）。
+    if (!await waitFor(`document.querySelectorAll('uni-input').length >= 3 && (document.querySelector('.captcha-code')?.textContent || '').trim().length > 0`, 30000)) return false
     await evaluate(`(() => {
       const byPh = (ph) => { const w = Array.from(document.querySelectorAll('uni-input'))
         .find(u => (u.querySelector('.uni-input-placeholder')?.textContent || '').trim() === ph); return w ? w.querySelector('input') : null }
@@ -88,6 +90,10 @@ const main = async () => {
    console.log(`── 角色 ${g.user}`)
    for (const [page, label, expect] of g.cases) {
     await evaluate(`location.hash = ${JSON.stringify('#' + page)}`); await sleep(4000)
+    // 固定 4 秒不够：教师工作台要打若干次网关（班级/学生/预警/统计），实测
+    // >4s 才把 section-title 渲染出来 —— 只等 4 秒会把「慢」读成 NO_HIT（假红）。
+    // 改成先等「目标命中层真的出现」，等不到才由下面的断言如实报 NO_HIT。
+    await waitFor(`[...document.querySelectorAll('.section-title__hit')].some(e => (e.innerText || '').includes(${JSON.stringify(label)}))`, 20000)
 
     // A. 真跳转的必须能跳
     const jumped = await evaluate(`(() => {

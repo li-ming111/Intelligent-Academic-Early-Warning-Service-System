@@ -100,7 +100,9 @@ const main = async () => {
   await send('Page.navigate', { url: APP })
 
   // —— 登录 ——
-  await waitFor(`document.querySelectorAll('uni-input').length >= 3`)
+  // ⚠️ 必须连验证码一起等：W1.12 起验证码是服务端异步签发的，「表单元素到位」不再等于「码已到手」
+  //    （实测读到空串 ⇒ 服务端 401 拒绝 ⇒ 探针报假「登录未落地」，见 _w4_login_diag.mjs）。
+  await waitFor(`document.querySelectorAll('uni-input').length >= 3 && (document.querySelector('.captcha-code')?.textContent || '').trim().length > 0`)
   await evaluate(`(() => {
     const byPh = (ph) => {
       const wrap = Array.from(document.querySelectorAll('uni-input'))
