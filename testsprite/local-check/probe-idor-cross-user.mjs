@@ -31,11 +31,32 @@ const get = async (path, token) => {
     let j = null
     try { j = JSON.parse(t) } catch {}
     const d = j?.data
-    let shape = typeof d
-    if (Array.isArray(d)) shape = `array(${d.length})`
-    else if (d && typeof d === 'object') shape = `object{${Object.keys(d).slice(0, 7).join(',')}}`
-    return { http: r.status, code: j?.code, shape, sample: typeof d === 'string' ? d.slice(0, 90) : '' }
-  } catch (e) { return { http: 'ERR', code: e.message, shape: '' } }
+    // ⚠️ 2026-10-03（W10）**修正** —— 原写法是 `let shape = typeof d`，
+    // d === null 时 typeof 也是 'object'，于是 `shape === 'object'` **当且仅当 data 为 null**。
+    // 而下面的越权判据恰恰拿 `shape === 'object'` 当"有数据"，两个方向同时错：
+    //   · 漏报：回**真对象**的端点（dashboard / scores/audit / scores/logs）shape 是 `object{…}`，
+    //     判据一眼都不看 ⇒ 它们的越权**从来没被报出来过**（本轮实测：dashboard 确实越权）。
+    //   · 误报：任何 200 + `data:null` 的端点都会被报成越权。
+    // 全量、更严的读侧扫描见同目录 `probe-idor-read-sweep.mjs`（三方对照 self/cross/own）。
+    const shape = d === null || d === undefined ? 'null'
+      : Array.isArray(d) ? `array(${d.length})`
+        : typeof d === 'object' ? `object{${Object.keys(d).slice(0, 7).join(',')}}`
+          : typeof d
+    return { http: r.status, code: j?.code, shape, data: d, sample: typeof d === 'string' ? d.slice(0, 90) : '' }
+  } catch (e) { return { http: 'ERR', code: e.message, shape: 'ERR', data: null } }
+}
+
+/** "有内容"的判据：不猜 shape，直接看载荷。空数组/空页/null 一律不算内容。 */
+const nonEmpty = (d) => {
+  if (d === null || d === undefined) return false
+  if (Array.isArray(d)) return d.length > 0
+  if (typeof d === 'object') {
+    for (const k of ['list', 'records', 'rows', 'items']) if (Array.isArray(d[k])) return d[k].length > 0
+    if (d.total !== undefined) return Number(d.total) > 0
+    return Object.keys(d).length > 0
+  }
+  if (typeof d === 'string') return d.trim().length > 0
+  return true
 }
 
 const leaks = []   // 确证的越权
@@ -63,7 +84,7 @@ for (const [name, mk] of [
   ['消息 /students/messages/{id}', (id) => `/api/students/messages/${id}`],
 ]) {
   const me = await get(mk(27), st), other = await get(mk(7), st)
-  const leak = String(other.http) === '200' && /array\(([1-9]\d*)\)/.test(other.shape)
+  const leak = String(other.http) === '200' && nonEmpty(other.data)
   console.log(`  · ${name}\n      本人(27) http=${me.http} ${me.shape} | 他人(7) http=${other.http} ${other.shape}${leak ? '   ← 有内容！' : ''}`)
   if (leak) leaks.push(`${name} 学生27 读到了 7 的 ${other.shape}`)
 }
@@ -73,7 +94,8 @@ console.log('\n===== B) 教师 18 令牌：打自己的 18 vs 打别人的 29 ==
 const t18 = await login('teacher001'), t29 = await login('10001')
 if (!t18 || !t29) console.log('教师令牌拿不到，跳过 B')
 else {
-  console.log(`  （参照）18 的姓名=${t18.name}  29 的姓名=${t29.name}`)
+  // login() 回的是 token 字符串，没有 .name —— 原来打印 t18.name 恒为 undefined（看着像"拿不到账号"）。
+  console.log(`  （参照）已拿到教师18 与教师29 的令牌`)
   const pairs = [
     ['看板 /teachers/dashboard/{id}', (id) => `/api/teachers/dashboard/${id}`, true],
     ['待办 /teachers/todos/{id}', (id) => `/api/teachers/todos/${id}`, true],
@@ -88,8 +110,8 @@ else {
   ]
   for (const [name, mk] of pairs) {
     const me = await get(mk(18), t18), other = await get(mk(29), t18)
-    const hasData = (r) => /array\(([1-9]\d*)\)/.test(r.shape) || (r.shape === 'object' && r.http === 200)
-    const leak = String(other.http) === '200' && hasData(other)
+    // 修正后：判"有没有内容"直接看载荷，不看 shape（见文件头的同一段说明）。
+    const leak = String(other.http) === '200' && nonEmpty(other.data)
     console.log(`  · ${name}\n      本人(18) http=${me.http} ${me.shape} | 他人(29) http=${other.http} ${other.shape}${leak ? '   ← 越权' : ''}`)
     if (leak) leaks.push(`${name} 教师18 → 29 ${other.shape}${other.sample ? ' ' + other.sample : ''}`)
   }
