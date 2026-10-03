@@ -182,6 +182,53 @@ public class StudentController {
         return isSelfProfile(pathProfileId, request) ? null : ApiResponse.error(403, message);
     }
 
+    // ========== 资源归属闸（W12，2026-10-04） ==========
+    //
+    // W11 收口的是「属主 id 型」参数：路径里直接给的就是 `users.id`/`student_profile.id`，
+    // 比一次就行。这一族不一样 —— 路径里给的是一个**东西的 id**（一条申诉 / 一条通知 /
+    // 一份帮扶计划），"它是不是我的"只能**按 id 查一次库**才知道。所以三个帮手都长成
+    // "先问 service 这条资源的主人是谁，再和身份比"。
+    //
+    // 两个容易写错的点：
+    //  ① **三个帮手的比对基准不是同一个 id 空间**：appeal/plan 的主人存的是
+    //     `student_profile.id`，而 notification 的主人存的是 `users.id`。混用的话
+    //     不是"拦不住"就是"把自己的请求也拦了"，两个方向都不报错。
+    //  ② **资源不存在也一律 403**（不区分"没有这条"和"不是你的"）。这样接口不会
+    //     变成一个"id 存在性探测器"；且 `*Owner*` 在降级时返回 null（fail-closed），
+    //     天然落进同一条分支。
+
+    /** 申诉归属闸：{@code score_appeals.id} → 它的 {@code student_id}（档案 id）是否 == 我的档案 id。 */
+    private <T> ApiResponse<T> denyUnlessMyAppeal(Long appealId, HttpServletRequest request, String message) {
+        if (isAdmin(request)) {
+            return null;
+        }
+        Long me = currentUserId();
+        Long myProfile = me == null ? null : studentService.getProfileIdByUserId(me);
+        Long owner = studentService.getAppealOwnerProfileId(appealId);
+        return myProfile != null && owner != null && owner.equals(myProfile) ? null : ApiResponse.error(403, message);
+    }
+
+    /** 帮扶计划归属闸：{@code assistance_plans.id} → 它的 {@code student_id}（档案 id）是否 == 我的档案 id。 */
+    private <T> ApiResponse<T> denyUnlessMyPlan(Long planId, HttpServletRequest request, String message) {
+        if (isAdmin(request)) {
+            return null;
+        }
+        Long me = currentUserId();
+        Long myProfile = me == null ? null : studentService.getProfileIdByUserId(me);
+        Long owner = studentService.getPlanOwnerProfileId(planId);
+        return myProfile != null && owner != null && owner.equals(myProfile) ? null : ApiResponse.error(403, message);
+    }
+
+    /** 通知归属闸：{@code notifications.id} → 它的 {@code user_id} 是否 == 我的 {@code users.id}（**不是档案 id**）。 */
+    private <T> ApiResponse<T> denyUnlessMyNotification(Long notificationId, HttpServletRequest request, String message) {
+        if (isAdmin(request)) {
+            return null;
+        }
+        Long me = currentUserId();
+        Long owner = studentService.getNotificationOwnerUserId(notificationId);
+        return me != null && owner != null && owner.equals(me) ? null : ApiResponse.error(403, message);
+    }
+
     /**
      * 以 JSON 回一个错误。
      *
@@ -399,7 +446,11 @@ public class StudentController {
     }
 
     @GetMapping("/appeals/{appealId}/detail")
-    public ApiResponse<Object> getAppealDetail(@PathVariable Long appealId) {
+    public ApiResponse<Object> getAppealDetail(@PathVariable Long appealId, HttpServletRequest request) {
+        ApiResponse<Object> deny = denyUnlessMyAppeal(appealId, request, "只能查看本人的申诉");
+        if (deny != null) {
+            return deny;
+        }
         try {
             log.info("Get appeal detail: {}", appealId);
             return ApiResponse.success(studentService.getAppealDetail(appealId));
@@ -722,7 +773,12 @@ public class StudentController {
      * 批量那条 {@code mark-batch-read} 一直是真实现，两条现在口径一致了。
      */
     @PostMapping("/notification-center/{notificationId}/mark-read")
-    public ApiResponse<Object> markSingleNotificationRead(@PathVariable Long notificationId) {
+    public ApiResponse<Object> markSingleNotificationRead(@PathVariable Long notificationId,
+                                                          HttpServletRequest request) {
+        ApiResponse<Object> deny = denyUnlessMyNotification(notificationId, request, "只能操作本人的通知");
+        if (deny != null) {
+            return deny;
+        }
         try {
             log.info("Mark single notification read: notificationId={}", notificationId);
             return ApiResponse.success(studentService.markNotificationRead(notificationId));
@@ -733,7 +789,12 @@ public class StudentController {
     }
 
     @PostMapping("/notification-center/{notificationId}/delete")
-    public ApiResponse<Object> deleteNotification(@PathVariable Long notificationId) {
+    public ApiResponse<Object> deleteNotification(@PathVariable Long notificationId,
+                                                  HttpServletRequest request) {
+        ApiResponse<Object> deny = denyUnlessMyNotification(notificationId, request, "只能操作本人的通知");
+        if (deny != null) {
+            return deny;
+        }
         try {
             log.info("Delete notification: notificationId={}", notificationId);
             return ApiResponse.success(studentService.deleteNotification(notificationId));
@@ -940,7 +1001,11 @@ public class StudentController {
      * 完全是另一个空间，但两个都是纯数字 —— 调用时别看错路径。没有评价时返回**空数组**（原来回 `{"error":"无评价数据"}`）。
      */
     @GetMapping("/evaluations/{planId}/detail")
-    public ApiResponse<Object> getPlanEvaluation(@PathVariable Long planId) {
+    public ApiResponse<Object> getPlanEvaluation(@PathVariable Long planId, HttpServletRequest request) {
+        ApiResponse<Object> deny = denyUnlessMyPlan(planId, request, "只能查看本人的帮扶计划评价");
+        if (deny != null) {
+            return deny;
+        }
         try {
             log.info("Get plan evaluation: {}", planId);
             return ApiResponse.success(studentService.getPlanEvaluation(planId));

@@ -64,6 +64,15 @@ public class StudentServiceFallback implements StudentService {
     @Override public Object clearReadNotifications(Long userId) { return ApiResponse.error("清除已读通知服务暂时不可用"); }
     @Override public Object getUnreadNotifications(Long userId) { return ApiResponse.error("获取未读通知服务暂时不可用"); }
 
+    // 资源归属闸用（W12，2026-10-04）
+    /**
+     * 降级时返回 {@code null} ⇒ 调用方判为"查不到这条资源的主人"⇒ **拒绝**（fail-closed）。
+     * 这里绝不能返回 {@code 0} 或登录人自己的 id —— 那会把"下游挂了"变成"资源是你的"。
+     */
+    @Override public Long getAppealOwnerProfileId(Long appealId) { return null; }
+    @Override public Long getPlanOwnerProfileId(Long planId) { return null; }
+    @Override public Long getNotificationOwnerUserId(Long notificationId) { return null; }
+
     // 订阅管理新增
     /** 降级时返回 {@code null} ⇒ 归属闸判为"认不出身份"⇒ **拒绝**（fail-closed），不会误放行。 */
     @Override public Long getProfileIdByUserId(Long userId) { return null; }

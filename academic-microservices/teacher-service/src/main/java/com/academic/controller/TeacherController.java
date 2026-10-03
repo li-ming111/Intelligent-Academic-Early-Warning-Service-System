@@ -212,10 +212,18 @@ public class TeacherController {
     }
 
     /**
-     * 创建课程
+     * 创建课程。
+     *
+     * <p><b>2026-10-04（W12）</b>：请求体自带 {@code teacherId}，此前原样落库 ——
+     * 可以建一门**挂在别人名下**的课，或建一门无主的课再靠 PUT 认领。
+     * 现在只允许"挂在自己名下"（或不填），管理员不受限。
      */
     @PostMapping("/courses")
-    public ApiResponse<Course> createCourse(@RequestBody Course course) {
+    public ApiResponse<Course> createCourse(@RequestBody Course course, HttpServletRequest request) {
+        if (!isAdmin(request) && course.getTeacherId() != null
+                && !course.getTeacherId().equals(getUserIdFromGateway(request))) {
+            return forbidden("只能创建挂在自己名下的课程");
+        }
         try {
             boolean success = courseService.createCourse(course);
             if (success) {
@@ -229,10 +237,34 @@ public class TeacherController {
     }
 
     /**
-     * 更新课程信息
+     * 更新课程信息。
+     *
+     * <p><b>2026-10-04（W12）补归属闸</b>：紧挨着的 {@code DELETE /courses/{id}}（见下）
+     * 一直写着"仅限课程所属教师或管理员"，而这一个更新入口一道闸都没有 —— 同一个资源、
+     * 两个动词、两套口径。请求体里就带着 {@code teacherId}，所以改一名教师名下的课、
+     * 或者把课**改成自己名下的**（连带把这门课的全部读写面都接管过来）都是一次 PUT 的事。
+     *
+     * <p>口径：课程已经属于本人、或**还没有归属人**（{@code teacher_id IS NULL}，此时
+     * "关联课程"是正当动作）、或管理员 ⇒ 放行；课程属于别人 ⇒ 拒。
+     * ⚠️ 因此 PC 端 {@code TeacherCourses.vue} 那个「关联课程」按钮从此**只能关联无主讲
+     * 的课程**（活库 10 门课都已有主讲，所以它会给出"无权修改其他教师的课程"）——
+     * 这是有意的收口，不是回归；详见手册 §6.45。
      */
     @PutMapping("/courses/{id}")
-    public ApiResponse<String> updateCourse(@PathVariable Long id, @RequestBody Course course) {
+    public ApiResponse<String> updateCourse(@PathVariable Long id, @RequestBody Course course,
+                                            HttpServletRequest request) {
+        Course existing = courseService.getById(id);
+        if (existing == null) {
+            return ApiResponse.notFound("课程不存在");
+        }
+        if (!isAdmin(request)) {
+            Long me = getUserIdFromGateway(request);
+            boolean unowned = existing.getTeacherId() == null;
+            boolean mine = me != null && me.equals(existing.getTeacherId());
+            if (!unowned && !mine) {
+                return forbidden("无权修改其他教师的课程");
+            }
+        }
         try {
             course.setId(id);
             boolean success = courseService.updateCourse(course);
@@ -404,7 +436,14 @@ public class TeacherController {
      * 获取课程成绩（带教师过滤）
      */
     @GetMapping("/scores")
-    public ApiResponse<Object> getScores(@RequestParam Long course_id, @RequestParam(required = false) Long teacher_id) {
+    public ApiResponse<Object> getScores(@RequestParam Long course_id, @RequestParam(required = false) Long teacher_id,
+                                         HttpServletRequest request) {
+        // W12 资源归属闸：`course_id` 是课程 id。此前传了 teacher_id 也只当**查询条件**
+        // 用（`WHERE teacher_id = ?`），换个 course_id 就绕开了 —— 闸必须落在课程归属上。
+        ApiResponse<Object> deny = denyUnlessMyCourse(course_id, request, "只能查看本人所授课程的成绩");
+        if (deny != null) {
+            return deny;
+        }
         try {
             List<Object> scores;
             if (teacher_id != null) {
@@ -446,7 +485,12 @@ public class TeacherController {
      * 保存成绩
      */
     @PostMapping("/scores")
-    public ApiResponse<Object> saveScores(@RequestBody Map<String, Object> data) {
+    public ApiResponse<Object> saveScores(@RequestBody Map<String, Object> data, HttpServletRequest request) {
+        // W12 资源归属闸：`teacherId` 与每行的 `courseId` 都是客户端说了算的。
+        ApiResponse<Object> deny = denyUnlessScoreWriteAllowed(data, request, "只能为本人所授课程保存成绩");
+        if (deny != null) {
+            return deny;
+        }
         try {
             List<Map<String, Object>> scores = (List<Map<String, Object>>) data.get("scores");
             Long teacherId = Long.parseLong(data.get("teacherId").toString());
@@ -501,12 +545,20 @@ public class TeacherController {
      * 路径，真的产出工作簿；重复的 {@code /download/scores} 一并删掉（前后端都零调用方
      * 的那一条）。
      *
-     * <p>⚠️ 与仓内其它教师端查询一致，这里**不做课程归属校验**（那些端点的
-     * {@code teacher_id} 一直是前端传来的查询参数）。这是本仓既有的面，不在本次改动
-     * 范围内 —— 见手册的已知边界。
+     * <p>⚠️ <b>2026-10-04（W12）更正</b>：上面那句"不做课程归属校验"已经不成立 ——
+     * 本轮给它补上了和同族读端点一样的课程归属闸。此前它是**一次能把别人整门课
+     * 成绩单（姓名 + 各项分数）下载成 xlsx** 的出口，比逐条读还省事。
      */
     @GetMapping("/export/scores")
-    public void exportScores(@RequestParam Long course_id, HttpServletResponse response) {
+    public void exportScores(@RequestParam Long course_id, HttpServletRequest request,
+                             HttpServletResponse response) {
+        ApiResponse<Object> deny = denyUnlessMyCourse(course_id, request, "只能导出本人所授课程的成绩单");
+        if (deny != null) {
+            // 这个端点返回的是**文件流**，不能直接 return ApiResponse —— 得自己写回状态与 JSON 体，
+            // 否则前端 responseType:'blob' 拿到的是一个 200 的、内容却是错误提示的"xlsx"。
+            writeJsonDenied(response, deny);
+            return;
+        }
         try {
             List<ScoreRecord> scores = scoreRecordService.exportScores(course_id);
 
@@ -579,7 +631,12 @@ public class TeacherController {
      * 导入成绩
      */
     @PostMapping("/scores/import")
-    public ApiResponse<Object> importScores(@RequestBody Map<String, Object> data) {
+    public ApiResponse<Object> importScores(@RequestBody Map<String, Object> data, HttpServletRequest request) {
+        // 与 `/scores` 是同一段实现的第二个入口（同一份请求体形状），闸也必须成对。
+        ApiResponse<Object> deny = denyUnlessScoreWriteAllowed(data, request, "只能向本人所授课程导入成绩");
+        if (deny != null) {
+            return deny;
+        }
         try {
             List<Map<String, Object>> scores = (List<Map<String, Object>>) data.get("scores");
             Long teacherId = Long.parseLong(data.get("teacherId").toString());
@@ -727,7 +784,13 @@ public class TeacherController {
      * 获取课程分析
      */
     @GetMapping("/analysis")
-    public ApiResponse<Object> getAnalysis(@RequestParam Long course_id) {
+    public ApiResponse<Object> getAnalysis(@RequestParam Long course_id, HttpServletRequest request) {
+        // W12 资源归属闸。`course_id` 是**课程** id，不是教师 id —— 换个数字就能读到
+        // 别人的课程分析（平均分/及格率/挂科人数/最高分名单），实测对别人课程回 200。
+        ApiResponse<Object> deny = denyUnlessMyCourse(course_id, request, "只能查看本人所授课程的分析");
+        if (deny != null) {
+            return deny;
+        }
         try {
             return ApiResponse.success(buildCourseAnalysis(course_id));
         } catch (Exception e) {
@@ -739,9 +802,20 @@ public class TeacherController {
      * 获取课程详情
      */
     @GetMapping("/courses/{courseId}")
-    public ApiResponse<Object> getCourseDetail(@PathVariable Long courseId) {
+    public ApiResponse<Object> getCourseDetail(@PathVariable Long courseId, HttpServletRequest request) {
         try {
             Course course = courseService.getById(courseId);
+            // 先保住既有的 404 契约（课程真的不存在），再判归属 —— 顺序反过来会把
+            // "不存在"和"不是你的"压成同一个 403，前端那句「课程不存在」就再也看不到了。
+            if (course == null) {
+                return ApiResponse.notFound("课程不存在");
+            }
+            if (!isAdmin(request)) {
+                Long me = getUserIdFromGateway(request);
+                if (me == null || course.getTeacherId() == null || !course.getTeacherId().equals(me)) {
+                    return forbidden("只能查看本人所授课程的详情");
+                }
+            }
             return ApiResponse.success(course);
         } catch (Exception e) {
             return ApiResponse.error(e.getMessage());
@@ -848,6 +922,16 @@ public class TeacherController {
                                              @RequestBody(required = false) Map<String, Object> data,
                                              HttpServletRequest request) {
         Map<String, Object> body = data == null ? new HashMap<>() : data;
+        // W12 资源归属闸：`warningId` 是**资源 id**，此前只查"这条预警存在吗"，
+        // 不问"这条预警管的学生是不是我班上的" ⇒ 任何教师都能把别人班上学生的预警
+        // 置成"已处理"并写进处理措施（学生还会收到一条"教师已处理你的预警"的通知）。
+        // 归属口径：该预警的学生所挂班级的班主任必须是自己。
+        if (!isAdmin(request)) {
+            Long me = getUserIdFromGateway(request);
+            if (me == null || academicWarningMapper.findByIdOwnedByTeacher(warningId, me) == null) {
+                return forbidden("只能处理本人所带班级学生的预警");
+            }
+        }
         try {
             com.academic.common.entity.AcademicWarning warning = academicWarningMapper.selectById(warningId);
             if (warning == null) {
@@ -927,11 +1011,28 @@ public class TeacherController {
      * 失败的行走 {@code errors}，不连坐其余行。返回体与 {@code /admin/import/students}
      * 同口径（{@code total/success/skipped/errors}），多一个 {@code moved}
      * 表示"原本在别的班级、这次改过来了"—— 移出原班是学生的实际影响，得说出来。
+     *
+     * <p><b>2026-10-04（W12）补归属闸</b>：{@code classId} 是客户端传的查询参数，
+     * 此前**一道校验都没有** —— 传别人班上的 {@code classId} 就能把学生**从别的班
+     * 拽进/拽出**（这个端点改的就是 {@code student_profile.class_id}）。
+     * 现在要求该班班主任是本人（或管理员），且 {@code teacherId} 也得是本人 ——
+     * 后者是调用方自己声称的"我是谁"，不校验的话闸只挡得住一半。
      */
     @PostMapping("/students/import")
     public ApiResponse<Map<String, Object>> importStudents(@RequestParam("file") MultipartFile file,
                                                           @RequestParam("classId") Long classId,
-                                                          @RequestParam("teacherId") Long teacherId) {
+                                                          @RequestParam("teacherId") Long teacherId,
+                                                          HttpServletRequest request) {
+        if (!isAdmin(request)) {
+            Long me = getUserIdFromGateway(request);
+            if (me == null || !me.equals(teacherId)) {
+                return forbidden("teacherId 与登录身份不一致");
+            }
+            ApiResponse<Object> deny = denyUnlessMyClass(classId, request, "只能向本人所带的班级导入学生");
+            if (deny != null) {
+                return ApiResponse.error(403, deny.getMessage());
+            }
+        }
         Map<String, Object> result = new HashMap<>();
         List<Map<String, Object>> errors = new ArrayList<>();
         int successCount = 0, skipCount = 0, movedCount = 0;
@@ -1089,7 +1190,11 @@ public class TeacherController {
      * 触发预警
      */
     @PostMapping("/scores/warnings")
-    public ApiResponse<Object> triggerWarnings(@RequestParam Long course_id) {
+    public ApiResponse<Object> triggerWarnings(@RequestParam Long course_id, HttpServletRequest request) {
+        ApiResponse<Object> deny = denyUnlessMyCourse(course_id, request, "只能对本人所授课程触发预警");
+        if (deny != null) {
+            return deny;
+        }
         try {
             List<ScoreRecord> scores = latestPerStudent(scoreRecordService.getScoresByCourseId(course_id));
             long warningCount = scores.stream()
@@ -1333,7 +1438,11 @@ public class TeacherController {
      * 获取课程成绩分布
      */
     @GetMapping("/courses/{courseId}/distribution")
-    public ApiResponse<Object> getCourseScoreDistribution(@PathVariable Long courseId) {
+    public ApiResponse<Object> getCourseScoreDistribution(@PathVariable Long courseId, HttpServletRequest request) {
+        ApiResponse<Object> deny = denyUnlessMyCourse(courseId, request, "只能查看本人所授课程的分布");
+        if (deny != null) {
+            return deny;
+        }
         try {
             int[] distribution = new int[5]; // 90+, 80-89, 70-79, 60-69, <60
             for (ScoreRecord row : latestPerStudent(scoreRecordService.getScoresByCourseId(courseId))) {
@@ -1371,7 +1480,13 @@ public class TeacherController {
      * 获取课程成绩异常
      */
     @GetMapping("/courses/{courseId}/anomaly")
-    public ApiResponse<Object> getCourseAnomalies(@PathVariable Long courseId, @RequestParam(required = false, defaultValue = "60") Integer threshold) {
+    public ApiResponse<Object> getCourseAnomalies(@PathVariable Long courseId, @RequestParam(required = false, defaultValue = "60") Integer threshold,
+                                                 HttpServletRequest request) {
+        // 实测泄漏最直的一条：换个课程 id 就拿到别人课上 24 行「姓名 + 分数 + 不及格评语」。
+        ApiResponse<Object> deny = denyUnlessMyCourse(courseId, request, "只能查看本人所授课程的低分名单");
+        if (deny != null) {
+            return deny;
+        }
         try {
             List<ScoreRecord> anomalies = new ArrayList<>();
             for (ScoreRecord row : latestPerStudent(scoreRecordService.getScoresByCourseId(courseId))) {
@@ -1396,7 +1511,12 @@ public class TeacherController {
     @GetMapping("/courses/{courseId}/students")
     public ApiResponse<Object> getCourseStudents(@PathVariable Long courseId,
                                                  @RequestParam(required = false, defaultValue = "1") Integer page,
-                                                 @RequestParam(required = false, defaultValue = "20") Integer size) {
+                                                 @RequestParam(required = false, defaultValue = "20") Integer size,
+                                                 HttpServletRequest request) {
+        ApiResponse<Object> deny = denyUnlessMyCourse(courseId, request, "只能查看本人所授课程的学生名单");
+        if (deny != null) {
+            return deny;
+        }
         try {
             List<ScoreRecord> all = latestPerStudent(scoreRecordService.getScoresByCourseId(courseId));
             int p = page == null || page < 1 ? 1 : page;
@@ -1419,7 +1539,12 @@ public class TeacherController {
      * 获取课程推荐
      */
     @GetMapping("/courses/{courseId}/recommendations")
-    public ApiResponse<Object> getCourseRecommendations(@PathVariable Long courseId, @RequestParam(required = false, defaultValue = "5") Integer limit) {
+    public ApiResponse<Object> getCourseRecommendations(@PathVariable Long courseId, @RequestParam(required = false, defaultValue = "5") Integer limit,
+                                                        HttpServletRequest request) {
+        ApiResponse<Object> deny = denyUnlessMyCourse(courseId, request, "只能查看本人所授课程的推荐");
+        if (deny != null) {
+            return deny;
+        }
         try {
             List<Map<String, Object>> recommendations = new ArrayList<>();
             // 根据课程成绩分布推荐学习建议（一人一行，避免同一名学生被数多次）
@@ -1510,7 +1635,19 @@ public class TeacherController {
      * 回复反馈
      */
     @PostMapping("/feedbacks/{feedbackId}/reply")
-    public ApiResponse<Object> replyFeedback(@PathVariable Long feedbackId, @RequestBody Map<String, Object> data) {
+    public ApiResponse<Object> replyFeedback(@PathVariable Long feedbackId, @RequestBody Map<String, Object> data,
+                                             HttpServletRequest request) {
+        // W12 资源归属闸：feedback.teacher_id 是 users.id（活库那两行都是 29）。
+        // 此前换个 feedbackId 就能**以别人的名义回复学生反馈** —— 而读侧
+        // `/feedbacks/{teacherId}/list` 在 W11 已经收口了，写侧这条漏在外面。
+        if (!isAdmin(request)) {
+            Long me = getUserIdFromGateway(request);
+            Feedback feedback = feedbackService.getFeedbackById(feedbackId);
+            if (me == null || feedback == null || feedback.getTeacherId() == null
+                    || !feedback.getTeacherId().equals(me)) {
+                return forbidden("只能回复本人的反馈");
+            }
+        }
         try {
             String reply = (String) data.get("reply");
             feedbackService.replyFeedback(feedbackId, reply);
@@ -1524,7 +1661,11 @@ public class TeacherController {
      * 分析成绩
      */
     @GetMapping("/scores/analyze")
-    public ApiResponse<Object> analyzeScores(@RequestParam Long course_id) {
+    public ApiResponse<Object> analyzeScores(@RequestParam Long course_id, HttpServletRequest request) {
+        ApiResponse<Object> deny = denyUnlessMyCourse(course_id, request, "只能分析本人所授课程");
+        if (deny != null) {
+            return deny;
+        }
         try {
             return ApiResponse.success(buildCourseAnalysis(course_id));
         } catch (Exception e) {
@@ -1690,7 +1831,11 @@ public class TeacherController {
      * 检测成绩异常
      */
     @GetMapping("/scores/anomalies")
-    public ApiResponse<Object> detectAnomalies(@RequestParam Long course_id) {
+    public ApiResponse<Object> detectAnomalies(@RequestParam Long course_id, HttpServletRequest request) {
+        ApiResponse<Object> deny = denyUnlessMyCourse(course_id, request, "只能检测本人所授课程的异常");
+        if (deny != null) {
+            return deny;
+        }
         try {
             // 先把"未录入"的行剔出去再算平均分与标准差：把它们当 0 分会把均值
             // 整体拉低、标准差抬高，判定阈值随之虚高 —— 结果是"正常偏低的学生"
@@ -1750,10 +1895,18 @@ public class TeacherController {
     }
 
     /**
-     * 批量删除成绩
+     * 批量删除成绩。
+     *
+     * <p><b>2026-10-04（W12）补归属闸</b>：单条 {@code DELETE /scores/{scoreId}} 一直有
+     * "只能删自己录的"这道闸，而这条**按 id 列表**的批量版一道都没有 —— 同一个资源、
+     * 两个入口、两套口径。传别人的 id 进来就删掉了别人的成绩。现在逐条比
+     * {@code score_record.teacher_id}，有一条不是本人录的就整批拒绝。
      */
     @PostMapping("/scores/batch-delete")
-    public ApiResponse<Object> batchDeleteScores(@RequestBody List<Long> scoreIds) {
+    public ApiResponse<Object> batchDeleteScores(@RequestBody List<Long> scoreIds, HttpServletRequest request) {
+        if (!isAdmin(request) && !allScoresAreMine(scoreIds, request)) {
+            return forbidden("只能删除本人录入的成绩");
+        }
         try {
             // 2026-10-03（W7）：0 行 = 这些 id 一个都不存在，如实回 404
             return scoreRecordService.removeByIds(scoreIds) > 0
@@ -1768,7 +1921,12 @@ public class TeacherController {
      * 获取班级成绩分析
      */
     @GetMapping("/classes/{classId}/analysis")
-    public ApiResponse<Object> getClassScoreAnalysis(@PathVariable Long classId) {
+    public ApiResponse<Object> getClassScoreAnalysis(@PathVariable Long classId, HttpServletRequest request) {
+        // W12 资源归属闸：classes.teacher_id 是 users.id（活库 18/19/22/29）。
+        ApiResponse<Object> deny = denyUnlessMyClass(classId, request, "只能查看本人所带班级的分析");
+        if (deny != null) {
+            return deny;
+        }
         try {
             // 获取班级信息
             ClassInfo clazz = classInfoService.getClassById(classId);
@@ -1925,7 +2083,12 @@ public class TeacherController {
      * 获取班级学生
      */
     @GetMapping("/classes/{classId}/students")
-    public ApiResponse<Object> getClassStudents(@PathVariable Long classId) {
+    public ApiResponse<Object> getClassStudents(@PathVariable Long classId, HttpServletRequest request) {
+        // 实测：教师 18 传 classId=1（于凤海的班）拿到整班 24 行「学号 + 姓名」。
+        ApiResponse<Object> deny = denyUnlessMyClass(classId, request, "只能查看本人所带班级的学生");
+        if (deny != null) {
+            return deny;
+        }
         try {
             List<Map<String, Object>> students = classInfoService.getStudentsByClassId(classId);
             return ApiResponse.success(students);
@@ -2180,6 +2343,174 @@ public class TeacherController {
      */
     private static <T> ApiResponse<T> forbidden(String message) {
         return ApiResponse.error(403, message);
+    }
+
+    // ========== 资源归属闸（W12，2026-10-04） ==========
+    //
+    /** 只用于把拒绝体写成 JSON（见 {@link #writeJsonDenied}）—— 无状态，可静态复用。 */
+    private static final com.fasterxml.jackson.databind.ObjectMapper JSON_MAPPER =
+            new com.fasterxml.jackson.databind.ObjectMapper();
+    //
+    //
+    // W11 收口的是「**属主 id** 型」参数（studentId / teacherId —— 换个数字就读到别人的
+    // 看板、花名册、消息）。这一族收的是「**资源 id 型**」参数（courseId / classId /
+    // warningId / feedbackId / scoreId 列表）：id 本身不指向某个人，而指向一件东西，
+    // 于是"这个 id 是不是我的"要**多查一次库**才能回答 —— 这正是它们此前一条都没被
+    // 加闸的原因（加闸不再是"比一个数字"，得先看资源归属）。
+    //
+    // 实测（直连备用 8187，只读）：教师 18（刘教授，授课课程 6）打
+    // `GET /teachers/courses/1/anomaly` 拿到**课程 1（高等数学，授课教师 29）的 24 行
+    // 学生姓名 + 分数 + 不及格评语**；`GET /teachers/classes/1/students` 拿到整班
+    // 学号 + 姓名；`/courses/1/distribution`、`/courses/1`、`/analysis?course_id=1`、
+    // `/scores/analyze?course_id=1` 同样一律 HTTP 200。
+    //
+    // 归属口径（活库实测，两张表都是 users.id，与 W11 同一套）：
+    //   courses.teacher_id = 18/19/22/28/29   classes.teacher_id = 18/19/22/29
+    // 管理员（X-Role: 4）旁路；身份头缺失一律拒绝（fail-closed）。
+
+    /**
+     * 资源归属闸：**课程**。{@code courses.teacher_id} 是 {@code users.id}。
+     *
+     * <p>返回 {@code null} 表示放行；非 null 就是要直接 return 掉的拒绝响应。
+     * 课程不存在时也**拒绝** —— 归属无从谈起，且不该借 404/403 的差别泄漏"这个 id 存在吗"。
+     * 唯一的例外是 {@code getCourseDetail}（那条本就有 404 契约，见方法内的显式分支）。
+     */
+    private ApiResponse<Object> denyUnlessMyCourse(Long courseId, HttpServletRequest request, String message) {
+        if (isAdmin(request)) {
+            return null;
+        }
+        Long me = getUserIdFromGateway(request);
+        Course course = courseService.getById(courseId);
+        if (me != null && course != null && course.getTeacherId() != null
+                && course.getTeacherId().equals(me)) {
+            return null;
+        }
+        return forbidden(message);
+    }
+
+    /**
+     * 资源归属闸：**班级**。{@code classes.teacher_id} 是 {@code users.id}。
+     *
+     * <p>与 {@link #denyUnlessMyCourse} 分开写是因为两边的表不同；口径一模一样。
+     */
+    private ApiResponse<Object> denyUnlessMyClass(Long classId, HttpServletRequest request, String message) {
+        if (isAdmin(request)) {
+            return null;
+        }
+        Long me = getUserIdFromGateway(request);
+        ClassInfo clazz = classInfoMapper.selectById(classId);
+        if (me != null && clazz != null && clazz.getTeacherId() != null
+                && clazz.getTeacherId().equals(me)) {
+            return null;
+        }
+        return forbidden(message);
+    }
+
+    /**
+     * 这批成绩是不是**本人录的**。
+     *
+     * <p>用于 {@code POST /scores} / {@code /scores/import} / {@code /scores/batch-delete}
+     * 这三条按 id 列表下手的路径 —— 逐条比 {@code score_record.teacher_id}，有一条不是本人
+     * 录的就整批拒绝（不做"部分成功"：一半写进去一半没写，调用方无法知道到底发生了什么）。
+     * id 在库里查不到时**不算通过**（不存在 ≠ 属于本人）。
+     */
+    private boolean allScoresAreMine(List<Long> scoreIds, HttpServletRequest request) {
+        if (scoreIds == null || scoreIds.isEmpty()) {
+            return false;
+        }
+        Long me = getUserIdFromGateway(request);
+        if (me == null) {
+            return false;
+        }
+        for (Long scoreId : scoreIds) {
+            if (scoreId == null) {
+                return false;
+            }
+            ScoreRecord record = scoreRecordService.getById(scoreId);
+            if (record == null || record.getTeacherId() == null || !record.getTeacherId().equals(me)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * 资源归属闸：**成绩写入面**（{@code POST /scores} 与 {@code /scores/import} 共用）。
+     *
+     * <p>这两个端点的请求体里有两样由客户端说了算的东西：{@code teacherId}（记成"谁录的"）
+     * 与每一行的 {@code courseId}（写进哪门课）。此前两样都照单全收 —— 换个
+     * {@code teacherId} 就能以别人的名义录分，换个 {@code courseId} 就能往别人的课里录分。
+     *
+     * <p>判据：{@code teacherId} 必须等于登录人，且**每一行**的课程都必须是本人所授。
+     * 形状不对（{@code scores} 不是列表、某行缺 {@code courseId}）一律**拒绝**而不是跳过 ——
+     * "判不出来"和"不是你的"在归属闸里必须同解，否则畸形请求就是一条绕过路径。
+     */
+    private ApiResponse<Object> denyUnlessScoreWriteAllowed(Map<String, Object> data, HttpServletRequest request,
+                                                            String message) {
+        if (isAdmin(request)) {
+            return null;
+        }
+        Long me = getUserIdFromGateway(request);
+        if (me == null) {
+            return forbidden(message);
+        }
+        Object rawTeacherId = data == null ? null : data.get("teacherId");
+        if (rawTeacherId == null || !me.equals(parseLongOrNull(rawTeacherId))) {
+            return forbidden(message);
+        }
+        Object rawScores = data.get("scores");
+        if (!(rawScores instanceof List<?> rows)) {
+            return forbidden(message);
+        }
+        for (Object row : rows) {
+            if (!(row instanceof Map<?, ?> map)) {
+                return forbidden(message);
+            }
+            Long courseId = parseLongOrNull(map.get("courseId"));
+            if (courseId == null) {
+                return forbidden(message);
+            }
+            ApiResponse<Object> deny = denyUnlessMyCourse(courseId, request, message);
+            if (deny != null) {
+                return deny;
+            }
+        }
+        return null;
+    }
+
+    /** 宽进严出地把一个来自 JSON 的数字解析成 {@code Long}；非数字返回 {@code null}。 */
+    private static Long parseLongOrNull(Object value) {
+        if (value == null) {
+            return null;
+        }
+        try {
+            return Long.parseLong(String.valueOf(value).trim());
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    /**
+     * 归属拒绝落到**文件下载**端点上的写法。
+     *
+     * <p>下载端点不能用"HTTP 200 + body code 403"那套 —— 前端带
+     * {@code responseType:'blob'}，200 会被直接当文件存下来（一个内容是错误 JSON 的
+     * "xlsx"）。所以这里如实回 4xx，并把同一段 {@code {code, message}} 写成响应体；
+     * 前端 {@code utils/download.js} 的 {@code readErrorMessage} 会把 Blob 读回文本、
+     * 取里面的 {@code message} 显示出来（它不是 JSON 时退化成截断原文）。
+     */
+    private static void writeJsonDenied(HttpServletResponse response, ApiResponse<?> body) {
+        response.setStatus(HttpServletResponse.SC_FORBIDDEN);
+        response.setContentType("application/json;charset=UTF-8");
+        Map<String, Object> payload = new java.util.LinkedHashMap<>();
+        payload.put("code", body.getCode());
+        payload.put("message", body.getMessage());
+        payload.put("success", false);
+        try {
+            response.getWriter().write(JSON_MAPPER.writeValueAsString(payload));
+        } catch (Exception e) {
+            // 连错误体都写不出去就只能算了 —— 状态码已经是 403，前端不会把它当成功文件。
+        }
     }
 }
 

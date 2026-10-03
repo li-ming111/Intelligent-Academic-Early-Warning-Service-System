@@ -89,6 +89,26 @@ public class StudentServiceImpl implements StudentService {
         return resolveProfileId(userId);
     }
 
+    // ========== 资源归属闸用（W12，2026-10-04）—— 见接口上的注释（三套 id 空间） ==========
+
+    @Override
+    public Long getAppealOwnerProfileId(Long appealId) {
+        ScoreAppeal appeal = appealId == null ? null : scoreAppealMapper.selectById(appealId);
+        return appeal == null ? null : appeal.getStudentId();
+    }
+
+    @Override
+    public Long getPlanOwnerProfileId(Long planId) {
+        AssistancePlan plan = planId == null ? null : assistancePlanMapper.selectById(planId);
+        return plan == null ? null : plan.getStudentId();
+    }
+
+    @Override
+    public Long getNotificationOwnerUserId(Long notificationId) {
+        Notification notification = notificationId == null ? null : notificationMapper.selectById(notificationId);
+        return notification == null ? null : notification.getUserId();
+    }
+
     /** 聚合查询返回的计数/学分等一律经此转换；无法识别时取 0（这些字段是计数，0 是安全值）。 */
     private static int intValue(Object value) {
         Double d = ScoreCaliber.toDouble(value);

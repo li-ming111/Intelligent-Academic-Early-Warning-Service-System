@@ -500,12 +500,15 @@ public class CounselorController {
                                                      HttpServletRequest request) {
         Long requestUserId = getUserIdFromGateway(request);
         AssistancePlan plan = assistancePlanService.getById(id);
-        if (plan != null && plan.getCounselorId() != null) {
-            CounselorProfile profile = counselorService.getByUserId(requestUserId);
-            if (profile == null || !plan.getCounselorId().equals(profile.getId())) {
-                if (!isAdmin(request)) {
-                    return ApiResponse.error(403, "无权删除其他辅导员的帮扶计划");
-                }
+        // 2026-10-04（W12）：这里原来比的是 `profile.getId()`，而
+        // `assistance_plans.counselor_id` 存的是 **users.id**（活库 4 行全是 53），
+        // `counselor_profiles.id` 是 **1** —— 两套 id 空间不相交 ⇒ `53.equals(1)` 恒假
+        // ⇒ **连本人删自己的计划也被判 403**。这是"闸装反了"，不是"更安全"。
+        // 现在直接与网关注入的 users.id 比（同一列的口径与 classes.counselor_id 一致）。
+        if (plan != null && plan.getCounselorId() != null
+                && !plan.getCounselorId().equals(requestUserId)) {
+            if (!isAdmin(request)) {
+                return ApiResponse.error(403, "无权删除其他辅导员的帮扶计划");
             }
         }
         try {
@@ -648,12 +651,11 @@ public class CounselorController {
                                                        HttpServletRequest request) {
         Long requestUserId = getUserIdFromGateway(request);
         CommunicationLog record = communicationLogService.getById(id);
-        if (record != null && record.getCounselorId() != null) {
-            CounselorProfile profile = counselorService.getByUserId(requestUserId);
-            if (profile == null || !record.getCounselorId().equals(profile.getId())) {
-                if (!isAdmin(request)) {
-                    return ApiResponse.error(403, "无权删除其他辅导员的沟通记录");
-                }
+        // 同上（W12）：`communication_logs.counselor_id` 也是 users.id（活库 2001-2003 全是 53）。
+        if (record != null && record.getCounselorId() != null
+                && !record.getCounselorId().equals(requestUserId)) {
+            if (!isAdmin(request)) {
+                return ApiResponse.error(403, "无权删除其他辅导员的沟通记录");
             }
         }
         try {

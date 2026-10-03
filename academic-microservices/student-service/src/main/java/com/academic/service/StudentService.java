@@ -90,6 +90,27 @@ public interface StudentService {
      * 查不到档案返回 {@code null}。
      */
     Long getProfileIdByUserId(Long userId);
+
+    // ========== 资源归属闸用（W12，2026-10-04） ==========
+    //
+    // W11 收口的是「属主 id 型」参数（studentId）；这一族收的是「资源 id 型」：
+    // 路径里给的是一个**东西的 id**（一条申诉、一条通知、一份帮扶计划），
+    // 要知道"它是不是我的"必须**按 id 查一次库**。controller 不持有 mapper，
+    // 所以这三个查询开在接口上，各自只返回"它的主人是谁"（查不到返回 null）。
+    //
+    // 三个返回值的 id 空间**不一样**，别混：
+    //   appeal / plan 的属主是 **student_profile.id**（score_appeals.student_id、
+    //   assistance_plans.student_id 都存档案 id）；
+    //   notification 的属主是 **users.id**（notifications.user_id）—— 与
+    //   `notifications.receiver_id` 那一族相反，这一列确实是 users.id。
+
+    /** 这条申诉挂在哪个学生档案上；申诉不存在返回 {@code null}。 */
+    Long getAppealOwnerProfileId(Long appealId);
+    /** 这份帮扶计划挂在哪个学生档案上；计划不存在返回 {@code null}。 */
+    Long getPlanOwnerProfileId(Long planId);
+    /** 这条通知的接收人（`users.id`）；通知不存在返回 {@code null}。 */
+    Long getNotificationOwnerUserId(Long notificationId);
+
     /** 获取订阅偏好 */
     Object getSubscriptionPreferences(Long studentId);
     /** 更新订阅偏好 */
