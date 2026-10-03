@@ -139,6 +139,13 @@ c(g, '成绩记录里的教师 == 该门课的授课教师（三张表同一个�
   'WHERE NOT (p.teacher_id <=> c.teacher_id))')
 c(g, 'academic_warning.student_id 都指向存在的学生档案',
   'SELECT COUNT(*) FROM academic_warning w LEFT JOIN student_profile sp ON sp.id=w.student_id WHERE sp.id IS NULL')
+# 2026-10-03（W8.3）：这两列此前全为 NULL，所以从来没人守。补上 157/152 之后它才有意义 ——
+# 一行申诉指向的成绩，必须**同一个学生、同一门课**；只查"悬空"不够（指错人也照样是个存在的 id）。
+# 用 `<=>`：`<>` 对 NULL 求值是 NULL 不是 TRUE，会让该成立的违例静默通过（见 id-spaces 记忆第 9 条）。
+c(g, 'score_appeals.score_id 非空时指向存在的 scores 行，且学生/课程都一致',
+  'SELECT COUNT(*) FROM score_appeals a LEFT JOIN scores s ON s.id=a.score_id '
+  'WHERE a.score_id IS NOT NULL AND (s.id IS NULL '
+  'OR NOT (s.student_id <=> a.student_id) OR NOT (s.course_id <=> a.course_id))')
 
 # ---------- E. 申请台账与主表的归属必须一致 ----------
 g = 'E. 申请台账 vs 主表归属'
