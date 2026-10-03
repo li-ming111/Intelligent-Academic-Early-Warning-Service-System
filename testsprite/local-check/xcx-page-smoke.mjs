@@ -80,7 +80,12 @@ const ROLES = {
       { path: '/pages/student/benchmark-analysis', expect: '学业位次', data: '/ 24' },
       { path: '/pages/student/class-ranking', expect: '班级成绩榜', data: '21/24' },
       { path: '/pages/student/notification-center', expect: '条未读通知', data: '帮扶计划已制定' },
-      { path: '/pages/student/assistance-feedback', expect: '可以评价的帮扶计划', data: '进度 50%' },
+      // 2026-10-03（W9 复核）：expect 原为「可以评价的帮扶计划」，是**过期判据** ——
+      // 第三十九轮 W5「帮扶页正名」(1084606d) 把这个 section-title 改成了「帮扶计划评价」，
+      // 探针这一行没跟着改 ⇒ 页面明明渲染了真数据（data「进度 50%」=true）却报到达失败。
+      // 改用「帮扶计划评价」：全仓只此一处（grep 过），且它在 `v-if="evaluatable.length"` 里面
+      // ⇒ 没有可评价计划时整块不渲染，判据仍然打得红（不是恒真的静态标签）。
+      { path: '/pages/student/assistance-feedback', expect: '帮扶计划评价', data: '进度 50%' },
       // 设置页全是开关，没有"只有真数据才出现"的字面量 —— 留空并让报告显式计入
       // 「没有数据判据」那一栏，别假装它被验过了。
       { path: '/pages/student/settings', expect: '消息接收', data: '' }
