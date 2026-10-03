@@ -182,11 +182,13 @@ const loadColleges = async () => {
     console.log('[AdminColleges] 开始加载学院列表...')
     const response = await adminAPI.getColleges()
     console.log('[AdminColleges] 获取响应:', response)
+    // 2026-10-02（W4.15）：原来这里还有一支 `else if (response.code === 200)`
+    // —— 响应拦截器（api/client.js）在 code===200 时**已经解开一层**并返回内层载荷，
+    // 所以 await 出来的就是数组本身，`response.code` 恒为 undefined，那一支**永不执行**。
+    // 死分支的害处不是"多写了几行"，而是让人以为接口有另一种返回形状。
     let data = []
     if (Array.isArray(response)) {
       data = response
-    } else if (response && response.code === 200) {
-      data = response.data || []
     } else {
       console.warn('[AdminColleges] 响应格式异常:', response)
     }
@@ -206,12 +208,12 @@ const loadMajors = async () => {
   try {
     console.log('[AdminColleges] 开始加载专业列表...')
     const response = await adminAPI.getMajors()
+    // 2026-10-02（W4.15）：删掉恒假的 `response.code === 200` 支（拦截器已解包）。
     if (Array.isArray(response)) {
       majorList.value = response
       console.log('[AdminColleges] 专业列表已加载:', majorList.value.length, '条数据')
-    } else if (response && response.code === 200) {
-      majorList.value = response.data || []
-      console.log('[AdminColleges] 专业列表已加载:', majorList.value.length, '条数据')
+    } else {
+      console.warn('[AdminColleges] 专业响应格式异常:', response)
     }
   } catch (error) {
     console.error('[AdminColleges] 加载专业列表失败:', error)
@@ -306,7 +308,15 @@ const confirmDelete = async () => {
     ElMessage.success('学院已删除')
     deleteDialogVisible.value = false
     collegeToDelete.value = null
-    collegeList.value = collegeList.value.filter(item => item.id !== collegeToDelete.value?.id)
+    // 2026-10-02（W4.3）：这里原来是
+    //   `collegeList.value.filter(item => item.id !== collegeToDelete.value?.id)`
+    // —— 上一行刚把它置成 null，`?.id` 求值成 undefined，`item.id !== undefined`
+    // **恒真**，于是过滤后一行不少：后端删成功了、页面上那行还在。
+    // 改成重新拉取（与 AdminCourses/AdminUsers 同形），顺带把"本院专业数"之类的
+    // 派生数据也刷新一遍，不必手工维护本地数组。
+    // 专业也要重拉：学院删掉后它名下的专业在后端一起没了，而本页的「专业数」
+    // 是用本地 majorList 现算的（getMajorCountByCollege），不重拉就会多算。
+    await Promise.all([loadColleges(), loadMajors()])
   } catch (error) {
     console.error('删除学院失败:', error)
     ElMessage.error('删除失败')

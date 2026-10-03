@@ -168,12 +168,8 @@ const loadAssistancePlans = async () => {
     ])
 
     // 解析学生列表
-    let students = []
-    if (studentsRes && studentsRes.code === 200) {
-      students = studentsRes.data || []
-    } else if (Array.isArray(studentsRes)) {
-      students = studentsRes
-    }
+    // 2026-10-02（W4.15）：删掉恒假的 `studentsRes.code === 200` 支（拦截器已解包）。
+    const students = Array.isArray(studentsRes) ? studentsRes : []
 
     const studentMap = {}
     students.forEach(s => {
@@ -183,12 +179,8 @@ const loadAssistancePlans = async () => {
     })
 
     // 解析帮扶计划
-    let rawPlans = []
-    if (plansRes && plansRes.code === 200) {
-      rawPlans = plansRes.data || []
-    } else if (Array.isArray(plansRes)) {
-      rawPlans = plansRes
-    }
+    // 2026-10-02（W4.15）：同上，删掉恒假的 `plansRes.code === 200` 支。
+    const rawPlans = Array.isArray(plansRes) ? plansRes : []
 
     // 映射后端字段到前端表格字段（后端 getCounselorPlans 未按辅导员过滤，这里展示全部返回数据）
     assistancePlans.value = rawPlans.map(p => {

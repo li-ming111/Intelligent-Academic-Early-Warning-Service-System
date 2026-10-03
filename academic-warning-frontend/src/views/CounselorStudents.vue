@@ -27,11 +27,19 @@
           <template #default="{ row }">{{ row.studentName || row.name || '--' }}</template>
         </el-table-column>
         <el-table-column prop="className" label="班级" min-width="120" show-overflow-tooltip></el-table-column>
-        <el-table-column prop="phone" label="联系电话" min-width="130"></el-table-column>
-        <el-table-column prop="email" label="邮箱" min-width="180" show-overflow-tooltip></el-table-column>
+        <!-- 2026-10-02（W4.11）：电话与邮箱取自 `users`（`student_profile` 没有这两列），
+             之前永远空白；状态原来是一个写死的 `正常`，改成读 `users.status`。 -->
+        <el-table-column label="联系电话" min-width="130">
+          <template #default="{ row }">{{ row.phone || '--' }}</template>
+        </el-table-column>
+        <el-table-column label="邮箱" min-width="180" show-overflow-tooltip>
+          <template #default="{ row }">{{ row.email || '--' }}</template>
+        </el-table-column>
         <el-table-column label="状态" width="100" align="center">
           <template #default="{ row }">
-            <el-tag type="success">正常</el-tag>
+            <el-tag v-if="row.userStatus === 1" type="success">正常</el-tag>
+            <el-tag v-else-if="row.userStatus === 0" type="warning">待审批</el-tag>
+            <el-tag v-else type="info">未知</el-tag>
           </template>
         </el-table-column>
         <el-table-column label="操作" width="180" fixed="right" align="center">
@@ -49,8 +57,8 @@
         <p><strong>学号：</strong>{{ selectedStudent.studentId }}</p>
         <p><strong>姓名：</strong>{{ selectedStudent.studentName }}</p>
         <p><strong>班级：</strong>{{ selectedStudent.className }}</p>
-        <p><strong>联系电话：</strong>{{ selectedStudent.phone }}</p>
-        <p><strong>邮箱：</strong>{{ selectedStudent.email }}</p>
+        <p><strong>联系电话：</strong>{{ selectedStudent.phone || '--' }}</p>
+        <p><strong>邮箱：</strong>{{ selectedStudent.email || '--' }}</p>
         <p><strong>获取学分：</strong>{{ selectedStudent.credits || '--' }} / {{ selectedStudent.requiredCredits || '--' }}</p>
         <p><strong>GPA：</strong>{{ selectedStudent.gpa || '--' }}</p>
       </div>
@@ -104,12 +112,8 @@ const loadStudents = async () => {
     const counselorId = localStorage.getItem('counselorId') || userId
     if (!counselorId) return
     const response = await counselorAPI.getStudents(counselorId)
-    let rawData = []
-    if (response && response.code === 200) {
-      rawData = response.data || []
-    } else if (Array.isArray(response)) {
-      rawData = response
-    }
+    // 2026-10-02（W4.15）：删掉恒假的 `response.code === 200` 支（拦截器已解包）。
+    const rawData = Array.isArray(response) ? response : []
     // 统一字段名：后端返回 name，前端统一使用 studentName
     allStudents.value = rawData.map(s => ({
       ...s,
@@ -141,8 +145,12 @@ const studentList = computed(() => {
   return list
 })
 
+// 2026-10-02（W4.S3）：筛选本来就是响应式的（`studentList` 是 computed，
+// 绑着 `searchName` 的 el-input，边输边筛），这个按钮不做任何过滤。
+// 它原来那句「搜索完成」至少没撒谎（条数真是筛完的），但读起来像"点了才筛"，
+// 所以改成陈述当前的筛选结果。
 const searchStudents = () => {
-  ElMessage.success('搜索完成，共 ' + studentList.value.length + ' 条结果')
+  ElMessage.success('当前筛选出 ' + studentList.value.length + ' 名学生')
 }
 
 // 导出当前**列表里正在显示**的那批（= 搜索/班级筛选之后的结果），

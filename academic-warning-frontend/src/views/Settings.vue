@@ -182,7 +182,8 @@ async function loadInfo() {
   const uid = getUserId(); if (!uid) return
   try {
     const res = await studentAPI.getStudentInfo(uid)
-    let d = res; if (res?.code === 200) d = res.data
+    // 2026-10-02（W4.15）：删掉恒假的 `res?.code === 200` 支（拦截器已解包）。
+    const d = res
     if (d) {
       Object.assign(userInfo, { studentId: d.studentId||localStorage.getItem('username')||'', name: d.name||'', className: d.className||d.class_name||'' })
       privacy.scoreVis = String(d.privacyLevel ?? 1)

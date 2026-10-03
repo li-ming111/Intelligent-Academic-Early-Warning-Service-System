@@ -220,8 +220,8 @@ async function loadSemesterData() {
 function parseBenchmark(res) {
   // res可能直接是数据对象，或ApiResponse包裹
   let data = res
+  // 2026-10-02（W4.15）：删掉恒假的 `res?.code === 200` 支（拦截器已解包，`res.code` 恒 undefined）。
   if (res?.data && !res.code) data = res.data
-  else if (res?.code === 200 && res?.data) data = res.data
   // data可能是BenchmarkAnalysis实体 {studentGpa,classAvgGpa,majorAvgGpa,classRank,classTotal,...}
   // 也可能是fallback Map {gpa,classAverage,departmentAverage,rank,totalStudents,courses}
   if (data && typeof data === 'object') {

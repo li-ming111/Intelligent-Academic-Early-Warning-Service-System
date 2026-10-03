@@ -50,7 +50,17 @@ const filtered = computed(() => filter.value ? feedbacks.value.filter(f => f.cat
 onMounted(() => loadData())
 
 async function loadData() {
-  try { const tid = localStorage.getItem('teacherId') || getUserId() || '29'; const r = await teacherAPI.getFeedbacks(tid); if (Array.isArray(r)) feedbacks.value = r } catch(e){ console.error(e) }
+  // 2026-10-02（W4.16）：原来 `if (Array.isArray(r)) feedbacks.value = r` **没有 else**
+  // —— 后端一旦回了非数组（错误体、分页对象），列表就静静地保持空，页面显示「暂无反馈」，
+  // 与"这个老师确实没有反馈"一模一样。现在非数组一律报错。
+  // （`'29'` 这个兜底保留：活库 `classes.teacher_id=29` 是真教师 `10001` 的三个班，
+  //   未登录直开页面时用它演示；正常登录后走 `getUserId()`。）
+  try {
+    const tid = localStorage.getItem('teacherId') || getUserId() || '29'
+    const r = await teacherAPI.getFeedbacks(tid)
+    if (Array.isArray(r)) feedbacks.value = r
+    else { console.error('反馈列表返回了非数组', r); feedbacks.value = []; ElMessage.error('反馈列表加载失败') }
+  } catch(e){ console.error(e); ElMessage.error('反馈列表加载失败') }
 }
 function fmtDate(d) { if (!d) return '--'; return String(d).replace('T',' ').substring(0,16) }
 function openReply(f) { replyRow.value = f; replyText.value = ''; replyVisible.value = true }

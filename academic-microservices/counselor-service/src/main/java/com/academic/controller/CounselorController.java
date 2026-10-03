@@ -324,6 +324,17 @@ public class CounselorController {
                 item.put("status", w.getStatus());
                 item.put("createdAt", w.getCreatedAt());
                 item.put("className", studentClassMap.getOrDefault(w.getStudentId(), "未知班级"));
+                // 2026-10-02（W4.4）：PC 预警页的「详情」原来只弹一句 toast
+                // （`ElMessage.info('X的预警详情')`），因为这个列表**只回了上面那 8 个 key**，
+                // 页面就算想显示也别无数据。这几个列本来就在 `academic_warning` 表里、
+                // 实体上也有 getter，只是没被塞进 map。扩宽投影，让详情弹窗有真东西可显示。
+                item.put("title", w.getTitle());
+                item.put("failCount", w.getFailCount());
+                item.put("warningMessage", w.getWarningMessage());
+                item.put("handledBy", w.getHandledBy());
+                item.put("handleResult", w.getHandleResult());
+                item.put("handledAt", w.getHandledAt());
+                item.put("updatedAt", w.getUpdatedAt());
                 warnings.add(item);
             }
             return ApiResponse.success(warnings);
@@ -1060,12 +1071,50 @@ public class CounselorController {
             @PathVariable Long classId,
             @RequestParam("counselor_id") Long counselorId) {
         try {
+            // 2026-10-02（W4.12）：`counselor_id` 以前**收了但从没用过** —— 任何一个辅导员
+            // 拿别人的 classId 就能读整个班的成绩（与学院管理员的跨院花名册同型，见 W1.13）。
+            // 现在按「这个班是不是该辅导员带的」放行。
+            //
+            // 注意：不能因为校验失败就回空列表 —— 那与"这个班没成绩"在页面上长得一样，
+            // 会把"越权"讲成"暂无数据"。回 403 是为了让越权与空数据可区分。
+            if (!isClassOfCounselor(classId, counselorId)) {
+                return ApiResponse.forbidden("该班级不属于当前辅导员");
+            }
             List<Map<String, Object>> scores = scoreMapper.getScoresByClassId(classId);
             return ApiResponse.success(scores);
         } catch (Exception e) {
             log.error("获取班级成绩失败: {}", e.getMessage());
             return ApiResponse.serverError("获取班级成绩失败: " + e.getMessage());
         }
+    }
+
+    /**
+     * 该班级是否属于这个辅导员（{@code classes.counselor_id} 存的是 users.id）。
+     *
+     * <p>{@code counselorId} 为空时返回 {@code false}（拒绝），而不是放行 ——
+     * 缺参数不该等价于"有权限"。
+     *
+     * <p>取回 {@code null} 时也返回 {@code false}。{@code ClassInfoService} 现在
+     * 内部 catch 了异常、最坏回空列表，所以这一分支今天到不了；但**"拒绝"必须是这句判断
+     * 得出的，不能靠下面抛 NPE 兜底** —— 那样子类化/换实现之后拒绝会变成 500，
+     * 越权与"服务出错了"在客户端就分不清了。（这条是 W4.12 的用例
+     * {@code CounselorClassScoreAccessTest.classLookupFails_closed} 逼出来的。）
+     */
+    private boolean isClassOfCounselor(Long classId, Long counselorId) {
+        if (classId == null || counselorId == null) {
+            return false;
+        }
+        List<Map<String, Object>> owned = classInfoService.getClassesByCounselorId(counselorId);
+        if (owned == null) {
+            return false;
+        }
+        for (Map<String, Object> clazz : owned) {
+            Object id = clazz == null ? null : clazz.get("id");
+            if (id instanceof Number && ((Number) id).longValue() == classId.longValue()) {
+                return true;
+            }
+        }
+        return false;
     }
 
     @GetMapping("/scores/distribution/{courseId}")

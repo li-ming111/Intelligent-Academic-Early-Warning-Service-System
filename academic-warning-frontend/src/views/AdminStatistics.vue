@@ -78,6 +78,9 @@ import { ref, reactive, onMounted, nextTick } from 'vue'
 import * as echarts from 'echarts'
 import { ElMessage } from 'element-plus'
 import { adminAPI } from '@/api/index'
+// 2026-10-02（W4）：导出要用这两个 —— 直接存 blob 会把"后端回了 JSON 错误体"
+// 或"零字节文件"当成导出成功。
+import { saveBlobAsFile, describeDownloadError } from '@/utils/download'
 
 const pieRef = ref(null)
 const barRef = ref(null)
@@ -188,9 +191,16 @@ async function refresh() {
 async function doExport() {
   exporting.value = true
   try {
-    await adminAPI.exportStatistics()
+    // 2026-10-02（W4）：原来这里 `await adminAPI.exportStatistics()` 之后**把返回值丢掉**，
+    // 直接弹"导出成功" —— 文件从来没被保存过（既没 createObjectURL 也没有 <a download>）。
+    // 这是本工程记录过的"点了就说成功"那一族，只不过它连响应体都没用上。
+    // 现在走共用的 saveBlobAsFile：它会把"错误 JSON"和"零字节"都判成失败。
+    const blob = await adminAPI.exportStatistics()
+    await saveBlobAsFile(blob, `统计分析_${new Date().toISOString().slice(0, 10)}.xlsx`)
     ElMessage.success('导出成功')
-  } catch (e) { ElMessage.error('导出失败') }
+  } catch (e) {
+    ElMessage.error(await describeDownloadError(e))
+  }
   exporting.value = false
 }
 </script>

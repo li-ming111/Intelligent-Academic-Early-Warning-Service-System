@@ -60,4 +60,22 @@ public class Student {
     /** 学分加权绩点，口径见 {@code ScoreCaliber.STUDENT_GPA}。 */
     @TableField(exist = false)
     private Double gpa;
+
+    // ------------------------------------------------------------------
+    // 2026-10-02（W4.11）：辅导员端「学生管理」页的「状态」列原先写死 "正常"，
+    // 「联系电话 / 邮箱」两列读的 phone/email 也永远是 null（见上）。
+    // 这三样都在 `users` 表上，由 counselor-service 的 StudentServiceImpl
+    // 按 user_id 批量取回后填进来。取不到就是 null —— 前端照实显示，不编。
+    // ------------------------------------------------------------------
+
+    /**
+     * 账号状态：{@code 1} 正常 / {@code 0} 待审批。
+     *
+     * <p>口径是 {@code users.status}，**不是** {@code student_profile} 上的任何列
+     * （该表没有状态列）。按本工程的注册口径，学生账号一律 {@code 1}（直接可用），
+     * 只有教师/辅导员会停在 {@code 0}（待审批）；但管理员可以在用户管理里停用账号，
+     * 所以这一列**是会变的**，不能当成常量写死在页面上。
+     */
+    @TableField(exist = false)
+    private Integer userStatus;
 }

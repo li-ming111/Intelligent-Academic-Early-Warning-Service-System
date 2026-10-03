@@ -110,9 +110,9 @@ onMounted(async () => {
   try {
     const tid = localStorage.getItem('teacherId') || '29'
     const res = await teacherAPI.getScoreLogs(tid, 1, 500)
+    // 2026-10-02（W4.15）：删掉恒假的 `res?.code === 200` 支（拦截器已解包）。
     if (Array.isArray(res)) auditLogs.value = res
     else if (res?.list) auditLogs.value = res.list
-    else if (res?.code === 200 && res?.data) auditLogs.value = res.data
   } catch (e) { ElMessage.error('加载失败') }
   finally { loading.value = false }
 })

@@ -19,7 +19,10 @@
             最后更新：{{ today }}
           </p>
           <div class="hero-tags">
-            <span class="htag">{{ classInfo.classIdentifier || '计科2306班' }}</span>
+            <!-- 2026-10-02（W4.9）：这里的兜底原先是写死的 `'计科2306班'` ——
+                 接口没回来时，**任何**学生都会看到"计科2306班"这个具体班名。
+                 同一个兜底文案在小程序端也出现过（已改）。没班级就说没班级。 -->
+            <span class="htag">{{ classInfo.classIdentifier || '未分班' }}</span>
             <span class="htag" v-if="academicData.warningLevel !== '正常'">预警 {{ academicData.warningLevel }}</span>
             <span class="htag safe" v-else>状态良好</span>
           </div>
@@ -224,6 +227,23 @@
               <div class="sc-icon sc-teal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></div>
               <span>帮扶计划</span>
             </router-link>
+            <!-- 2026-10-02（W4.7）：下面三个页面此前**有路由、无入口** ——
+                 `/student/assistance-feedback`、`/student/class-members`、
+                 `/student/class-ranking` 在 router 里注册了、页面也实现了，
+                 但没有任何地方能点进去（只能手敲地址）。功能"存在"和功能"能用"是两回事。
+                 这里补上入口，与上方既有快捷入口同一形状。 -->
+            <router-link to="/student/class-members" class="sc-item">
+              <div class="sc-icon sc-blue"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/></svg></div>
+              <span>班级成员</span>
+            </router-link>
+            <router-link to="/student/class-ranking" class="sc-item">
+              <div class="sc-icon sc-amber"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 21h8"/><path d="M12 17v4"/><path d="M7 4h10v6a5 5 0 01-10 0z"/><path d="M17 6h3v2a3 3 0 01-3 3"/><path d="M7 6H4v2a3 3 0 003 3"/></svg></div>
+              <span>班级排名</span>
+            </router-link>
+            <router-link to="/student/assistance-feedback" class="sc-item">
+              <div class="sc-icon sc-green"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/><line x1="8" y1="10" x2="16" y2="10"/></svg></div>
+              <span>帮扶反馈</span>
+            </router-link>
           </div>
         </div>
       </div>
@@ -276,7 +296,8 @@ async function loadAll() {
 async function loadDashboard(uid) {
   try {
     const res = await studentAPI.getDashboard(uid)
-    let data = res; if (res?.code === 200 && res?.data) data = res.data
+    // 2026-10-02（W4.15）：删掉恒假的 `res?.code === 200` 支（拦截器已解包）。
+    const data = res
     if (data && typeof data === 'object') {
       academicData.value = {
         gpa: parseFloat(data.gpa) || 0,
@@ -311,8 +332,9 @@ async function loadSuggestions(uid) {
 async function loadClass(uid) {
   try {
     const r = await studentAPI.getClassInfo(uid)
-    let d = r; if (r?.code === 200 && r?.data) d = r.data
-    if (d?.classIdentifier) classInfo.value = d
+    // 2026-10-02（W4.15）：删掉恒假的 `r?.code === 200` —— 拦截器（api/client.js）
+    // 在 code===200 时已经解开一层，await 出来的就是内层载荷，`r.code` 恒 undefined。
+    if (r?.classIdentifier) classInfo.value = r
   } catch(e){}
 }
 </script>

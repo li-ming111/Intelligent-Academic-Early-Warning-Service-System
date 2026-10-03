@@ -343,7 +343,11 @@
             <el-tag type="primary" size="small">{{ currentClass?.name }}</el-tag>
           </el-descriptions-item>
           <el-descriptions-item label="状态" :label-width="80">
-            <el-tag type="success" size="small">正常</el-tag>
+            <!-- 2026-10-02（W4.11）：原来写死 `正常`；改读 `users.status`
+                 （后端 `/teachers/classes/{id}/students` 已回 `userStatus`）。 -->
+            <el-tag v-if="currentStudent.userStatus === 1" type="success" size="small">正常</el-tag>
+            <el-tag v-else-if="currentStudent.userStatus === 0" type="warning" size="small">待审批</el-tag>
+            <el-tag v-else type="info" size="small">未知</el-tag>
           </el-descriptions-item>
         </el-descriptions>
         
@@ -679,11 +683,9 @@ const openStudentImportDialog = (clazz) => {
   studentImportDialogVisible.value = true
 }
 
-// 查看班级详情
-const viewClassDetails = (clazz) => {
-  ElMessage.info(`班级详情：${clazz.name}，学生数：${clazz.studentCount}`)
-  console.log('班级详情:', clazz)
-}
+// 2026-10-02（W4）：`viewClassDetails` 已删 —— 它是一个只弹 toast 的桩，
+// 而且**模板里没有任何按钮引用它**（全文件仅此一处定义，grep 计数为 1）。
+// 与 AdminRules 的 `testRule` 同型：没被调用的死代码。
 
 // 查看学生列表
 const viewStudents = async (clazz) => {

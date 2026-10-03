@@ -81,6 +81,32 @@ public class StudentServiceImpl extends ServiceImpl<StudentMapper, Student> impl
                 }
             }
         }
+
+        // 2026-10-02（W4.11）：电话 / 邮箱 / 账号状态在 `users` 表上，
+        // 而辅导员「学生管理」页的三列（含导出的 CSV 表头）读的正是 Student.phone /
+        // Student.email 与一个写死的"正常"。这三个字段标了 @TableField(exist = false)，
+        // selectList 不会带出来 —— 一次批量取回后填上，取不到保持 null（前端按 '--'）。
+        List<Long> userIds = new ArrayList<>();
+        for (Student s : students) {
+            if (s.getUserId() != null) userIds.add(s.getUserId());
+        }
+        if (!userIds.isEmpty()) {
+            Map<Long, Map<String, Object>> contacts = new java.util.HashMap<>();
+            for (Map<String, Object> row : baseMapper.selectUserContacts(userIds)) {
+                Object uid = row.get("id");
+                if (uid != null) contacts.put(((Number) uid).longValue(), row);
+            }
+            for (Student s : students) {
+                Map<String, Object> row = contacts.get(s.getUserId());
+                if (row == null) continue;
+                Object phone = row.get("phone");
+                Object email = row.get("email");
+                Object status = row.get("status");
+                if (phone != null) s.setPhone(phone.toString());
+                if (email != null) s.setEmail(email.toString());
+                if (status instanceof Number) s.setUserStatus(((Number) status).intValue());
+            }
+        }
         return students;
     }
 

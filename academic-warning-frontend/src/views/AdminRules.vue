@@ -388,7 +388,10 @@ const confirmDelete = async () => {
     ElMessage.success('规则已删除')
     deleteDialogVisible.value = false
     ruleToDelete.value = null
-    rulesList.value = rulesList.value.filter(item => item.id !== ruleToDelete.value?.id)
+    // 2026-10-02（W4.3）：原来这里是 `filter(item => item.id !== ruleToDelete.value?.id)`，
+    // 而上一行刚把它置 null ⇒ 比较的是 undefined ⇒ 过滤恒真 ⇒ 行不消失。
+    // 改成重新拉取（与 AdminCourses/AdminUsers 同形）。
+    await loadRules()
   } catch (error) {
     console.error('删除规则失败:', error)
     ElMessage.error('删除失败')

@@ -850,10 +850,9 @@ export const adminAPI = {
   deleteCourse: (courseId) => {
     return apiClient.delete(`/admin/courses/${courseId}`)
   },
-  getCourseRequirements: () => {
-    // 临时返回空数组，后端需实现该端点
-    return Promise.resolve([])
-  },
+  // 2026-10-02（W4.17）：删掉 `getCourseRequirements` —— 它 `Promise.resolve([])`
+  // 假装成"后端端点"，而全仓零调用方（已 grep 确认），也没人为它补端点。
+  // 留着的话，谁哪天调了就会拿到一个**永远为空**的"成功"结果。
   exportInsufficientStudents: () => {
     return apiClient.get(`/admin/export/insufficient-students`, { responseType: 'blob' })
   },

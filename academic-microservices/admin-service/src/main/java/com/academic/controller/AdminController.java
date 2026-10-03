@@ -1498,10 +1498,55 @@ public class AdminController {
         return ApiResponse.notFound("Major not found");
     }
 
+    /**
+     * 新建专业。
+     *
+     * <p>2026-10-02（W4.14）：{@code majors.code} 是 <b>NOT NULL + UNIQUE</b>，
+     * 而 PC 端此前是**在前端自己编**：{@code String(maxId + 1).padStart(2, '0')}
+     * —— 两个问题：①{@code maxId} 取自**当前列表**，而列表可能正被学院筛选过，
+     * 于是生成出已存在的码，撞 UNIQUE 报错；②它拿的是 {@code id} 而不是 {@code code}，
+     * 只是活库里两者恰好对齐（1→01、2→02…）才没出事。
+     *
+     * <p>现在改成**后端生成**：请求体不带 {@code code}（或留空）时，按全表
+     * {@code code} 里最大的数字 +1 生成两位码。全表扫，不看任何筛选后的列表。
+     * 显式传了 {@code code} 就照用（小程序端就是让管理员自己填的）。
+     */
     @PostMapping("/majors")
     public ApiResponse<String> createMajor(@RequestBody Major major) {
+        if (major.getCode() == null || major.getCode().trim().isEmpty()) {
+            major.setCode(nextMajorCode());
+        }
         majorService.save(major);
         return ApiResponse.success("Major created successfully");
+    }
+
+    /**
+     * 生成下一个专业码：全表 {@code code} 中数字部分的最大值 +1，补足两位。
+     *
+     * <p>非纯数字的码（历史上可能有人填过 {@code CS01} 之类）不参与比较，
+     * 不能解析就跳过 —— 静默当成 0 会让下一个码退回到 {@code 01} 撞唯一键。
+     * 生成后仍可能与某个非数字码撞车，所以外面套一层存在性检查。
+     */
+    private String nextMajorCode() {
+        java.util.Set<String> taken = new java.util.HashSet<>();
+        int max = 0;
+        for (Major m : majorService.list()) {
+            String c = m.getCode() == null ? null : m.getCode().trim();
+            if (c == null || c.isEmpty()) continue;
+            taken.add(c);
+            try {
+                max = Math.max(max, Integer.parseInt(c));
+            } catch (NumberFormatException ignore) {
+                // 非纯数字码：只登记占用，不参与取最大值
+            }
+        }
+        int next = max + 1;
+        String code = String.format("%02d", next);
+        while (taken.contains(code)) {
+            next++;
+            code = String.format("%02d", next);
+        }
+        return code;
     }
 
     @PutMapping("/majors/{id}")

@@ -178,9 +178,8 @@ async function loadAllCourses() {
   try {
     // 使用教师端 GET /courses（不传 teacher_id 参数获取全部课程）
     const res = await teacherAPI.getAllCourses()
-    let raw = []
-    if (Array.isArray(res)) raw = res
-    else if (res?.code === 200 && res?.data) raw = res.data
+    // 2026-10-02（W4.15）：删掉恒假的 `res?.code === 200` 支（拦截器已解包）。
+    const raw = Array.isArray(res) ? res : []
     allCourses.value = raw
     courseSearchResults.value = raw
   } catch (e) { /* 降级 */ }
@@ -211,9 +210,8 @@ async function loadMyClasses() {
     if (Array.isArray(res)) {
       myClasses.value = res
       console.log('[TeacherCourses] classes loaded:', res.length)
-    } else if (res?.code === 200 && res?.data) {
-      myClasses.value = res.data
     } else {
+      // 2026-10-02（W4.15）：删掉中间的 `res?.code === 200` 支（拦截器已解包，恒假）。
       console.warn('[TeacherCourses] unexpected response:', res)
     }
   } catch (e) {
@@ -241,13 +239,9 @@ async function loadData() {
       teacherAPI.getCourses(tid).catch(() => null),
       teacherAPI.getEnrollments(tid).catch(() => null)
     ])
-    let assignedCourses = []
-    if (Array.isArray(coursesRes)) assignedCourses = coursesRes
-    else if (coursesRes?.code === 200 && coursesRes?.data) assignedCourses = coursesRes.data
-
-    let allEnrollments = []
-    if (Array.isArray(enrollRes)) allEnrollments = enrollRes
-    else if (enrollRes?.code === 200 && enrollRes?.data) allEnrollments = enrollRes.data
+    // 2026-10-02（W4.15）：两处 `?.code === 200` 支都是恒假的（拦截器已解包）。
+    const assignedCourses = Array.isArray(coursesRes) ? coursesRes : []
+    const allEnrollments = Array.isArray(enrollRes) ? enrollRes : []
 
     const courseMap = new Map()
     // `rating` 这个 key 从头到尾没有任何一列、也没有任何模板读它，2026-10-01 第二十一轮删。

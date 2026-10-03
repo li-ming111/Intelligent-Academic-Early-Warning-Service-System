@@ -159,7 +159,13 @@
           <el-descriptions-item label="学号">{{ currentStudent.studentId }}</el-descriptions-item>
           <el-descriptions-item label="姓名">{{ currentStudent.studentName }}</el-descriptions-item>
           <el-descriptions-item label="班级"><el-tag type="primary" size="small">{{ currentClass?.name }}</el-tag></el-descriptions-item>
-          <el-descriptions-item label="状态"><el-tag type="success" size="small">正常</el-tag></el-descriptions-item>
+          <!-- 2026-10-02（W4.11）：原来写死 `正常`。现在读 `users.status`
+               （后端 `/counselors/classes/{id}/students` 已回 `userStatus`）。 -->
+          <el-descriptions-item label="状态">
+            <el-tag v-if="currentStudent.userStatus === 1" type="success" size="small">正常</el-tag>
+            <el-tag v-else-if="currentStudent.userStatus === 0" type="warning" size="small">待审批</el-tag>
+            <el-tag v-else type="info" size="small">未知</el-tag>
+          </el-descriptions-item>
         </el-descriptions>
       </div>
       <template #footer><el-button @click="studentDetailDialogVisible = false">关闭</el-button></template>

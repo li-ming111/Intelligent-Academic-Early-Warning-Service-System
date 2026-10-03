@@ -310,9 +310,8 @@ async function loadData() {
   try {
     const tid = localStorage.getItem('userId') || localStorage.getItem('teacherId') || '29'
     const enrollRes = await teacherAPI.getEnrollments(tid)
-    let allEnrollments = []
-    if (Array.isArray(enrollRes)) allEnrollments = enrollRes
-    else if (enrollRes?.code === 200 && enrollRes?.data) allEnrollments = enrollRes.data
+    // 2026-10-02（W4.15）：删掉恒假的 `enrollRes?.code === 200` 支（拦截器已解包）。
+    const allEnrollments = Array.isArray(enrollRes) ? enrollRes : []
 
     // 毕业学分预测（全部课程）
     const studentMap = new Map()

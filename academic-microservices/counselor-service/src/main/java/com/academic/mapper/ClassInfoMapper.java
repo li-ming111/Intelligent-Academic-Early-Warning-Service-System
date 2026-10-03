@@ -56,6 +56,10 @@ public interface ClassInfoMapper extends BaseMapper<ClassInfo> {
      * {@code academic_warning.student_id} / {@code scores.student_id} 的外键值。
      * 凡是要拿这个列表回去查这两张表的调用方, **必须用 profileId**。
      */
-    @Select("SELECT sp.student_id as studentId, sp.id as profileId, u.name as studentName, sp.gender, u.phone FROM student_profile sp JOIN users u ON sp.user_id = u.id WHERE sp.class_id = #{classId}")
+    @Select("SELECT sp.student_id as studentId, sp.id as profileId, u.name as studentName, sp.gender, u.phone, "
+          // 2026-10-02（W4.11）：`users.status` —— 辅导员「学生详情」的状态格原来写死"正常"。
+          + "       u.status as userStatus "
+          + "  FROM student_profile sp JOIN users u ON sp.user_id = u.id "
+          + " WHERE sp.class_id = #{classId}")
     List<Map<String, Object>> getStudentsByClassIdMap(@Param("classId") Long classId);
 }

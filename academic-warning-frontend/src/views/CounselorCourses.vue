@@ -34,7 +34,8 @@
         </div>
         <div class="ccs-body">
           <div class="ccs-num amber">{{ stats.insufficientCount }}</div>
-          <div class="ccs-lbl">学分预警</div>
+          <!-- 2026-10-02（W4.12）：这一格数的是"有挂科的学生"，不是"学分低于某条线"。 -->
+          <div class="ccs-lbl">有挂科学生</div>
         </div>
       </div>
       <div class="ccs-card purple">
@@ -54,7 +55,9 @@
         <el-option v-for="cls in classList" :key="cls.id" :label="cls.name" :value="cls.id" />
       </el-select>
       <el-input v-model="searchName" placeholder="搜索学生姓名" clearable style="width: 200px;" />
-      <el-tag v-if="selectedClassId" type="info" effect="plain">学分达标线: 8学分</el-tag>
+      <!-- 2026-10-02（W4.12）：原来写"学分达标线: 8学分"—— 8 这个数全仓没有来源。
+           改为如实写出本页使用的口径（与「学分监控」页一致）。 -->
+      <el-tag v-if="selectedClassId" type="info" effect="plain">达标口径：已录入成绩的课程全部通过</el-tag>
     </div>
 
     <!-- 学生修读详情表 -->
@@ -70,15 +73,17 @@
             <el-tag size="small" effect="plain" type="info">{{ row.courseCount || 0 }}门</el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="已获学分" width="100" align="center">
+        <el-table-column label="已获学分" width="110" align="center">
           <template #default="{ row }">
-            <span :class="row.totalCredits < 8 ? 'credits-low' : 'credits-ok'">{{ (row.totalCredits || 0).toFixed(1) }}</span>
+            <span :class="row.achieved ? 'credits-ok' : 'credits-low'">{{ (row.earnedCredits || 0).toFixed(1) }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="达标状态" width="100">
+        <el-table-column label="达标状态" width="120">
           <template #default="{ row }">
-            <el-tag :type="row.totalCredits >= 8 ? 'success' : 'danger'" size="small">
-              {{ row.totalCredits >= 8 ? '已达标' : '缺' + (8 - row.totalCredits).toFixed(1) + '分' }}
+            <!-- 2026-10-02（W4.12）：原来判 `totalCredits >= 8` 并显示"缺X分"。
+                 现在按项目口径判"有没有挂科"，缺的是**因挂科未拿到的学分**（真实减法）。 -->
+            <el-tag :type="row.achieved ? 'success' : 'danger'" size="small">
+              {{ row.achieved ? '已达标' : row.failedCourses + '门挂科·缺' + (row.lostCredits || 0).toFixed(1) + '分' }}
             </el-tag>
           </template>
         </el-table-column>
@@ -105,7 +110,8 @@
     <!-- 学分不足预警 -->
     <div class="cc-card" v-if="insufficientList.length > 0" style="margin-top: 18px;">
       <div class="ccc-head warn">
-        <span>学分不足预警</span>
+        <!-- 2026-10-02（W4.12）：正名 —— 列的是"有挂科"的学生（口径同「学分监控」页）。 -->
+        <span>挂科学生（学分未修满）</span>
         <span class="ccc-badge danger">{{ insufficientList.length }}人</span>
       </div>
       <div class="cc-warn-grid">
@@ -113,8 +119,9 @@
           <div class="ccw-avatar">{{ (s.studentName || '?').charAt(0) }}</div>
           <div class="ccw-info">
             <div class="ccw-name">{{ s.studentName }}</div>
-            <div class="ccw-meta">已修 {{ s.totalCredits.toFixed(1) }} / 需修 8.0 学分 · 均分 {{ s.avgScore ? s.avgScore.toFixed(0) : '--' }}</div>
-            <div class="ccw-bar"><div class="ccw-fill" :style="{ width: (s.totalCredits / 8 * 100) + '%' }"></div></div>
+            <div class="ccw-meta">已修 {{ s.totalCredits.toFixed(1) }} 学分 · 通过 {{ s.earnedCredits.toFixed(1) }} · 挂科 {{ s.failedCourses }} 门 · 均分 {{ s.avgScore ? s.avgScore.toFixed(0) : '--' }}</div>
+            <!-- 进度条画"已通过学分 / 已修学分"，不再拿一个凭空的 8 当分母 -->
+            <div class="ccw-bar"><div class="ccw-fill" :style="{ width: (s.totalCredits > 0 ? (s.earnedCredits / s.totalCredits * 100) : 0) + '%' }"></div></div>
           </div>
           <el-button type="warning" size="small" plain @click="notifyStudent(s)">提醒</el-button>
         </div>
@@ -126,17 +133,22 @@
       <div v-if="detailStudent" class="cc-detail">
         <div class="ccd-summary">
           <div class="ccds-item"><label>已修课程</label><b>{{ detailStudent.courseCount }}门</b></div>
-          <div class="ccds-item"><label>已获学分</label><b>{{ detailStudent.totalCredits?.toFixed(1) }}</b></div>
+          <div class="ccds-item"><label>已获学分</label><b>{{ detailStudent.earnedCredits?.toFixed(1) }}</b></div>
           <div class="ccds-item"><label>平均分</label><b>{{ detailStudent.avgScore?.toFixed(1) || '--' }}</b></div>
           <div class="ccds-item"><label>达标状态</label>
-            <el-tag :type="detailStudent.totalCredits >= 8 ? 'success' : 'danger'" size="small">{{ detailStudent.totalCredits >= 8 ? '已达标' : '未达标' }}</el-tag>
+            <el-tag :type="detailStudent.achieved ? 'success' : 'danger'" size="small">
+              {{ detailStudent.achieved ? '已达标' : '挂科 ' + detailStudent.failedCourses + ' 门，缺 ' + (detailStudent.lostCredits || 0).toFixed(1) + ' 学分' }}
+            </el-tag>
           </div>
         </div>
         <div class="ccd-courses" v-if="detailCourses.length">
           <div class="ccdc-title">课程明细</div>
           <div v-for="c in detailCourses" :key="c.courseName" class="ccdc-item">
             <span class="ccdci-name">{{ c.courseName }}</span>
-            <span class="ccdci-score" :class="c.score >= 60 ? 'pass' : 'fail'">{{ c.score }}分</span>
+            <!-- 2026-10-02（W4.12）：原来判 `c.score >= 60`，而 score 是字符串 →
+                 '待录入' >= 60 恒 false ⇒ 未录入的一律标红"不及格"；
+                 数字字符串 `'75.0' >= 60` 恰好是对的，纯属巧合。改用后端算好的布尔。 -->
+            <span class="ccdci-score" :class="c.failed ? 'fail' : 'pass'">{{ c.scoreText }}</span>
           </div>
         </div>
         <div v-else class="ccd-empty">暂无课程明细</div>
@@ -177,9 +189,8 @@ const loadClasses = async () => {
     const uid = getUserId()
     if (!uid) return
     const res = await counselorAPI.getClasses(uid)
-    let raw = []
-    if (Array.isArray(res)) raw = res
-    else if (res?.code === 200 && res?.data) raw = res.data
+    // 2026-10-02（W4.15）：删掉恒假的 `res?.code === 200` 支（拦截器已解包）。
+    const raw = Array.isArray(res) ? res : []
     classList.value = raw
     if (raw.length > 0) {
       selectedClassId.value = raw[0].id
@@ -201,9 +212,8 @@ const loadEnrollments = async (classId) => {
     if (!uid) return
     // 使用 getClassScores 按 classId 精准获取 + SQL JOIN 含 course_name/credits
     const res = await counselorAPI.getClassScores(uid, classId)
-    let raw = []
-    if (Array.isArray(res)) raw = res
-    else if (res?.code === 200 && res?.data) raw = res.data
+    // 2026-10-02（W4.15）：删掉恒假的 `res?.code === 200` 支（拦截器已解包）。
+    const raw = Array.isArray(res) ? res : []
     allEnrollments.value = raw
   } catch (e) { console.error('加载成绩数据失败', e) }
 }
@@ -218,6 +228,18 @@ const buildStudentList = () => {
   }
 
   // 按学生聚合 (snake_case 字段: student_id, student_name, course_id, course_name, credits, score_total)
+  //
+  // 2026-10-02（W4.12）：「达标」的口径统一到项目既有定义，不再自己写一条线。
+  // 本页原来用 `totalCredits < 8`（"毕业学分线 8"）判定，而：
+  //   · 8 这个数**全仓没有任何来源** —— 后端 `ScoreCaliber.GRADUATION_CREDITS` 是 120，
+  //     且注释写明"目前无对应数据表，全项目只此一处"；
+  //   · 同一个辅导员端，「学分监控」页（`CounselorCreditMonitor.vue`，走
+  //     `ScoreMapper.getClassScoreStatsByCounselorId`）的口径是
+  //     **"该生所有已录入成绩的课程均已通过"**，压根不是学分数量比较。
+  // 于是同一个辅导员在两个页面上看到两种"达标"，数字互相打架。这里改用后一种口径。
+  //
+  // 数据源本身已按课程去重：`getScoresByClassId` 走 `ScoreCaliber.LATEST_VALID_SCORE`，
+  // 每 (学生, 课程) 只出一行、且已过滤掉期末未录入的。
   const studentMap = new Map()
   raw.forEach(e => {
     const sid = e.student_id
@@ -228,32 +250,43 @@ const buildStudentList = () => {
         studentName: e.student_name || '学生' + sid,
         scores: [],
         courseNames: new Set(),
-        totalCredits: 0,
-        seenCourses: new Set()
+        attemptedCredits: 0,
+        earnedCredits: 0,
+        failedCourses: 0
       })
     }
     const s = studentMap.get(sid)
-    s.scores.push(e.score_total || 0)
-    const cid = e.course_id || e.course_name
-    // 去重：同一课程只算一次学分
-    if (!s.seenCourses.has(cid)) {
-      s.seenCourses.add(cid)
-      s.totalCredits += Number(e.credits || 0)
-      s.courseNames.add(e.course_name || '课程' + cid)
+    const score = e.score_total === null || e.score_total === undefined ? null : Number(e.score_total)
+    // ⚠️ 未录入（null）**不计入**挂科，也不计进均分 —— 这正是 ScoreCaliber 第 3 条口径。
+    // 老代码写 `e.score_total || 0` 会把 null 变成 0 分，未录入的课被算成不及格。
+    if (score !== null) {
+      s.scores.push(score)
+      if (score < 60) s.failedCourses++
     }
+    const credits = Number(e.credits || 0)
+    s.attemptedCredits += credits
+    if (score !== null && score >= 60) s.earnedCredits += credits
+    s.courseNames.add(e.course_name || '课程' + e.course_id)
   })
 
   const list = Array.from(studentMap.values()).map(s => ({
     studentId: s.studentId,
     studentName: s.studentName,
-    courseCount: s.seenCourses.size,
-    totalCredits: s.totalCredits,
+    courseCount: s.courseNames.size,
+    // 保留 `totalCredits` 这个名字：模板与详情弹窗都在用，语义 = 已修（尝试）学分。
+    totalCredits: s.attemptedCredits,
+    earnedCredits: s.earnedCredits,
+    // 因挂科而未拿到的学分 = 已修 − 已通过。纯减法，不是估的。
+    lostCredits: Math.max(s.attemptedCredits - s.earnedCredits, 0),
+    failedCourses: s.failedCourses,
+    // 达标 = 没有挂科（项目既有口径），不跟任何数字比大小。
+    achieved: s.failedCourses === 0,
     avgScore: s.scores.length ? s.scores.reduce((a, b) => a + Number(b), 0) / s.scores.length : 0,
     recentCourses: [...s.courseNames].slice(-3).join('、')
   }))
 
   studentList.value = list
-  insufficientList.value = list.filter(s => s.totalCredits < 8)
+  insufficientList.value = list.filter(s => !s.achieved)
   updateStats(list.length)
 }
 
@@ -281,9 +314,13 @@ const viewDetail = (row) => {
       const key = e.course_name || e.course_id
       if (!seen.has(key)) {
         seen.add(key)
+        // 未录入显示「待录入」而不是 0.0 分（ScoreCaliber 第 3 条口径）
+        const pending = e.score_total === null || e.score_total === undefined
         courses.push({
           courseName: e.course_name || '课程' + e.course_id,
-          score: Number(e.score_total || 0).toFixed(1)
+          scoreText: pending ? '待录入' : Number(e.score_total).toFixed(1) + '分',
+          // `failed` 由后端数据算好再交给模板，模板里不再做字符串比数字。
+          failed: !pending && Number(e.score_total) < 60
         })
       }
     }
@@ -292,8 +329,45 @@ const viewDetail = (row) => {
   detailVisible.value = true
 }
 
-const notifyStudent = (student) => {
-  ElMessage.info('已向 ' + student.studentName + ' 发送学分预警提醒')
+/**
+ * 「提醒」—— 2026-10-02（W4.5）：原来只弹一句 toast（"已向 X 发送学分预警提醒"），
+ * 没有任何请求发出，学生那边收不到任何东西。这是本工程记录过的"
+ * 点了就说成功"那一族。
+ *
+ * 现在打真的接口 `POST /counselors/students/notify`（辅导员通知服务，
+ * 一事务写 `communication_logs` + `notifications`，学生通知中心真能收到）。
+ * 传 `student_ids` 用 `student_profile.id`（本页聚合出来的就是这一套，
+ * 与服务端的 id 解析顺序一致），并带上 `counselorId` 让"不在该辅导员名下"能被拦掉。
+ *
+ * 回包里 `delivered` 才是真正投递到通知中心的人数（学生可能关了该类通知，
+ * 那时记为 muted）。所以按 delivered 判成功，不按 HTTP 200 判。
+ */
+const notifyStudent = async (student) => {
+  const counselorId = getUserId()
+  if (!counselorId) { ElMessage.error('未登录，无法发送'); return }
+  try {
+    const res = await counselorAPI.notifyStudents({
+      counselorId,
+      student_ids: [student.studentId],
+      type: 'warning',
+      content: `学分提醒：你目前有 ${student.failedCourses} 门课程未通过，` +
+               `共 ${student.lostCredits.toFixed(1)} 学分未取得，请及时联系辅导员与任课教师。`
+    })
+    const delivered = res?.delivered ?? 0
+    if (delivered > 0) {
+      ElMessage.success('已向 ' + student.studentName + ' 发送提醒')
+    } else if (Array.isArray(res?.muted) && res.muted.length) {
+      // 写进了发送记录，但学生关掉了这类通知 —— 如实说，别报"发送成功"。
+      ElMessage.warning(student.studentName + ' 已关闭此类通知，提醒未送达其通知中心')
+    } else if (Array.isArray(res?.undeliverable) && res.undeliverable.length) {
+      ElMessage.error(student.studentName + ' 的账号未绑定用户，无法接收通知')
+    } else {
+      ElMessage.error('提醒未送达：' + (res?.message || '服务端未投递任何通知'))
+    }
+  } catch (e) {
+    console.error('发送学分提醒失败', e)
+    ElMessage.error('发送失败：' + (e?.message || '网络错误'))
+  }
 }
 </script>
 

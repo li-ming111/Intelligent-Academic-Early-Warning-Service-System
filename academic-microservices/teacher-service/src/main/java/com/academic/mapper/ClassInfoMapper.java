@@ -36,8 +36,17 @@ public interface ClassInfoMapper extends BaseMapper<ClassInfo> {
 
     /**
      * 根据班级ID获取学生列表
+     *
+     * <p>2026-10-02（W4.11）：补 {@code profileId} 与 {@code userStatus}。
+     * 前者（{@code student_profile.id}）是 {@code academic_warning.student_id} /
+     * {@code scores.student_id} 的取值空间，与能给人看的学号 {@code studentId} 是两回事；
+     * 后者是 {@code users.status}，供「学生详情」显示真实账号状态 ——
+     * 那一格此前写死 <code>正常</code>，而 {@code users.status} 是可以被管理员改的。
      */
-    @Select("SELECT sp.student_id as studentId, u.name as studentName FROM student_profile sp JOIN users u ON sp.user_id = u.id WHERE sp.class_id = #{classId}")
+    @Select("SELECT sp.student_id as studentId, sp.id as profileId, u.name as studentName, "
+          + "       u.status as userStatus "
+          + "  FROM student_profile sp JOIN users u ON sp.user_id = u.id "
+          + " WHERE sp.class_id = #{classId}")
     List<Map<String, Object>> getStudentsByClassIdMap(@Param("classId") Long classId);
 
     /**

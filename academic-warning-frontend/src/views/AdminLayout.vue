@@ -70,13 +70,12 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AIAssistant from '@/components/AIAssistant.vue'
 import { 
   SwitchButton
 } from '@element-plus/icons-vue'
-import { adminAPI } from '@/api/index'
 
 const route = useRoute()
 const router = useRouter()
@@ -103,25 +102,12 @@ if (storedName && !/^\d+$/.test(storedName)) {
 }
 const adminName = ref(defaultName)
 
-// 获取管理员信息
-const loadAdminInfo = async () => {
-  try {
-    const response = await adminAPI.getDashboard()
-    if (response && (response.adminName || response.name)) {
-      const adminNameFromApi = response.adminName || response.name
-      adminName.value = adminNameFromApi
-      // 更新localStorage中的userName
-      localStorage.setItem('userName', adminNameFromApi)
-    }
-  } catch (error) {
-    console.error('加载管理员信息失败:', error)
-  }
-}
-
-// 组件挂载时加载管理员信息
-onMounted(() => {
-  loadAdminInfo()
-})
+// 2026-10-02（W4.S3）：删掉 `loadAdminInfo`（原来挂在 onMounted 上）。
+// 它 `await adminAPI.getDashboard()` 之后只认 `response.adminName || response.name`，
+// 而该接口实测只返回 totalMajors/totalUsers/totalColleges/totalWarnings/totalStudents/
+// totalCourses/recentWarnings —— 两个 key 都不存在 ⇒ 这个 if 永远不成立，
+// 唯一的副作用就是每次进管理员页面多打一次 dashboard 请求。姓名已经在上面从
+// localStorage('name') 取到了，这里没有可补的信息。
 
 const pageMap = {
   '/admin/dashboard': '数据统计',

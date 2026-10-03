@@ -43,8 +43,12 @@
         <el-table-column prop="className" label="班级" width="80"></el-table-column>
         <el-table-column label="预警级别" width="100">
           <template #default="{ row }">
-            <el-tag :type="row.warningLevel === 3 ? 'danger' : row.warningLevel === 2 ? 'warning' : 'info'">
-              {{ row.warningLevel === 3 ? '红色' : row.warningLevel === 2 ? '黄色' : '蓝色' }}
+            <!-- 2026-10-02（W4.4）：等级↔文案/颜色只用 utils/score.js 那一份表。
+                 原来这里是本页自己写的 `=== 3 ? '红色' : === 2 ? '黄色' : '蓝色'`
+                 —— 同一份映射在全仓存在多份手写副本，正是它们互相漂移、
+                 把轻度和严重说反的温床（见 warningLevelColor 的注释）。 -->
+            <el-tag :type="warningLevelTagType(row.warningLevel)">
+              {{ warningLevelText(row.warningLevel) }}
             </el-tag>
           </template>
         </el-table-column>
@@ -73,17 +77,52 @@
           <el-input v-model="handleForm.opinion" type="textarea" rows="3" placeholder="记录处理意见..."></el-input>
           <el-button type="primary" plain @click="generateOpinion" style="margin-top: 10px;">生成处理意见</el-button>
         </el-form-item>
-        <el-form-item label="分配协作">
-          <el-select v-model="handleForm.assignTo" placeholder="选择协作人（如教师）">
-            <el-option label="教师A" value="teacher1"></el-option>
-            <el-option label="教师B" value="teacher2"></el-option>
-            <el-option label="心理咨询师" value="counselor"></el-option>
-          </el-select>
-        </el-form-item>
+        <!-- 2026-10-02（W4.4）：原来这里有个「分配协作」下拉，三个选项写死
+             `teacher1/teacher2/counselor`，而且选中的值**从来没被发送过**
+             （`submitHandle` 只发 `handleResult`）。查了表：`academic_warning`
+             根本没有 `assign_to` 之类的列（列清单：handled_by / handle_result / handled_at
+             / created_by / updated_by，没有归属协作人的字段），后端
+             `processWarning` 也只读 `handleResult`/`handledBy`。
+             一个假输入框比没有更糟 —— 它让人以为选了就生效。列不存在、也没人读，
+             按本工程的既定判据**整块删掉**（与第十一轮删 `/api/resources/**` 同例）。 -->
       </el-form>
       <template #footer>
         <el-button @click="handleDialogVisible = false">取消</el-button>
         <el-button type="primary" @click="submitHandle">确认处理</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 预警详情（2026-10-02，W4.4）：原来「详情」只弹一句 toast
+         `ElMessage.info('X的预警详情')` —— 那是把"没有这个功能"演成了"有这个功能"。
+         现在显示这条预警在库里的真实字段。 -->
+    <el-dialog v-model="detailDialogVisible" title="预警详情" width="620px">
+      <el-descriptions v-if="detailRow" :column="2" border>
+        <el-descriptions-item label="学生">{{ detailRow.studentName || '--' }}</el-descriptions-item>
+        <el-descriptions-item label="班级">{{ detailRow.className || '--' }}</el-descriptions-item>
+        <el-descriptions-item label="预警级别">
+          <el-tag :type="warningLevelTagType(detailRow.warningLevel)">
+            {{ warningLevelText(detailRow.warningLevel) }}
+          </el-tag>
+        </el-descriptions-item>
+        <el-descriptions-item label="处理状态">
+          <el-tag :type="warningStatusTagType(detailRow.status)">{{ warningStatusText(detailRow.status) }}</el-tag>
+        </el-descriptions-item>
+        <el-descriptions-item label="预警标题" :span="2">{{ detailRow.title || '--' }}</el-descriptions-item>
+        <el-descriptions-item label="预警原因" :span="2">{{ detailRow.description || '--' }}</el-descriptions-item>
+        <el-descriptions-item label="预警说明" :span="2">{{ detailRow.warningMessage || '--' }}</el-descriptions-item>
+        <el-descriptions-item label="挂科门数">{{ detailRow.failCount ?? '--' }}</el-descriptions-item>
+        <el-descriptions-item label="触发时间">{{ formatTime(detailRow.createdAt) }}</el-descriptions-item>
+        <el-descriptions-item label="处理人">{{ detailRow.handledBy || '未处理' }}</el-descriptions-item>
+        <el-descriptions-item label="处理时间">{{ detailRow.handledAt ? formatTime(detailRow.handledAt) : '未处理' }}</el-descriptions-item>
+        <el-descriptions-item label="处理意见" :span="2">{{ detailRow.handleResult || '未填写' }}</el-descriptions-item>
+      </el-descriptions>
+      <template #footer>
+        <el-button @click="detailDialogVisible = false">关闭</el-button>
+        <el-button
+          v-if="detailRow && isPendingWarning(detailRow.status)"
+          type="primary"
+          @click="detailDialogVisible = false; handleWarning(detailRow)"
+        >处理这条预警</el-button>
       </template>
     </el-dialog>
   </div>
@@ -96,8 +135,12 @@ import { counselorAPI, aiAPI } from '@/api/index'
 import { getUserId } from '@/utils/userUtils'
 // 2026-10-02（W1.6）：状态是三态，文案/配色/归一化只在 utils/warning.js 维护一份
 import { warningStatus, warningStatusText, warningStatusTagType, isPendingWarning, WARNING_STATUS } from '@/utils/warning'
+// 2026-10-02（W4.4）：等级↔文案/颜色同样只留 utils/score.js 一份，本页不再手写。
+import { warningLevelText, warningLevelTagType } from '@/utils/score'
 
 const handleDialogVisible = ref(false)
+const detailDialogVisible = ref(false)
+const detailRow = ref(null)
 const warningsList = ref([])
 const warningStats = ref({
   redWarnings: 0,
@@ -110,8 +153,7 @@ const warningStats = ref({
 const handleForm = ref({
   warningId: '',
   studentName: '',
-  opinion: '',
-  assignTo: ''
+  opinion: ''
 })
 
 onMounted(async () => {
@@ -143,8 +185,7 @@ const handleWarning = (row) => {
   handleForm.value = {
     warningId: row.id,
     studentName: row.studentName,
-    opinion: '',
-    assignTo: ''
+    opinion: ''
   }
   handleDialogVisible.value = true
 }
@@ -156,7 +197,12 @@ const submitHandle = async () => {
   }
   try {
     const data = {
-      handleResult: handleForm.value.opinion
+      handleResult: handleForm.value.opinion,
+      // 2026-10-02（W4.4）：补发 `handledBy` —— 后端 `processWarning` 一直在读它
+      // （`AcademicWarning.setHandledBy`，列 `academic_warning.handled_by`），
+      // 而前端从来没发过 ⇒ 库里的处理人永远是 NULL，管理员页的「处理人」列因此空白。
+      // 名字取自登录时写进 localStorage 的 `name`（Login.vue），退而用用户名、再退用 userId。
+      handledBy: localStorage.getItem('name') || localStorage.getItem('username') || String(getUserId() || '')
     }
     await counselorAPI.processWarning(handleForm.value.warningId, data)
     ElMessage.success('预警已处理')
@@ -168,9 +214,14 @@ const submitHandle = async () => {
   }
 }
 
+// 2026-10-02（W4.4）：详情改成真弹窗 —— 显示的就是列表接口现在回的那几个真实列。
 const viewDetails = (row) => {
-  ElMessage.info(`${row.studentName}的预警详情`)
+  detailRow.value = row
+  detailDialogVisible.value = true
 }
+
+/** 时间显示：`2026-10-01T10:00:00` → `2026-10-01 10:00:00`。取不到显示 `--`。 */
+const formatTime = (v) => (v ? String(v).replace('T', ' ').substring(0, 19) : '--')
 
 const generateOpinion = async () => {
   if (!handleForm.value.warningId) {

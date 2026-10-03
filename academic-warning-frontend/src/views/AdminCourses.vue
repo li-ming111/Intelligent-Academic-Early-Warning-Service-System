@@ -37,10 +37,14 @@
             <el-tag type="success">{{ row.credits }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="courseType" label="课程分类" width="120">
+        <!-- 2026-10-02（W4.13）：这一列与下面两处筛选、编辑弹窗统一读 `row.type`。
+             `courses` 表的列就叫 `type`（见本文件下方那句列清单注释），admin-service
+             `convertCoursesToMaps` 同时吐 `type` 与 `courseType` 两个 key、取值完全相同
+             ⇒ 读哪个都对，但同一个值有两个名字迟早漂移，收敛到与列名/表单字段同名的那一个。 -->
+        <el-table-column prop="type" label="课程分类" width="120">
           <template #default="{ row }">
-            <el-tag :type="row.courseType === '必修课' ? 'primary' : 'info'">
-              {{ row.courseType || '未分类' }}
+            <el-tag :type="row.type === '必修课' ? 'primary' : 'info'">
+              {{ row.type || '未分类' }}
             </el-tag>
           </template>
         </el-table-column>
@@ -248,11 +252,10 @@ const loadCourses = async () => {
   loading.value = true
   try {
     const response = await adminAPI.getCourses()
-    if (response && response.code === 200) {
-      courseList.value = response.data || []
-    } else if (Array.isArray(response)) {
-      courseList.value = response
-    }
+    // 2026-10-02（W4.15）：删掉恒假的 `response.code === 200` 支 ——
+    // 响应拦截器（api/client.js）在 code===200 时已解开一层，await 出来的就是内层载荷，
+    // `response.code` 恒 undefined，那一支永不执行。
+    courseList.value = Array.isArray(response) ? response : []
   } catch (error) {
     console.error('加载课程列表失败:', error)
     ElMessage.error('加载课程列表失败')
@@ -291,7 +294,7 @@ const filteredCourseList = computed(() => {
   }
 
   if (filterType.value) {
-    filtered = filtered.filter(course => course.courseType === filterType.value)
+    filtered = filtered.filter(course => course.type === filterType.value)
   }
 
   const start = (currentPage.value - 1) * pageSize.value
@@ -312,7 +315,7 @@ const totalCourses = computed(() => {
   }
 
   if (filterType.value) {
-    filtered = filtered.filter(course => course.courseType === filterType.value)
+    filtered = filtered.filter(course => course.type === filterType.value)
   }
 
   return filtered.length
@@ -333,7 +336,7 @@ const openEditDialog = (row) => {
     code: row.code || '',
     name: row.name || '',
     credits: Number(row.credits) || 0,
-    type: row.courseType || row.type || '',
+    type: row.type || '',
     description: row.description || '',
     teacherId: row.teacherId ? Number(row.teacherId) : null,
     moduleId: row.moduleId ? Number(row.moduleId) : null

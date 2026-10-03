@@ -22,7 +22,13 @@ import TeacherWarnings from '../views/TeacherWarnings.vue'
 import TeacherAnalysis from '../views/TeacherAnalysis.vue'
 import TeacherCreditPrediction from '../views/TeacherCreditPrediction.vue'
 import TeacherAuditLog from '../views/TeacherAuditLog.vue'
-import TeacherFeedbackManagement from '../views/TeacherFeedbackManagement.vue'
+// 2026-10-02（W4.16）：删掉 TeacherFeedbackManagement.vue —— 它与 TeacherFeedback.vue
+// 是**同一功能两个页面**，而它是坏的那个：
+//   · 它不在 TeacherLayout 菜单里（孤儿路由 /teacher/feedback-management）
+//   · 回复时发 `{ reply_content }`，而后端 `TeacherController.replyFeedback` 读的是
+//     `data.get("reply")` ⇒ 拿到 null ⇒ `UPDATE feedback SET reply = NULL, status = 1`
+//     ⇒ **反馈被标记成"已回复"但回复内容是空的**（收下即丢那一族）。
+//   留在菜单里的 TeacherFeedback.vue 发的是 `{ reply }`，是对的 ⇒ 留它、删这个。
 import TeacherFeedback from '../views/TeacherFeedback.vue'
 import TeacherCourses from '../views/TeacherCourses.vue'
 import TeacherClassManagement from '../views/TeacherClassManagement.vue'
@@ -212,11 +218,6 @@ const routes = [
         path: 'audit-log',
         name: 'TeacherAuditLog',
         component: TeacherAuditLog
-      },
-      {
-        path: 'feedback-management',
-        name: 'TeacherFeedbackManagement',
-        component: TeacherFeedbackManagement
       },
       {
         path: 'feedback',

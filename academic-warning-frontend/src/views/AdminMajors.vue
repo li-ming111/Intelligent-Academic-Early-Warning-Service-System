@@ -81,6 +81,11 @@
             <el-option v-for="college in collegeList" :key="college.id" :label="college.name" :value="college.id"></el-option>
           </el-select>
         </el-form-item>
+        <el-form-item label="专业代码">
+          <!-- 2026-10-02（W4.14）：此前没有这一行，而提交时前端悄悄编了一个码
+               （`maxId + 1` 补零）。现在由后端按全表最大值 +1 生成，这里只说明去向。 -->
+          <span class="muted">留空由系统生成（按现有最大专业码 +1，如 15）</span>
+        </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="addDialogVisible = false">取消</el-button>
@@ -161,7 +166,9 @@ const majorToDelete = ref(null)
 const majorFormRef = ref(null)
 const editMajorFormRef = ref(null)
 
-const majorForm = ref({ code: '', name: '', shortName: '', collegeId: '' })
+// 2026-10-02（W4.14）：去掉 `code` —— 表单里从来没有这个输入框，
+// 专业码由后端按全表生成（见 submitAdd 的说明）。
+const majorForm = ref({ name: '', shortName: '', collegeId: '' })
 const editingMajor = ref({ id: null, code: '', name: '', shortName: '', collegeId: '' })
 
 const formRules = {
@@ -186,9 +193,9 @@ onMounted(async () => {
 const loadColleges = async () => {
   try {
     const response = await adminAPI.getColleges()
-    if (response && response.code === 200) {
-      collegeList.value = response.data || []
-    } else if (Array.isArray(response)) {
+    // 2026-10-02（W4.15）：删掉恒真的 `response.code === 200` 支 —— 拦截器已解包，
+    // 那一支永不执行，留着会让人以为接口有两种返回形状。
+    if (Array.isArray(response)) {
       collegeList.value = response
     }
   } catch (error) {
@@ -200,12 +207,8 @@ const loadMajors = async () => {
   loading.value = true
   try {
     const response = await adminAPI.getMajors()
-    let allMajors = []
-    if (response && response.code === 200) {
-      allMajors = response.data || []
-    } else if (Array.isArray(response)) {
-      allMajors = response
-    }
+    // 2026-10-02（W4.15）：删掉恒真的 `response.code === 200` 支（拦截器已解包）。
+    const allMajors = Array.isArray(response) ? response : []
     
     if (filterCollegeId.value) {
       majorList.value = allMajors.filter(major => major.collegeId === parseInt(filterCollegeId.value))
@@ -317,7 +320,10 @@ const confirmDelete = async () => {
     ElMessage.success('专业已删除')
     deleteDialogVisible.value = false
     majorToDelete.value = null
-    majorList.value = majorList.value.filter(item => item.id !== majorToDelete.value?.id)
+    // 2026-10-02（W4.3）：原来这里是 `filter(item => item.id !== majorToDelete.value?.id)`，
+    // 而上一行刚把它置 null ⇒ 比较的是 undefined ⇒ 过滤恒真 ⇒ 行不消失。
+    // 改成重新拉取（与 AdminCourses/AdminUsers 同形）。
+    await loadMajors()
   } catch (error) {
     console.error('删除专业失败:', error)
     ElMessage.error('删除失败')
@@ -358,11 +364,12 @@ const submitAdd = async () => {
   
   try {
     await majorFormRef.value.validate()
-    const maxId = majorList.value.length > 0 ? Math.max(...majorList.value.map(m => parseInt(m.id))) : 0
-    const newCode = String(maxId + 1).padStart(2, '0')
-  
+    // 2026-10-02（W4.14）：**不再在前端编专业码**。
+    // 原来这里是 `String(maxId + 1).padStart(2, '0')`，而 maxId 取自当前列表 ——
+    // 列表可能正被学院筛选过，算出来的码会撞 `majors.code` 的 UNIQUE；
+    // 而且它比的是 `id` 不是 `code`，只是活库里两者恰好对齐才没暴露。
+    // 现在不传 code，由后端按**全表**最大值 +1 生成（见 AdminController.createMajor）。
     const data = {
-      code: newCode,
       name: majorForm.value.name,
       shortName: majorForm.value.shortName,
       collegeId: parseInt(majorForm.value.collegeId)
@@ -370,7 +377,7 @@ const submitAdd = async () => {
     await adminAPI.createMajor(data)
     ElMessage.success('专业已添加')
     addDialogVisible.value = false
-    majorForm.value = { code: '', name: '', shortName: '', collegeId: '' }
+    majorForm.value = { name: '', shortName: '', collegeId: '' }
     await loadMajors()
   } catch (error) {
     console.error('添加专业失败:', error)
@@ -486,5 +493,11 @@ const submitAdd = async () => {
 
 .action-buttons .el-button {
   margin: 0;
+}
+
+/* 「专业代码由系统生成」的说明文字（W4.14） */
+.muted {
+  color: #909399;
+  font-size: 13px;
 }
 </style>
