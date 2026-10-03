@@ -253,7 +253,7 @@ import { ref, computed, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Search } from '@element-plus/icons-vue'
 import { teacherAPI } from '@/api/index'
-import { getUserId } from '@/utils/userUtils'
+import { getUserId, getTeacherId } from '@/utils/userUtils'
 import { saveBlobAsFile, describeDownloadError } from '@/utils/download'
 
 const selectedClass = ref('')
@@ -366,7 +366,7 @@ const handleFileSelect = async (uploadFile) => {
 
 const loadCourseMap = async () => {
   try {
-    const teacherId = localStorage.getItem('teacherId') || getUserId() || '9'
+    const teacherId = getTeacherId()
     const response = await teacherAPI.getCourses(teacherId)
     if (Array.isArray(response)) {
       response.forEach(c => {
@@ -380,26 +380,12 @@ const loadCourseMap = async () => {
 
 const loadClasses = async () => {
   try {
-    const teacherId = localStorage.getItem('teacherId') || getUserId()
-    if (!teacherId) {
-      localStorage.setItem('teacherId', '9')
-      const defaultTeacherId = '9'
-      try {
-        const response = await teacherAPI.getMyClasses(defaultTeacherId)
-        const classList = Array.isArray(response) ? response : (response?.data || [])
-        classes.value = classList.map(cls => ({
-          id: cls.id || cls.classId,
-          name: cls.name || cls.className
-        }))
-        if (classes.value.length > 0 && !selectedClass.value) {
-          selectedClass.value = classes.value[0].name
-          await loadClassScores(classes.value[0].name)
-        }
-      } catch (error) {
-        console.error('加载班级失败:', error)
-      }
-      return
-    }
+    const teacherId = getTeacherId()
+    // 2026-10-03（W8.2）：原实现在 teacherId 缺失时**把 '9' 写进 localStorage.teacherId**
+    // 再按它加载 —— 那不是兜底，是给这台浏览器**永久钉死**成 9 号用户：该键此后恒为 '9'，
+    // 8 个教师端页面都优先读它（设置页还会据此去改 9 号用户的邮箱/电话），
+    // 且两条登出路径都不清它。现在拿不到身份就空着，**不写任何键**。
+    if (!teacherId) { console.warn('[TeacherScores] 未获取到登录用户 ID，跳过加载'); return }
     try {
       const response = await teacherAPI.getMyClasses(teacherId)
       const classList = Array.isArray(response) ? response : (response?.data || [])
@@ -428,7 +414,7 @@ const loadClassScores = async (className) => {
     }
     selectedSemester.value = ''
     try {
-      const teacherId = localStorage.getItem('teacherId') || getUserId()
+      const teacherId = getTeacherId()
       const response = await teacherAPI.getScoresByClass(className, teacherId)
       if (Array.isArray(response)) {
         scoresList.value = response.map(item => {

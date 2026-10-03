@@ -148,7 +148,7 @@ import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
 import { teacherAPI } from '@/api/index'
-import { getUserId } from '@/utils/userUtils'
+import { getTeacherId } from '@/utils/userUtils'
 import { toNumber, PASS_LINE } from '@/utils/score'
 
 const activeTab = ref('courses')
@@ -170,7 +170,6 @@ const stats = reactive({ total: 0, students: 0, pass: 0, avgRating: '--' })
 
 const colors = ['#7c3aed', '#2563eb', '#16a34a', '#f59e0b', '#ef4444', '#8b5cf6', '#db2777', '#ea580c', '#0891b2']
 function grad(id) { return `linear-gradient(135deg, ${colors[(id || 1) % colors.length]}, ${colors[(id || 1) % colors.length]}cc)` }
-const getTeacherId = () => localStorage.getItem('teacherId') || getUserId() || '9'
 
 onMounted(async () => { await Promise.all([loadAllCourses(), loadMyClasses(), loadData()]) })
 

@@ -63,6 +63,8 @@ apiClient.interceptors.response.use(
       localStorage.removeItem('phone')
       localStorage.removeItem('role')
       localStorage.removeItem('adminPreferences')
+      // 2026-10-03（W8.2）：同 App.vue 的登出，一并清掉曾被写成 '9' 的 teacherId。
+      localStorage.removeItem('teacherId')
       window.location.href = '/login'
     }
     // 403 仅记录不跳转，交由前端处理

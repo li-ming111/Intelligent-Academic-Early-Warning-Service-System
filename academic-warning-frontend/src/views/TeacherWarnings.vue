@@ -117,7 +117,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { teacherAPI } from '@/api/index'
-import { getUserId } from '@/utils/userUtils'
+import { getTeacherId } from '@/utils/userUtils'
 // 2026-10-02（W1.6）：teacher-service 这条路的 status 是**中文**，共用层同时吃数字与中文
 import { warningStatusText, warningStatusKey, warningStatusTagType, isPendingWarning } from '@/utils/warning'
 
@@ -138,7 +138,8 @@ onMounted(() => loadWarnings())
 
 async function loadWarnings() {
   try {
-    const tid = localStorage.getItem('teacherId') || getUserId() || '9'
+    const tid = getTeacherId()
+    if (!tid) { console.warn('[TeacherWarnings] 未获取到登录用户 ID，跳过加载'); return }
     const res = await teacherAPI.getWarnings(tid)
     if (Array.isArray(res)) warnings.value = res
   } catch (e) { console.error('加载预警失败', e) }

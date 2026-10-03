@@ -51,7 +51,7 @@
 import { ref, reactive, computed, onMounted, nextTick } from 'vue'
 import * as echarts from 'echarts'
 import { teacherAPI } from '@/api/index'
-import { getUserId } from '@/utils/userUtils'
+import { getTeacherId } from '@/utils/userUtils'
 import { toNumber } from '@/utils/score'
 
 const selectedClass = ref('')
@@ -76,7 +76,7 @@ onMounted(() => loadClasses())
 
 async function loadClasses() {
   try {
-    const tid = localStorage.getItem('teacherId') || getUserId() || '9'
+    const tid = getTeacherId()
     const r = await teacherAPI.getMyClasses(tid)
     const list = Array.isArray(r) ? r : (r?.data || [])
     classes.value = list.map(c => ({ id: c.id || c.classId, name: c.name || c.className }))
@@ -90,7 +90,7 @@ async function loadClasses() {
 
 async function loadCourses() {
   try {
-    const tid = localStorage.getItem('teacherId') || getUserId() || '9'
+    const tid = getTeacherId()
     const r = await teacherAPI.getCourses(tid)
     if (Array.isArray(r)) courses.value = r.map(c => ({ id: c.id, name: c.name || c.courseName }))
   } catch (e) {}

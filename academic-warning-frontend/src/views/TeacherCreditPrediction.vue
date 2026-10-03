@@ -224,6 +224,7 @@
 import { ref, reactive, computed, onMounted, nextTick } from 'vue'
 import * as echarts from 'echarts'
 import { teacherAPI } from '@/api/index'
+import { getTeacherId } from '@/utils/userUtils'
 
 const activeTab = ref('prediction')
 const predictions = ref([])
@@ -308,7 +309,8 @@ onMounted(async () => { await loadData() })
 
 async function loadData() {
   try {
-    const tid = localStorage.getItem('userId') || localStorage.getItem('teacherId') || '29'
+    const tid = getTeacherId()
+    if (!tid) { console.warn('[TeacherCreditPrediction] 未获取到登录用户 ID，跳过加载'); return }
     const enrollRes = await teacherAPI.getEnrollments(tid)
     // 2026-10-02（W4.15）：删掉恒假的 `enrollRes?.code === 200` 支（拦截器已解包）。
     const allEnrollments = Array.isArray(enrollRes) ? enrollRes : []

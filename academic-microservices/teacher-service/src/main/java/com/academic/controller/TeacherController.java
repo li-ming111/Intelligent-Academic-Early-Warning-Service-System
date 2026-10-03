@@ -93,6 +93,10 @@ public class TeacherController {
     @Autowired
     private com.academic.mapper.ClassInfoMapper classInfoMapper;
 
+    // 只用来把 teacher_profile.college_id 翻成学院名（dashboard 的「学院」格）。
+    @Autowired
+    private com.academic.mapper.CollegeMapper collegeMapper;
+
     /**
      * 教师注册
      */
@@ -302,6 +306,7 @@ public class TeacherController {
             // 获取教师名下课程数和姓名
             int totalCourses = 0;
             String teacherName = "";
+            String collegeName = "";
             try {
                 List<Object> courses = (List<Object>) (List<?>) courseService.getCoursesByTeacherId(teacherId);
                 totalCourses = courses != null ? courses.size() : 0;
@@ -312,6 +317,15 @@ public class TeacherController {
                 TeacherProfile profile = teacherService.getByUserId(teacherId);
                 if (profile != null && profile.getName() != null) {
                     teacherName = profile.getName();
+                }
+                // 2026-10-03（W8.2）：带出学院名 —— 教师端「个人设置 → 工作信息 → 学院」
+                // 那一格原先是 disabled 恒空，因为**没有任何接口返回学院**。此处补上
+                // （teacher_profile.college_id 有值，活库 6 行分别指向学院 1/2）。
+                if (profile != null && profile.getCollegeId() != null) {
+                    String name = collegeMapper.getNameById(profile.getCollegeId());
+                    if (name != null) {
+                        collegeName = name;
+                    }
                 }
             } catch (Exception e) {
                 log.warn("获取教师信息失败(降级): {}", e.getMessage());
@@ -338,6 +352,7 @@ public class TeacherController {
             dashboard.put("pendingFeedbacks", pendingFeedbacks);
             dashboard.put("totalCourses", totalCourses);
             dashboard.put("teacherName", teacherName);
+            dashboard.put("college", collegeName);
             
             return ApiResponse.success(dashboard);
         } catch (Exception e) {

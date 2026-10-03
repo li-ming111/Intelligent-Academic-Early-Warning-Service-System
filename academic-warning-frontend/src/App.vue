@@ -249,6 +249,9 @@ const handleLogout = async () => {
   localStorage.removeItem('role')
   localStorage.removeItem('adminPreferences')
   localStorage.removeItem('pageSize')
+  // 2026-10-03（W8.2）：`teacherId` 原来三条登出路径一条都不清，而它曾被写成 '9'
+  // ⇒ 换个人登录仍读 9 号用户的数据。写入方已删，这里清它是为了收拾中毒的浏览器。
+  localStorage.removeItem('teacherId')
   userStore.logout()
   isLoggedIn.value = false
   router.push('/login')

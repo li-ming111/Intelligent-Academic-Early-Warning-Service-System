@@ -153,7 +153,7 @@
 <script setup>
 import { ref, reactive, computed, onMounted } from 'vue'
 import { teacherAPI } from '@/api/index'
-import { getUserId } from '@/utils/userUtils'
+import { getTeacherId } from '@/utils/userUtils'
 import { isPendingWarning } from '@/utils/warning'
 
 const teacherName = ref('教师')
@@ -186,7 +186,10 @@ onMounted(async () => {
 
 async function loadData() {
   try {
-    const tid = localStorage.getItem('teacherId') || getUserId() || '9'
+    const tid = getTeacherId()
+    // 拿不到登录身份就**不发请求**，页面保持空态 —— 原来这里兜底成 '9'，
+    // 等于未登录时静默显示 9 号用户的数据（见 utils/userUtils.js 的 getTeacherId）。
+    if (!tid) { console.warn('[TeacherDashboard] 未获取到登录用户 ID，跳过加载'); return }
     const [dashRes, warnRes, classRes] = await Promise.all([
       teacherAPI.getDashboard(tid).catch(() => null),
       teacherAPI.getWarnings(tid).catch(() => []),

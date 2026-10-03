@@ -33,7 +33,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { teacherAPI } from '@/api/index'
-import { getUserId } from '@/utils/userUtils'
+import { getTeacherId } from '@/utils/userUtils'
 
 const feedbacks = ref([])
 const filter = ref('')
@@ -53,10 +53,12 @@ async function loadData() {
   // 2026-10-02（W4.16）：原来 `if (Array.isArray(r)) feedbacks.value = r` **没有 else**
   // —— 后端一旦回了非数组（错误体、分页对象），列表就静静地保持空，页面显示「暂无反馈」，
   // 与"这个老师确实没有反馈"一模一样。现在非数组一律报错。
-  // （`'29'` 这个兜底保留：活库 `classes.teacher_id=29` 是真教师 `10001` 的三个班，
-  //   未登录直开页面时用它演示；正常登录后走 `getUserId()`。）
+  // 2026-10-03（W8.2）：原兜底 `|| '29'` 已删 —— 那是"未登录直开页面时用 29 号教师
+  // 的数据演示"，本质是让异常状态下**静默显示另一个人的反馈**（同 W4 删掉的 `'计科2306班'`）。
+  // 现在拿不到身份就空着并报错，不拿别人的数据充数。
   try {
-    const tid = localStorage.getItem('teacherId') || getUserId() || '29'
+    const tid = getTeacherId()
+    if (!tid) { console.warn('[TeacherFeedback] 未获取到登录用户 ID，跳过加载'); feedbacks.value = []; ElMessage.error('未获取到登录身份，请重新登录'); return }
     const r = await teacherAPI.getFeedbacks(tid)
     if (Array.isArray(r)) feedbacks.value = r
     else { console.error('反馈列表返回了非数组', r); feedbacks.value = []; ElMessage.error('反馈列表加载失败') }

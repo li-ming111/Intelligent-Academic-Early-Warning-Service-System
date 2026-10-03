@@ -154,6 +154,14 @@ onMounted(async () => {
       workForm.value.officeHours = s.officeHours || ''
     }
   } catch (e) { console.error('加载偏好设置失败', e) }
+
+  // 学院：上面两个接口都给不了 —— `users` 表压根没有学院列，学院在
+  // `teacher_profile.college_id`（活库有值，指向 colleges）。所以另取 dashboard 的
+  // `college` 字段（2026-10-03 W8.2 新增；此前这格是 disabled 恒空、且没有任何数据来源）。
+  try {
+    const dash = await teacherAPI.getDashboard(teacherId)
+    if (dash && dash.college) workForm.value.college = dash.college
+  } catch (e) { console.error('加载学院信息失败', e) }
 })
 
 const handleChangePwd = async () => {

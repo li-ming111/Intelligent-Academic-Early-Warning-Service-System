@@ -74,6 +74,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { teacherAPI } from '@/api/index'
 import { ElMessage } from 'element-plus'
+import { getTeacherId } from '@/utils/userUtils'
 
 const auditLogs = ref([])
 const loading = ref(false)
@@ -108,7 +109,8 @@ function formatTime(v) { if (!v) return '--'; return String(v).replace('T', ' ')
 onMounted(async () => {
   loading.value = true
   try {
-    const tid = localStorage.getItem('teacherId') || '29'
+    const tid = getTeacherId()
+    if (!tid) { console.warn('[TeacherAuditLog] 未获取到登录用户 ID，跳过加载'); return }
     const res = await teacherAPI.getScoreLogs(tid, 1, 500)
     // 2026-10-02（W4.15）：删掉恒假的 `res?.code === 200` 支（拦截器已解包）。
     if (Array.isArray(res)) auditLogs.value = res
