@@ -81,6 +81,15 @@ public interface StudentService {
     Object getUnreadNotifications(Long userId);
 
     // ========== 订阅管理新增方法 ==========
+    /**
+     * {@code users.id} → {@code student_profile.id}。
+     *
+     * <p>2026-10-03（W10）新增：下面这一族订阅接口的路径参数是 **{@code student_profile.id}**，
+     * 而网关注入的身份是 **{@code users.id}** —— 两者不相交。归属校验必须先把登录人换算过来，
+     * 而换算需要一次档案查询，所以开在接口上给 controller 用（controller 不直接持有 mapper）。
+     * 查不到档案返回 {@code null}。
+     */
+    Long getProfileIdByUserId(Long userId);
     /** 获取订阅偏好 */
     Object getSubscriptionPreferences(Long studentId);
     /** 更新订阅偏好 */

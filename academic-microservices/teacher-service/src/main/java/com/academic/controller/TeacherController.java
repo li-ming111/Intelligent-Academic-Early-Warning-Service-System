@@ -434,9 +434,28 @@ public class TeacherController {
 
     /**
      * 更新成绩
+     *
+     * <p>2026-10-03（W10）：补**归属校验**。
+     *
+     * <p>此前这个端点只有 {@code scoreId} 一个入参，连"谁在改"都没有 —— 而**同一个资源**的
+     * {@code DELETE /scores/{scoreId}}（见下方 {@code deleteScore}）一直有归属闸。
+     * 同一个 id、两个动词、两套口径：删不掉别人的成绩，却改得了别人的分数。
+     * 实测（经网关 8076）：教师 18 用 {@code PUT /teachers/scores/{29名下的id}} 直接改动了
+     * 教师 29 录入的成绩，回 200「成绩更新成功」。
+     *
+     * <p>判据与 {@code deleteScore} 逐字同形：录入人不是自己且不是管理员 ⇒ 拒。
+     * 返回形状沿用那个既有闸的 **HTTP 200 + body {@code code:403}**（本仓归属拒绝的惯用形状，
+     * 前端按 {@code code} 判），不改它们的读取方式。
      */
     @PutMapping("/scores/{scoreId}")
-    public ApiResponse<Object> updateScore(@PathVariable Long scoreId, @RequestBody Map<String, Object> data) {
+    public ApiResponse<Object> updateScore(@PathVariable Long scoreId, @RequestBody Map<String, Object> data,
+                                            HttpServletRequest request) {
+        Long requestUserId = getUserIdFromGateway(request);
+        ScoreRecord record = scoreRecordService.getById(scoreId);
+        if (record != null && record.getTeacherId() != null
+                && !record.getTeacherId().equals(requestUserId) && !isAdmin(request)) {
+            return ApiResponse.error(403, "无权修改其他教师录入的成绩");
+        }
         try {
             Double score = Double.parseDouble(data.get("score").toString());
             String remark = (String) data.get("remark");

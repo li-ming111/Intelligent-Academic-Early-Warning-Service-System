@@ -65,6 +65,8 @@ public class StudentServiceFallback implements StudentService {
     @Override public Object getUnreadNotifications(Long userId) { return ApiResponse.error("获取未读通知服务暂时不可用"); }
 
     // 订阅管理新增
+    /** 降级时返回 {@code null} ⇒ 归属闸判为"认不出身份"⇒ **拒绝**（fail-closed），不会误放行。 */
+    @Override public Long getProfileIdByUserId(Long userId) { return null; }
     @Override public Object getSubscriptionPreferences(Long studentId) { return ApiResponse.error("获取订阅偏好服务暂时不可用"); }
     @Override public Object updateSubscriptionPreferences(Long studentId, Object preferences) { return ApiResponse.error("更新订阅偏好服务暂时不可用"); }
     @Override public Object subscribeWarningLevel(Long studentId, String level) { return ApiResponse.error("订阅预警等级服务暂时不可用"); }

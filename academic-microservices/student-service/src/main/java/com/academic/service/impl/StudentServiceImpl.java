@@ -78,6 +78,17 @@ public class StudentServiceImpl implements StudentService {
         return sp != null ? sp.getId() : null;
     }
 
+    /**
+     * {@inheritDoc}
+     *
+     * <p>2026-10-03（W10）：把私有的 {@link #resolveProfileId} 暴露给 controller —— 订阅族的
+     * 归属校验需要它（路径收 {@code student_profile.id}、身份是 {@code users.id}）。
+     */
+    @Override
+    public Long getProfileIdByUserId(Long userId) {
+        return resolveProfileId(userId);
+    }
+
     /** 聚合查询返回的计数/学分等一律经此转换；无法识别时取 0（这些字段是计数，0 是安全值）。 */
     private static int intValue(Object value) {
         Double d = ScoreCaliber.toDouble(value);

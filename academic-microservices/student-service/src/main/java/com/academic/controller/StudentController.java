@@ -3,6 +3,7 @@ package com.academic.controller;
 import com.academic.common.dto.ApiResponse;
 import com.academic.dto.StudentDashboardResponse;
 import com.academic.service.StudentService;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.*;
@@ -104,6 +105,44 @@ public class StudentController {
         } catch (NumberFormatException e) {
             return null;
         }
+    }
+
+    /**
+     * 路径参数里的 id 是不是**当前登录本人**。这些学生自助面收的都是 {@code users.id}
+     * （与 {@link #currentUserId()} 同一套），所以直接比。
+     *
+     * <p>⚠️ 不适用于 {@code /subscription/**} —— 那一族要的是 {@code student_profile.id}，
+     * 是**另一套 id 空间**，见 {@link #isSelfProfile(java.lang.Long, java.lang.Long)}。
+     */
+    private static boolean isSelf(Long userId) {
+        Long me = currentUserId();
+        return me != null && me.equals(userId);
+    }
+
+    /** 管理员（网关透传的 {@code X-Role}）不受本人限制 —— 与 teacher-service 的归属闸同形。 */
+    private static boolean isAdmin(HttpServletRequest request) {
+        String role = request == null ? null : request.getHeader("X-Role");
+        return "4".equals(role) || "admin".equals(role);
+    }
+
+    /**
+     * 订阅族专用：路径里的 id 是 {@code student_profile.id}，要比对的是**调用者自己的档案 id**。
+     *
+     * <p>写成一个独立入口而不是就地拼，是因为这两套 id 不相交（档案 3 / 用户 27），
+     * 拿 users.id 直接比会**永远不相等** ⇒ 把自己的请求也拦掉。
+     */
+    private boolean isSelfProfile(Long pathProfileId, HttpServletRequest request) {
+        if (isAdmin(request)) {
+            return true;
+        }
+        Long me = currentUserId();
+        return me != null && pathProfileId != null
+                && pathProfileId.equals(studentService.getProfileIdByUserId(me));
+    }
+
+    /** 归属拒绝的统一形状：HTTP 200 + body {@code code:403}（本仓惯用，前端按 code 判）。 */
+    private static ApiResponse<Object> forbidden(String message) {
+        return ApiResponse.error(403, message);
     }
 
     /**
@@ -293,8 +332,20 @@ public class StudentController {
         }
     }
 
+    /**
+     * 撤销申诉。
+     *
+     * <p>2026-10-03（W10）：{@code studentId} 此前是**客户端说了算**的查询参数，
+     * 服务端拿它去 {@code resolveStudentProfileId} 之后直接写库 —— 换个数字就能撤销**别人**的申诉。
+     * 实测（经网关）：司明（users.id 27）带 {@code studentId=30} 调用即作用于同学。
+     * 现在先比对登录人，再落库。
+     */
     @PostMapping("/appeals/{appealId}/withdraw")
-    public ApiResponse<Object> withdrawAppeal(@PathVariable Long appealId, @RequestParam Long studentId) {
+    public ApiResponse<Object> withdrawAppeal(@PathVariable Long appealId, @RequestParam Long studentId,
+                                              HttpServletRequest request) {
+        if (!isSelf(studentId) && !isAdmin(request)) {
+            return forbidden("只能撤销本人的申诉");
+        }
         try {
             log.info("Withdraw appeal: appealId={}, studentId={}", appealId, studentId);
             return ApiResponse.success(studentService.withdrawAppeal(appealId, studentId));
@@ -502,7 +553,14 @@ public class StudentController {
     }
 
     @PostMapping("/notification-center/{userId}/mark-batch-read")
-    public ApiResponse<Object> markNotificationsBatchRead(@PathVariable String userId, @RequestBody List<Long> notificationIds) {
+    public ApiResponse<Object> markNotificationsBatchRead(@PathVariable String userId,
+                                                          @RequestBody List<Long> notificationIds,
+                                                          HttpServletRequest request) {
+        // 2026-10-03（W10）：路径里的 userId 一直是客户端给的，服务端直接拿它去 UPDATE
+        // notifications —— 换个数字就把**别人**的通知标成已读。加归属闸（users.id 空间）。
+        if (!isSelf(Long.parseLong(userId)) && !isAdmin(request)) {
+            return forbidden("只能操作本人的通知");
+        }
         try {
             log.info("Mark notifications batch read: userId={}, ids={}", userId, notificationIds);
             return ApiResponse.success(studentService.markNotificationsBatchRead(Long.parseLong(userId), notificationIds));
@@ -543,7 +601,12 @@ public class StudentController {
     }
 
     @PostMapping("/notification-center/{userId}/clear-read")
-    public ApiResponse<Object> clearReadNotifications(@PathVariable String userId) {
+    public ApiResponse<Object> clearReadNotifications(@PathVariable String userId,
+                                                      HttpServletRequest request) {
+        // 2026-10-03（W10）：同上，清空的是**路径里那个 userId** 的已读通知。
+        if (!isSelf(Long.parseLong(userId)) && !isAdmin(request)) {
+            return forbidden("只能操作本人的通知");
+        }
         try {
             log.info("Clear read notifications: userId={}", userId);
             return ApiResponse.success(studentService.clearReadNotifications(Long.parseLong(userId)));
@@ -566,7 +629,13 @@ public class StudentController {
     }
 
     @PutMapping("/notification-center/{studentId}/read/{notificationId}")
-    public ApiResponse<Object> markNotificationAsReadLegacy(@PathVariable String studentId, @PathVariable Long notificationId) {
+    public ApiResponse<Object> markNotificationAsReadLegacy(@PathVariable String studentId,
+                                                            @PathVariable Long notificationId,
+                                                            HttpServletRequest request) {
+        // 2026-10-03（W10）：老路径同样把 userId 从路径里读进来就写库，一并加闸。
+        if (!isSelf(Long.parseLong(studentId)) && !isAdmin(request)) {
+            return forbidden("只能操作本人的通知");
+        }
         try {
             log.info("Mark notification as read (legacy): studentId={}, notificationId={}", studentId, notificationId);
             return ApiResponse.success(studentService.markNotificationsBatchRead(Long.parseLong(studentId), List.of(notificationId)));
@@ -588,8 +657,21 @@ public class StudentController {
         }
     }
 
+    /**
+     * 更新订阅偏好。
+     *
+     * <p>2026-10-03（W10）：⚠️ 这一族的路径参数是 **{@code student_profile.id}**（不是 users.id）——
+     * 见 {@code StudentServiceImpl.updateSubscriptionPreferences} 里那句"这里要的是 student_profile.id"。
+     * 归属校验因此要走 {@link #isSelfProfile}：先把登录人（users.id）换算成档案 id 再比。
+     * 直接用 {@code isSelf} 比会**永远不相等**，把自己的请求也拦掉。
+     */
     @PostMapping("/subscription/{studentId}/update")
-    public ApiResponse<Object> updateSubscriptionPreferences(@PathVariable String studentId, @RequestBody Object preferences) {
+    public ApiResponse<Object> updateSubscriptionPreferences(@PathVariable String studentId,
+                                                             @RequestBody Object preferences,
+                                                             HttpServletRequest request) {
+        if (!isSelfProfile(Long.parseLong(studentId), request)) {
+            return forbidden("只能修改本人的订阅设置");
+        }
         try {
             log.info("Update subscription preferences: {}", studentId);
             return ApiResponse.success(studentService.updateSubscriptionPreferences(Long.parseLong(studentId), preferences));
@@ -600,7 +682,11 @@ public class StudentController {
     }
 
     @PostMapping("/subscription/{studentId}/subscribe-level")
-    public ApiResponse<Object> subscribeWarningLevel(@PathVariable String studentId, @RequestParam String level) {
+    public ApiResponse<Object> subscribeWarningLevel(@PathVariable String studentId, @RequestParam String level,
+                                                     HttpServletRequest request) {
+        if (!isSelfProfile(Long.parseLong(studentId), request)) {
+            return forbidden("只能修改本人的订阅设置");
+        }
         try {
             log.info("Subscribe warning level: studentId={}, level={}", studentId, level);
             return ApiResponse.success(studentService.subscribeWarningLevel(Long.parseLong(studentId), level));
@@ -611,7 +697,11 @@ public class StudentController {
     }
 
     @PostMapping("/subscription/{studentId}/unsubscribe-level")
-    public ApiResponse<Object> unsubscribeWarningLevel(@PathVariable String studentId, @RequestParam String level) {
+    public ApiResponse<Object> unsubscribeWarningLevel(@PathVariable String studentId, @RequestParam String level,
+                                                       HttpServletRequest request) {
+        if (!isSelfProfile(Long.parseLong(studentId), request)) {
+            return forbidden("只能修改本人的订阅设置");
+        }
         try {
             log.info("Unsubscribe warning level: studentId={}, level={}", studentId, level);
             return ApiResponse.success(studentService.unsubscribeWarningLevel(Long.parseLong(studentId), level));
@@ -622,7 +712,11 @@ public class StudentController {
     }
 
     @PostMapping("/subscription/{studentId}/set-channel")
-    public ApiResponse<Object> setPushChannel(@PathVariable String studentId, @RequestParam String channel, @RequestParam Boolean enabled) {
+    public ApiResponse<Object> setPushChannel(@PathVariable String studentId, @RequestParam String channel,
+                                              @RequestParam Boolean enabled, HttpServletRequest request) {
+        if (!isSelfProfile(Long.parseLong(studentId), request)) {
+            return forbidden("只能修改本人的订阅设置");
+        }
         try {
             log.info("Set push channel: studentId={}, channel={}, enabled={}", studentId, channel, enabled);
             return ApiResponse.success(studentService.setPushChannel(Long.parseLong(studentId), channel, enabled));
@@ -639,8 +733,9 @@ public class StudentController {
     }
 
     @PutMapping("/subscription/{studentId}")
-    public ApiResponse<Object> updateSubscription(@PathVariable String studentId, @RequestBody Object request) {
-        return updateSubscriptionPreferences(studentId, request);
+    public ApiResponse<Object> updateSubscription(@PathVariable String studentId, @RequestBody Object body,
+                                                  HttpServletRequest request) {
+        return updateSubscriptionPreferences(studentId, body, request);
     }
 
     // ==================== 帮扶反馈 (P0新增) ====================
@@ -747,10 +842,16 @@ public class StudentController {
      */
     @PutMapping("/settings/{studentId}")
     public ApiResponse<Object> updateStudentSettings(@PathVariable String studentId,
-                                                    @RequestBody(required = false) Map<String, Object> request) {
+                                                    @RequestBody(required = false) Map<String, Object> body,
+                                                    HttpServletRequest request) {
+        // 2026-10-03（W10）：路径参数是 users.id（见下方类注释口径），此前不看登录人 ⇒
+        // 换个 id 就改**别人**的邮箱提醒/系统消息等开关。加归属闸。
+        if (!isSelf(Long.parseLong(studentId)) && !isAdmin(request)) {
+            return forbidden("只能修改本人的设置");
+        }
         try {
             log.info("Update student settings: {}", studentId);
-            return ApiResponse.success(studentService.updateStudentSettings(Long.parseLong(studentId), request));
+            return ApiResponse.success(studentService.updateStudentSettings(Long.parseLong(studentId), body));
         } catch (Exception e) {
             log.error("Update student settings failed: {}", e.getMessage());
             return ApiResponse.error(e.getMessage());
@@ -758,7 +859,12 @@ public class StudentController {
     }
 
     @PostMapping("/settings/{studentId}/privacy-level")
-    public ApiResponse<Object> updatePrivacyLevel(@PathVariable String studentId, @RequestParam Integer privacyLevel) {
+    public ApiResponse<Object> updatePrivacyLevel(@PathVariable String studentId, @RequestParam Integer privacyLevel,
+                                                  HttpServletRequest request) {
+        // 2026-10-03（W10）：隐私级别直接写 student_profile，此前不看登录人 ⇒ 改别人的隐私档位。
+        if (!isSelf(Long.parseLong(studentId)) && !isAdmin(request)) {
+            return forbidden("只能修改本人的设置");
+        }
         try {
             log.info("Update privacy level: studentId={}, privacyLevel={}", studentId, privacyLevel);
             return ApiResponse.success(studentService.updatePrivacyLevel(Long.parseLong(studentId), privacyLevel));
