@@ -44,21 +44,25 @@ public class ReportTemplateServiceImpl extends ServiceImpl<ReportTemplateMapper,
     }
 
     @Override
-    public void deleteTemplate(Long id) {
+    public boolean deleteTemplate(Long id) {
         ReportTemplate template = getById(id);
-        if (template != null) {
-            // 删除文件
-            try {
-                File file = new File(template.getFilePath());
-                if (file.exists()) {
-                    file.delete();
-                }
-            } catch (Exception e) {
-                log.warn("Failed to delete template file: {}", e.getMessage());
-            }
-            
-            removeById(id);
-            log.info("Report template deleted: {}", template.getName());
+        if (template == null) {
+            // 2026-10-03（W7）：行不存在 = 没删成，如实回 false（调用方据此回 404）。
+            // 原实现在这里整个空转，调用方却照回"模板删除成功"。
+            return false;
         }
+        // 删除文件
+        try {
+            File file = new File(template.getFilePath());
+            if (file.exists()) {
+                file.delete();
+            }
+        } catch (Exception e) {
+            log.warn("Failed to delete template file: {}", e.getMessage());
+        }
+
+        boolean removed = removeById(id);
+        log.info("Report template deleted: {} (removed={})", template.getName(), removed);
+        return removed;
     }
 }

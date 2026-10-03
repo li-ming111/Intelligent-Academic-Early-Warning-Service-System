@@ -28,8 +28,20 @@ public interface MessageService {
     List<Message> getMessagesByUserId(Long userId);
     List<Message> getAllMessages();
     Message createMessage(Message message);
-    void markAsRead(Long id);
-    void deleteMessage(Long id);
+    /**
+     * 标记已读。
+     *
+     * <p>2026-10-03（W7）：返回值由 {@code void} 改为**影响行数** —— 此前不读返回值，
+     * 对一个不存在的 id 也会回「已标记为已读」。调用方按 0 行回 404。
+     */
+    int markAsRead(Long id);
+    /**
+     * 删除消息。
+     *
+     * <p>2026-10-03（W7）：返回值由 {@code void} 改为**影响行数** —— 此前
+     * {@code DELETE /messages/{id}} 删一个不存在的 id 也回「消息已删除」。
+     */
+    int deleteMessage(Long id);
     List<Message> getUnreadMessages(Long userId);
     void markAllAsRead(Long userId);
     /**

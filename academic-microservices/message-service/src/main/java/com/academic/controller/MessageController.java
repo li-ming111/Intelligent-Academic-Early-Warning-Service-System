@@ -102,14 +102,20 @@ public class MessageController {
 
     @PutMapping("/{id}/read")
     public ApiResponse<String> markAsRead(@PathVariable Long id) {
-        messageService.markAsRead(id);
-        return ApiResponse.success("已标记为已读");
+        // 2026-10-03（W7）：读影响行数 —— 0 行说明该 id 不存在，如实回 404，
+        // 不能再回「已标记为已读」（那是对不存在的行报成功）。
+        return messageService.markAsRead(id) > 0
+                ? ApiResponse.success("已标记为已读")
+                : ApiResponse.notFound("消息不存在");
     }
 
     @DeleteMapping("/{id}")
     public ApiResponse<String> deleteMessage(@PathVariable Long id) {
-        messageService.deleteMessage(id);
-        return ApiResponse.success("消息已删除");
+        // 2026-10-03（W7）：同上，删 0 行 = 该 id 不存在 ⇒ 404（HTTP 200 + body code 404，
+        // 与本仓控制器业务拒绝的惯例一致）。
+        return messageService.deleteMessage(id) > 0
+                ? ApiResponse.success("消息已删除")
+                : ApiResponse.notFound("消息不存在");
     }
     
     // ==================== 这里原来有 `DELETE /user/{userId}`（2026-10-01 删） ====================
@@ -235,8 +241,10 @@ public class MessageController {
     // /teachers/messages/{messageId}/mark-read 和 /students/messages/{messageId}/mark-read
     @PostMapping("/{id}/mark-read")
     public ApiResponse<String> markAsReadByPost(@PathVariable Long id) {
-        messageService.markAsRead(id);
-        return ApiResponse.success("消息已标记为已读");
+        // 2026-10-03（W7）：同 PUT /{id}/read，0 行 ⇒ 404
+        return messageService.markAsRead(id) > 0
+                ? ApiResponse.success("消息已标记为已读")
+                : ApiResponse.notFound("消息不存在");
     }
 
     // 广播消息端点 - 供 admin-service 调用

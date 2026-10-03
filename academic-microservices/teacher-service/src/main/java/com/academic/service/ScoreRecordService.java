@@ -293,9 +293,10 @@ public class ScoreRecordService {
     }
     
     @Transactional(rollbackFor = Exception.class)
-    public void removeById(Long id) {
+    public int removeById(Long id) {
         deleteWithAuthoritative(scoreRecordMapper.selectById(id));
-        scoreRecordMapper.deleteById(id);
+        // 2026-10-03（W7）：返回影响行数，0 行 = 该 id 不存在（调用方据此回 404）
+        return scoreRecordMapper.deleteById(id);
     }
 
     /**
@@ -331,14 +332,15 @@ public class ScoreRecordService {
      * 于是"录入记录删了、学生成绩单上还在"，两边对不上。
      */
     @Transactional(rollbackFor = Exception.class)
-    public void removeByIds(List<Long> ids) {
+    public int removeByIds(List<Long> ids) {
         if (ids == null || ids.isEmpty()) {
-            return;
+            return 0;
         }
         for (Long id : ids) {
             deleteWithAuthoritative(scoreRecordMapper.selectById(id));
         }
-        scoreRecordMapper.deleteByIds(ids);
+        // 2026-10-03（W7）：返回影响行数，0 行 = 这些 id 一个都不存在（调用方据此回 404）
+        return scoreRecordMapper.deleteByIds(ids);
     }
     
     public List<ScoreRecord> getScoresByClassName(String className) {

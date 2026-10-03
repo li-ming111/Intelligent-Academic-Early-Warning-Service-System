@@ -774,7 +774,11 @@ public class AdminController {
                 user.setPassword(passwordEncoder.encode(rawPassword));
             }
 
-            userService.updateUser(user);
+            // 2026-10-03（W7）：读影响行数 —— 0 行说明该 id 不存在，如实回 404。
+            // 同时**不能留审计**：什么都没改动，"修改账号"的痕就是假的。
+            if (!userService.updateUser(user)) {
+                return ApiResponse.notFound("User not found");
+            }
             log.info("User updated: id={}, username={}, passwordChanged={}",
                     id, user.getUsername(), user.getPassword() != null);
             // 口令是否被改也记进审计：这是最该留痕的一类操作。
@@ -1377,14 +1381,18 @@ public class AdminController {
     @PutMapping("/colleges/{id}")
     public ApiResponse<String> updateCollege(@PathVariable Long id, @RequestBody College college) {
         college.setId(id);
-        collegeService.updateById(college);
-        return ApiResponse.success("College updated successfully");
+        // 2026-10-03（W7）：updateById 对不存在的 id 返回 0 行、不抛异常；
+        // 不读返回值就会对不存在的学院回"更新成功"。
+        return collegeService.updateById(college)
+                ? ApiResponse.success("College updated successfully")
+                : ApiResponse.notFound("College not found");
     }
 
     @DeleteMapping("/colleges/{id}")
     public ApiResponse<String> deleteCollege(@PathVariable Long id) {
-        collegeService.removeById(id);
-        return ApiResponse.success("College deleted successfully");
+        return collegeService.removeById(id)
+                ? ApiResponse.success("College deleted successfully")
+                : ApiResponse.notFound("College not found");
     }
 
     @GetMapping("/courses")
@@ -1563,14 +1571,16 @@ public class AdminController {
     @PutMapping("/majors/{id}")
     public ApiResponse<String> updateMajor(@PathVariable Long id, @RequestBody Major major) {
         major.setId(id);
-        majorService.updateById(major);
-        return ApiResponse.success("Major updated successfully");
+        return majorService.updateById(major)
+                ? ApiResponse.success("Major updated successfully")
+                : ApiResponse.notFound("Major not found");
     }
 
     @DeleteMapping("/majors/{id}")
     public ApiResponse<String> deleteMajor(@PathVariable Long id) {
-        majorService.removeById(id);
-        return ApiResponse.success("Major deleted successfully");
+        return majorService.removeById(id)
+                ? ApiResponse.success("Major deleted successfully")
+                : ApiResponse.notFound("Major not found");
     }
 
     
@@ -1593,14 +1603,16 @@ public class AdminController {
     @PutMapping("/courses/{id}")
     public ApiResponse<String> updateCourse(@PathVariable Long id, @RequestBody Course course) {
         course.setId(id);
-        courseService.updateById(course);
-        return ApiResponse.success("Course updated successfully");
+        return courseService.updateById(course)
+                ? ApiResponse.success("Course updated successfully")
+                : ApiResponse.notFound("Course not found");
     }
 
     @DeleteMapping("/courses/{id}")
     public ApiResponse<String> deleteCourse(@PathVariable Long id) {
-        courseService.removeById(id);
-        return ApiResponse.success("Course deleted successfully");
+        return courseService.removeById(id)
+                ? ApiResponse.success("Course deleted successfully")
+                : ApiResponse.notFound("Course not found");
     }
 
     @GetMapping("/rules")
@@ -1628,7 +1640,11 @@ public class AdminController {
     @PutMapping("/rules/{id}")
     public ApiResponse<String> updateRule(@PathVariable Long id, @RequestBody WarningRule rule) {
         rule.setId(id);
-        warningRuleService.updateById(rule);
+        // 2026-10-03（W7）：0 行 = 该规则不存在，回 404 且**不写审计** ——
+        // 原来无论改没改到都"照写审计"，审计里于是有"修改了不存在的规则"。
+        if (!warningRuleService.updateById(rule)) {
+            return ApiResponse.notFound("Rule not found");
+        }
         // 预警阈值被改动会直接影响哪些学生被判预警，是必须留痕的一类操作。
         auditLogService.record("UPDATE", "WARNING_RULE", id, "修改预警规则 " + rule.getRuleName());
         return ApiResponse.success("Rule updated successfully");
@@ -1636,7 +1652,10 @@ public class AdminController {
 
     @DeleteMapping("/rules/{id}")
     public ApiResponse<String> deleteRule(@PathVariable Long id) {
-        warningRuleService.removeById(id);
+        // 同上：删 0 行 = 该规则不存在，回 404 且不写审计。
+        if (!warningRuleService.removeById(id)) {
+            return ApiResponse.notFound("Rule not found");
+        }
         auditLogService.record("DELETE", "WARNING_RULE", id, "删除预警规则 id=" + id);
         return ApiResponse.success("Rule deleted successfully");
     }
@@ -1665,14 +1684,16 @@ public class AdminController {
     @PutMapping("/classes/{id}")
     public ApiResponse<String> updateClass(@PathVariable Long id, @RequestBody Classes classes) {
         classes.setId(id);
-        classesMapper.updateById(classes);
-        return ApiResponse.success("Class updated successfully");
+        return classesMapper.updateById(classes) > 0
+                ? ApiResponse.success("Class updated successfully")
+                : ApiResponse.notFound("Class not found");
     }
 
     @DeleteMapping("/classes/{id}")
     public ApiResponse<String> deleteClass(@PathVariable Long id) {
-        classesMapper.deleteById(id);
-        return ApiResponse.success("Class deleted successfully");
+        return classesMapper.deleteById(id) > 0
+                ? ApiResponse.success("Class deleted successfully")
+                : ApiResponse.notFound("Class not found");
     }
 
     @GetMapping("/students")
@@ -1724,8 +1745,9 @@ public class AdminController {
     public ApiResponse<String> updateStudent(@PathVariable Long id, @RequestBody Student student) {
         try {
             student.setId(id);
-            studentService.updateById(student);
-            return ApiResponse.success("Student updated successfully");
+            return studentService.updateById(student)
+                    ? ApiResponse.success("Student updated successfully")
+                    : ApiResponse.notFound("Student not found");
         } catch (Exception e) {
             log.error("Update student failed: {}", e.getMessage());
             return ApiResponse.error(e.getMessage());
@@ -1735,8 +1757,9 @@ public class AdminController {
     @DeleteMapping("/students/{id}")
     public ApiResponse<String> deleteStudent(@PathVariable Long id) {
         try {
-            studentService.removeById(id);
-            return ApiResponse.success("Student deleted successfully");
+            return studentService.removeById(id)
+                    ? ApiResponse.success("Student deleted successfully")
+                    : ApiResponse.notFound("Student not found");
         } catch (Exception e) {
             log.error("Delete student failed: {}", e.getMessage());
             return ApiResponse.error(e.getMessage());
@@ -1778,8 +1801,9 @@ public class AdminController {
     public ApiResponse<String> updateTeacher(@PathVariable Long id, @RequestBody TeacherProfile teacher) {
         try {
             teacher.setId(id);
-            teacherProfileMapper.updateById(teacher);
-            return ApiResponse.success("Teacher updated successfully");
+            return teacherProfileMapper.updateById(teacher) > 0
+                    ? ApiResponse.success("Teacher updated successfully")
+                    : ApiResponse.notFound("Teacher not found");
         } catch (Exception e) {
             log.error("Update teacher failed: {}", e.getMessage());
             return ApiResponse.error(e.getMessage());
@@ -1870,8 +1894,9 @@ public class AdminController {
     public ApiResponse<String> updateCounselor(@PathVariable Long id, @RequestBody CounselorProfile counselor) {
         try {
             counselor.setId(id);
-            counselorService.updateById(counselor);
-            return ApiResponse.success("Counselor updated successfully");
+            return counselorService.updateById(counselor)
+                    ? ApiResponse.success("Counselor updated successfully")
+                    : ApiResponse.notFound("Counselor not found");
         } catch (Exception e) {
             log.error("Update counselor failed: {}", e.getMessage());
             return ApiResponse.error(e.getMessage());
@@ -1881,8 +1906,22 @@ public class AdminController {
     @DeleteMapping("/counselors/{id}")
     public ApiResponse<String> deleteCounselor(@PathVariable Long id) {
         try {
-            counselorService.removeById(id);
-            userService.removeById(id);
+            // ⚠️ 与上面 deleteTeacher 同一类 ID 空间问题：路径里的 id 是
+            //    counselor_profile.id，而 users 表认的是 users.id，两者不是同一个数。
+            //    原实现 `counselorService.removeById(id); userService.removeById(id);`
+            //    用同一个 id 去删两张不相干的表 —— 删掉辅导员档案的同时，
+            //    会把**另一个编号的账号**删掉，而该辅导员的账号还留在库里。
+            //    先按 profile 查出 user_id，再删账号（顺序与 deleteTeacher 一致）。
+            CounselorProfile counselor = counselorProfileMapper.selectById(id);
+            if (counselor == null) {
+                return ApiResponse.notFound("Counselor not found");
+            }
+            if (!counselorService.removeById(id)) {
+                return ApiResponse.notFound("Counselor not found");
+            }
+            if (counselor.getUserId() != null) {
+                userService.removeById(counselor.getUserId());
+            }
             return ApiResponse.success("Counselor deleted successfully");
         } catch (Exception e) {
             log.error("Delete counselor failed: {}", e.getMessage());
@@ -2059,8 +2098,9 @@ public class AdminController {
     @DeleteMapping("/teacher-class-applications/{id}")
     public ApiResponse<String> deleteTeacherClassApplication(@PathVariable Long id) {
         try {
-            applicationMapper.deleteById(id);
-            return ApiResponse.success("Application deleted successfully");
+            return applicationMapper.deleteById(id) > 0
+                    ? ApiResponse.success("Application deleted successfully")
+                    : ApiResponse.notFound("Application not found");
         } catch (Exception e) {
             log.error("Delete teacher class application failed: {}", e.getMessage());
             return ApiResponse.error(e.getMessage());
@@ -3544,8 +3584,9 @@ public class AdminController {
     @DeleteMapping("/export/{exportId}")
     public ApiResponse<String> deleteExport(@PathVariable Long exportId) {
         try {
-            exportHistoryMapper.deleteById(exportId);
-            return ApiResponse.success("Export deleted successfully");
+            return exportHistoryMapper.deleteById(exportId) > 0
+                    ? ApiResponse.success("Export deleted successfully")
+                    : ApiResponse.notFound("Export not found");
         } catch (Exception e) {
             log.error("Delete export failed: {}", e.getMessage());
             return ApiResponse.error(e.getMessage());
@@ -4139,8 +4180,10 @@ public class AdminController {
     @DeleteMapping("/reports/templates/{templateId}")
     public ApiResponse<String> deleteReportTemplate(@PathVariable Long templateId) {
         try {
-            reportTemplateService.deleteTemplate(templateId);
-            return ApiResponse.success("模板删除成功");
+            // 2026-10-03（W7）：读返回值 —— 模板不存在时不再回"删除成功"。
+            return reportTemplateService.deleteTemplate(templateId)
+                    ? ApiResponse.success("模板删除成功")
+                    : ApiResponse.notFound("模板不存在");
         } catch (Exception e) {
             log.error("Delete report template failed: {}", e.getMessage());
             return ApiResponse.error(e.getMessage());

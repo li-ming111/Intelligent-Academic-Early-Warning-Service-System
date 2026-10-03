@@ -233,10 +233,26 @@ class ScoreRecordServiceTest {
         when(scoreMapper.deleteById(11L)).thenReturn(1);
         when(scoreRecordMapper.deleteById(1L)).thenReturn(1);
 
-        scoreRecordService.removeById(1L);
+        // 2026-10-03（W7）：删到行时返回 1（调用方据此回 success）
+        assertEquals(1, scoreRecordService.removeById(1L));
 
         verify(scoreMapper).deleteById(11L);
         verify(scoreRecordMapper).deleteById(1L);
+    }
+
+    /**
+     * 2026-10-03（W7）：删一个不存在的 id —— mapper 返回 0 行，服务层如实返回 0，
+     * 控制器据此回 404（HTTP 200 + body code 404）。这是本轮修的那族"假成功"。
+     */
+    @Test
+    void testRemoveById_nonExistentId_returnsZero() {
+        when(scoreRecordMapper.selectById(99L)).thenReturn(null);
+        when(scoreRecordMapper.deleteById(99L)).thenReturn(0);
+
+        assertEquals(0, scoreRecordService.removeById(99L),
+                "不存在的 id 必须返回 0，不能假装删掉了");
+
+        verify(scoreMapper, never()).deleteById(anyLong());
     }
 
     /** 删单条但学期为空：不猜、不乱删，只删录入记录并留下 warn。 */
@@ -251,7 +267,7 @@ class ScoreRecordServiceTest {
         when(scoreRecordMapper.selectById(3L)).thenReturn(sr);
         when(scoreRecordMapper.deleteById(3L)).thenReturn(1);
 
-        scoreRecordService.removeById(3L);
+        assertEquals(1, scoreRecordService.removeById(3L));
 
         verify(scoreMapper, never()).deleteById(anyLong());
         verify(scoreMapper, never()).selectByStudentCourseSemester(anyLong(), anyLong(), any());
@@ -285,11 +301,21 @@ class ScoreRecordServiceTest {
         when(scoreMapper.deleteById(22L)).thenReturn(1);
         when(scoreRecordMapper.deleteByIds(List.of(1L, 2L))).thenReturn(2);
 
-        scoreRecordService.removeByIds(Arrays.asList(1L, 2L));
+        assertEquals(2, scoreRecordService.removeByIds(Arrays.asList(1L, 2L)));
 
         verify(scoreMapper).deleteById(11L);
         verify(scoreMapper).deleteById(22L);
         verify(scoreRecordMapper).deleteByIds(List.of(1L, 2L));
+    }
+
+    /** 2026-10-03（W7）：批量删但一个 id 都不存在 —— 返回 0，控制器回 404。 */
+    @Test
+    void testRemoveByIds_allMissing_returnsZero() {
+        when(scoreRecordMapper.selectById(97L)).thenReturn(null);
+        when(scoreRecordMapper.selectById(98L)).thenReturn(null);
+        when(scoreRecordMapper.deleteByIds(List.of(97L, 98L))).thenReturn(0);
+
+        assertEquals(0, scoreRecordService.removeByIds(List.of(97L, 98L)));
     }
 
     @Test

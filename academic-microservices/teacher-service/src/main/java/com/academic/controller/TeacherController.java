@@ -1633,8 +1633,10 @@ public class TeacherController {
             return ApiResponse.error(403, "无权删除其他教师录入的成绩");
         }
         try {
-            scoreRecordService.removeById(scoreId);
-            return ApiResponse.success("成绩删除成功");
+            // 2026-10-03（W7）：0 行 = 该 id 不存在（此前回「成绩删除成功」）
+            return scoreRecordService.removeById(scoreId) > 0
+                    ? ApiResponse.success("成绩删除成功")
+                    : ApiResponse.notFound("成绩记录不存在");
         } catch (Exception e) {
             return ApiResponse.error(e.getMessage());
         }
@@ -1646,8 +1648,10 @@ public class TeacherController {
     @PostMapping("/scores/batch-delete")
     public ApiResponse<Object> batchDeleteScores(@RequestBody List<Long> scoreIds) {
         try {
-            scoreRecordService.removeByIds(scoreIds);
-            return ApiResponse.success("成绩批量删除成功");
+            // 2026-10-03（W7）：0 行 = 这些 id 一个都不存在，如实回 404
+            return scoreRecordService.removeByIds(scoreIds) > 0
+                    ? ApiResponse.success("成绩批量删除成功")
+                    : ApiResponse.notFound("没有可删除的成绩记录");
         } catch (Exception e) {
             return ApiResponse.error(e.getMessage());
         }

@@ -211,17 +211,20 @@ public class MessageServiceImpl implements MessageService {
     }
 
     @Override
-    public void markAsRead(Long id) {
+    public int markAsRead(Long id) {
         Message message = new Message();
         message.setId(id);
         message.setStatus(1);
         message.setReadAt(LocalDateTime.now());
-        messageMapper.updateById(message);
+        // 2026-10-03（W7）：返回影响行数，0 行 = 该 id 不存在（调用方据此回 404）
+        return messageMapper.updateById(message);
     }
 
     @Override
-    public void deleteMessage(Long id) {
-        messageMapper.deleteById(id);
+    public int deleteMessage(Long id) {
+        // 2026-10-03（W7）：返回影响行数，0 行 = 该 id 不存在（调用方据此回 404）。
+        // 此前是 void，删不存在的 id 也照回「消息已删除」。
+        return messageMapper.deleteById(id);
     }
 
     @Override
