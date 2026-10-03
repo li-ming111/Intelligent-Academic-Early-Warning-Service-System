@@ -1,6 +1,7 @@
 package com.academic.controller;
 
 import com.academic.common.dto.ApiResponse;
+import com.academic.common.util.UpdateBodyGuard;
 import com.academic.entity.Role;
 import com.academic.service.RoleService;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
@@ -115,6 +116,10 @@ public class RoleController {
         try {
             log.info("Update role request: {}", id);
             role.setId(id);
+            // W8：空请求体 ⇒ 无 SET 子句 ⇒ SQL 语法错；这是客户端的错，回 400 而不是内部错误。
+            if (!UpdateBodyGuard.hasUpdatableField(role)) {
+                return ApiResponse.badRequest("请求体里没有任何可更新的字段");
+            }
             // 检查角色代码是否已存在（排除当前角色）
             Role existing = roleService.getByCode(role.getCode());
             if (existing != null && !existing.getId().equals(id)) {
@@ -124,7 +129,8 @@ public class RoleController {
             if (updated) {
                 return ApiResponse.success("角色已更新");
             } else {
-                return ApiResponse.error("更新角色失败");
+                // W8：0 行 = 该角色不存在（原来回 code 500）。
+                return ApiResponse.notFound("角色不存在");
             }
         } catch (Exception e) {
             log.error("Update role failed: {}", e.getMessage());

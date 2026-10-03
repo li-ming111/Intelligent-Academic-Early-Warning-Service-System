@@ -12,6 +12,7 @@ import com.academic.common.entity.CollegeAdminProfile;
 import com.academic.common.entity.AcademicWarning;
 import com.academic.common.entity.Score;
 import com.academic.common.entity.ScoreRecord;
+import com.academic.common.util.UpdateBodyGuard;
 import com.academic.entity.*;
 import com.academic.service.BackupService;
 import com.academic.service.CollegeService;
@@ -1381,6 +1382,12 @@ public class AdminController {
     @PutMapping("/colleges/{id}")
     public ApiResponse<String> updateCollege(@PathVariable Long id, @RequestBody College college) {
         college.setId(id);
+        // 2026-10-03（W8）：请求体全 null（客户端发 `{}`、或字段名与实体对不上被 Jackson
+        // 静默忽略）时，MyBatis-Plus 会生成**没有 SET 子句**的 UPDATE ⇒ MySQL 语法错 ⇒ 500。
+        // 那是客户端的错，如实回 400。判据见 UpdateBodyGuard。
+        if (!UpdateBodyGuard.hasUpdatableField(college)) {
+            return ApiResponse.badRequest("请求体里没有任何可更新的字段");
+        }
         // 2026-10-03（W7）：updateById 对不存在的 id 返回 0 行、不抛异常；
         // 不读返回值就会对不存在的学院回"更新成功"。
         return collegeService.updateById(college)
@@ -1571,6 +1578,9 @@ public class AdminController {
     @PutMapping("/majors/{id}")
     public ApiResponse<String> updateMajor(@PathVariable Long id, @RequestBody Major major) {
         major.setId(id);
+        if (!UpdateBodyGuard.hasUpdatableField(major)) {   // W8：空请求体 ⇒ 无 SET 子句 ⇒ 500
+            return ApiResponse.badRequest("请求体里没有任何可更新的字段");
+        }
         return majorService.updateById(major)
                 ? ApiResponse.success("Major updated successfully")
                 : ApiResponse.notFound("Major not found");
@@ -1603,6 +1613,9 @@ public class AdminController {
     @PutMapping("/courses/{id}")
     public ApiResponse<String> updateCourse(@PathVariable Long id, @RequestBody Course course) {
         course.setId(id);
+        if (!UpdateBodyGuard.hasUpdatableField(course)) {   // W8：空请求体 ⇒ 无 SET 子句 ⇒ 500
+            return ApiResponse.badRequest("请求体里没有任何可更新的字段");
+        }
         return courseService.updateById(course)
                 ? ApiResponse.success("Course updated successfully")
                 : ApiResponse.notFound("Course not found");
@@ -1640,6 +1653,10 @@ public class AdminController {
     @PutMapping("/rules/{id}")
     public ApiResponse<String> updateRule(@PathVariable Long id, @RequestBody WarningRule rule) {
         rule.setId(id);
+        // W8：空请求体（无 SET 子句）先判掉，别让它冒到 SQL 层变成 500。
+        if (!UpdateBodyGuard.hasUpdatableField(rule)) {
+            return ApiResponse.badRequest("请求体里没有任何可更新的字段");
+        }
         // 2026-10-03（W7）：0 行 = 该规则不存在，回 404 且**不写审计** ——
         // 原来无论改没改到都"照写审计"，审计里于是有"修改了不存在的规则"。
         if (!warningRuleService.updateById(rule)) {
@@ -1684,6 +1701,9 @@ public class AdminController {
     @PutMapping("/classes/{id}")
     public ApiResponse<String> updateClass(@PathVariable Long id, @RequestBody Classes classes) {
         classes.setId(id);
+        if (!UpdateBodyGuard.hasUpdatableField(classes)) {  // W8：空请求体 ⇒ 无 SET 子句 ⇒ 500
+            return ApiResponse.badRequest("请求体里没有任何可更新的字段");
+        }
         return classesMapper.updateById(classes) > 0
                 ? ApiResponse.success("Class updated successfully")
                 : ApiResponse.notFound("Class not found");
@@ -1745,6 +1765,9 @@ public class AdminController {
     public ApiResponse<String> updateStudent(@PathVariable Long id, @RequestBody Student student) {
         try {
             student.setId(id);
+            if (!UpdateBodyGuard.hasUpdatableField(student)) {  // W8：空请求体 ⇒ 无 SET 子句 ⇒ 500
+                return ApiResponse.badRequest("请求体里没有任何可更新的字段");
+            }
             return studentService.updateById(student)
                     ? ApiResponse.success("Student updated successfully")
                     : ApiResponse.notFound("Student not found");
@@ -1801,6 +1824,9 @@ public class AdminController {
     public ApiResponse<String> updateTeacher(@PathVariable Long id, @RequestBody TeacherProfile teacher) {
         try {
             teacher.setId(id);
+            if (!UpdateBodyGuard.hasUpdatableField(teacher)) {  // W8：空请求体 ⇒ 无 SET 子句 ⇒ 500
+                return ApiResponse.badRequest("请求体里没有任何可更新的字段");
+            }
             return teacherProfileMapper.updateById(teacher) > 0
                     ? ApiResponse.success("Teacher updated successfully")
                     : ApiResponse.notFound("Teacher not found");
@@ -1894,6 +1920,9 @@ public class AdminController {
     public ApiResponse<String> updateCounselor(@PathVariable Long id, @RequestBody CounselorProfile counselor) {
         try {
             counselor.setId(id);
+            if (!UpdateBodyGuard.hasUpdatableField(counselor)) {  // W8：空请求体 ⇒ 无 SET 子句 ⇒ 500
+                return ApiResponse.badRequest("请求体里没有任何可更新的字段");
+            }
             return counselorService.updateById(counselor)
                     ? ApiResponse.success("Counselor updated successfully")
                     : ApiResponse.notFound("Counselor not found");

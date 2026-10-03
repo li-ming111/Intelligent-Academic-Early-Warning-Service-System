@@ -59,7 +59,11 @@ class AdminControllerNotFoundTest {
     void updateCollege_missing_returns404() {
         when(collegeService.updateById(any(College.class))).thenReturn(false);
 
-        ApiResponse<String> resp = controller.updateCollege(999999L, new College());
+        // ⚠️ 请求体必须带一个真列（W8 起如此）：全 null 的体会在更早的 UpdateBodyGuard
+        //    那一关回 400 —— 那是"请求体不对"，与"这个 id 不存在"是两件事，别混成一个用例。
+        College body = new College();
+        body.setName("计算机学院");
+        ApiResponse<String> resp = controller.updateCollege(999999L, body);
 
         assertEquals(404, resp.getCode(), "更新 0 行必须回 404，不能回 success");
         assertFalse(resp.isSuccess());

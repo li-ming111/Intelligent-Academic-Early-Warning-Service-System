@@ -3,6 +3,7 @@ package com.academic.controller;
 import com.academic.common.dto.ApiResponse;
 import com.academic.common.entity.User;
 import com.academic.common.entity.UserSettings;
+import com.academic.common.util.UpdateBodyGuard;
 import com.academic.dto.UserDTO;
 import com.academic.entity.LoginLog;
 import com.academic.mapper.LoginLogMapper;
@@ -230,11 +231,20 @@ public class UserController {
                 //                    这条路径不验旧密码，放行等于把"改密码要先给旧密码"整层绕掉。
                 user.setRole(null).setStatus(null).setPassword(null);
             }
+            // W8：请求体全 null（发 `{}` / 字段名写错）⇒ MyBatis-Plus 生成无 SET 子句的 UPDATE
+            // ⇒ SQL 语法错。这是客户端的错，回 400。
+            // ⚠️ 必须放在上面那段"非管理员禁改字段置 null"**之后**：非管理员只传
+            //    {"role":4} 时，role 会被上面置成 null，于是实体最终依然是全 null ——
+            //    按请求体判会放行，按即将落库的实体判才是对的。
+            if (!UpdateBodyGuard.hasUpdatableField(user)) {
+                return ApiResponse.badRequest("请求体里没有任何可更新的字段");
+            }
             boolean updated = userService.updateById(user);
             if (updated) {
                 return ApiResponse.success("用户已更新");
             } else {
-                return ApiResponse.error("更新用户失败");
+                // W8：0 行 = 该用户不存在（原来回 code 500）。
+                return ApiResponse.notFound("用户不存在");
             }
         } catch (Exception e) {
             log.error("Update user failed: {}", e.getMessage());

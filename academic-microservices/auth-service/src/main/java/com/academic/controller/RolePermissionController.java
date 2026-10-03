@@ -1,6 +1,7 @@
 package com.academic.controller;
 
 import com.academic.common.dto.ApiResponse;
+import com.academic.common.util.UpdateBodyGuard;
 import com.academic.entity.Permission;
 import com.academic.entity.Role;
 import com.academic.entity.RolePermission;
@@ -122,11 +123,16 @@ public class RolePermissionController {
         try {
             log.info("Update role permission request: {}", id);
             rolePermission.setId(id);
+            // W8：空请求体 ⇒ 无 SET 子句 ⇒ SQL 语法错；这是客户端的错，回 400。
+            if (!UpdateBodyGuard.hasUpdatableField(rolePermission)) {
+                return ApiResponse.badRequest("请求体里没有任何可更新的字段");
+            }
             boolean updated = rolePermissionService.updateById(rolePermission);
             if (updated) {
                 return ApiResponse.success("角色权限关联已更新");
             } else {
-                return ApiResponse.error("更新角色权限关联失败");
+                // W8：0 行 = 这条角色-权限关联不存在（原来回 code 500）。
+                return ApiResponse.notFound("角色权限关联不存在");
             }
         } catch (Exception e) {
             log.error("Update role permission failed: {}", e.getMessage());

@@ -2,6 +2,7 @@ package com.academic.controller;
 
 import com.academic.common.dto.ApiResponse;
 import com.academic.common.entity.Course;
+import com.academic.common.util.UpdateBodyGuard;
 import com.academic.dto.CourseDTO;
 import com.academic.service.CourseService;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
@@ -135,11 +136,16 @@ public class CourseController {
         try {
             log.info("Update course request: {}", courseId);
             course.setId(courseId);
+            // W8：空请求体 ⇒ 无 SET 子句 ⇒ SQL 语法错；这是客户端的错，回 400（原来是 200+code500）。
+            if (!UpdateBodyGuard.hasUpdatableField(course)) {
+                return ApiResponse.badRequest("请求体里没有任何可更新的字段");
+            }
             boolean updated = courseService.updateById(course);
             if (updated) {
                 return ApiResponse.success("课程已更新");
             } else {
-                return ApiResponse.error("更新课程失败");
+                // W8：0 行 = 该课程不存在（原来回 code 500）。
+                return ApiResponse.notFound("课程不存在");
             }
         } catch (Exception e) {
             log.error("Update course failed: {}", e.getMessage());

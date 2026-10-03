@@ -6,6 +6,7 @@ import com.academic.common.entity.CounselorProfile;
 import com.academic.common.entity.AssistancePlan;
 import com.academic.common.entity.CommunicationLog;
 import com.academic.common.entity.Student;
+import com.academic.common.util.UpdateBodyGuard;
 import com.academic.common.entity.AcademicWarning;
 import com.academic.entity.CounselorClassApplication;
 import com.academic.entity.ClassInfo;
@@ -707,6 +708,12 @@ public class CounselorController {
     public ApiResponse<String> updateStudentInfo(@PathVariable Long studentId, @RequestBody Student student) {
         try {
             student.setId(studentId);
+            // W8：空请求体 ⇒ 无 SET 子句 ⇒ `UPDATE student_profile    WHERE id=?` ⇒ SQL 语法错。
+            // 改前这里会回 **HTTP 200 + code 500**，并把上面那行 SQL 与 MyBatis 内部信息
+            // 一起塞进 message 返回给客户端；现在如实回 400。
+            if (!UpdateBodyGuard.hasUpdatableField(student)) {
+                return ApiResponse.badRequest("请求体里没有任何可更新的字段");
+            }
             boolean success = studentService.updateById(student);
             if (success) {
                 return ApiResponse.success("学生信息更新成功");

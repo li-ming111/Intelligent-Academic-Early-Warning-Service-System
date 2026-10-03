@@ -2,6 +2,7 @@ package com.academic.controller;
 
 import com.academic.common.dto.ApiResponse;
 import com.academic.common.entity.Major;
+import com.academic.common.util.UpdateBodyGuard;
 import com.academic.service.MajorService;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
@@ -102,11 +103,16 @@ public class MajorController {
         try {
             log.info("Update major request: {}", majorId);
             major.setId(majorId);
+            // W8：空请求体 ⇒ 无 SET 子句 ⇒ SQL 语法错；这是客户端的错，回 400（原来是 200+code500）。
+            if (!UpdateBodyGuard.hasUpdatableField(major)) {
+                return ApiResponse.badRequest("请求体里没有任何可更新的字段");
+            }
             boolean updated = majorService.updateById(major);
             if (updated) {
                 return ApiResponse.success("专业已更新");
             } else {
-                return ApiResponse.error("更新专业失败");
+                // W8：0 行 = 该专业不存在（原来回 code 500）。
+                return ApiResponse.notFound("专业不存在");
             }
         } catch (Exception e) {
             log.error("Update major failed: {}", e.getMessage());

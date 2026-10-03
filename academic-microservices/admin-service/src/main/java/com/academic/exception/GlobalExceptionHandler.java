@@ -5,6 +5,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataAccessException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.validation.FieldError;
 import org.springframework.web.HttpMediaTypeNotSupportedException;
 import org.springframework.web.HttpRequestMethodNotSupportedException;
@@ -95,6 +96,27 @@ public class GlobalExceptionHandler {
         return ResponseEntity
                 .status(HttpStatus.UNSUPPORTED_MEDIA_TYPE)
                 .body(ApiResponse.error(415, "不支持的媒体类型"));
+    }
+
+    /**
+     * 请求体缺失 / JSON 格式不对 → 400。
+     *
+     * <p>2026-10-03（W8）：原先没有这条分支，{@code @RequestBody} 缺 body 或 JSON 语法错
+     * 抛的 {@code HttpMessageNotReadableException} 会落到最下面的 {@code Exception} 兜底
+     * ⇒ 回 <b>HTTP 500 + code 500</b>，而且 {@code message} 里**带着完整的方法签名**
+     * （实测："Required request body is missing: public com.academic.common.dto.ApiResponse
+     * &lt;java.lang.String&gt; com.academic.controller.XXXController.method(...)"）——
+     * 既是「把客户端错报成服务端错」，又泄漏了内部结构。
+     *
+     * <p>⚠️ 故意**不回显** {@code e.getMessage()}：它包含方法签名与类名。
+     * 客户端只需要知道"请求体不对"，排查细节留在服务端日志里。
+     */
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    public ResponseEntity<ApiResponse<Void>> handleMessageNotReadableException(HttpMessageNotReadableException e) {
+        log.warn("Request body missing or malformed: {}", e.getMessage());
+        return ResponseEntity
+                .status(HttpStatus.BAD_REQUEST)
+                .body(ApiResponse.error(400, "请求体缺失或格式错误（需要合法的 JSON 请求体）"));
     }
 
     /**

@@ -1,6 +1,7 @@
 package com.academic.controller;
 
 import com.academic.common.dto.ApiResponse;
+import com.academic.common.util.UpdateBodyGuard;
 import com.academic.entity.Permission;
 import com.academic.service.PermissionService;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
@@ -115,6 +116,11 @@ public class PermissionController {
         try {
             log.info("Update permission request: {}", id);
             permission.setId(id);
+            // W8：请求体全 null 时 MyBatis-Plus 生成无 SET 子句的 UPDATE ⇒ SQL 语法错。
+            // 这是客户端的错，回 400（原来是落到 catch 里变成 200 + code 500 + 原始 SQL）。
+            if (!UpdateBodyGuard.hasUpdatableField(permission)) {
+                return ApiResponse.badRequest("请求体里没有任何可更新的字段");
+            }
             // 检查权限代码是否已存在（排除当前权限）
             Permission existing = permissionService.getByCode(permission.getCode());
             if (existing != null && !existing.getId().equals(id)) {
@@ -124,7 +130,9 @@ public class PermissionController {
             if (updated) {
                 return ApiResponse.success("权限已更新");
             } else {
-                return ApiResponse.error("更新权限失败");
+                // W8：0 行 = 这条权限不存在，不是服务端故障（原来是 code 500，与
+                // admin-service 同场景回 404 的口径不一致）。
+                return ApiResponse.notFound("权限不存在");
             }
         } catch (Exception e) {
             log.error("Update permission failed: {}", e.getMessage());
