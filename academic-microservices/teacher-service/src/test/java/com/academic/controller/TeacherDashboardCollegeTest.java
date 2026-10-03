@@ -8,6 +8,7 @@ import com.academic.service.CourseService;
 import com.academic.service.FeedbackService;
 import com.academic.service.TeacherClassApplicationService;
 import com.academic.service.TeacherService;
+import jakarta.servlet.http.HttpServletRequest;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -21,6 +22,8 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 /**
@@ -61,6 +64,13 @@ class TeacherDashboardCollegeTest {
         return (Map<?, ?>) resp.getData();
     }
 
+    /** 网关注入的身份头 —— 本控制器从 {@code X-User-Id} 读身份（W11 起 dashboard 有归属闸）。 */
+    private static HttpServletRequest req(long userId) {
+        HttpServletRequest r = mock(HttpServletRequest.class);
+        lenient().when(r.getHeader("X-User-Id")).thenReturn(String.valueOf(userId));
+        return r;
+    }
+
     @Test
     @DisplayName("档案填了学院 ⇒ college 是查出来的学院名（不是硬编码）")
     void dashboard_returnsCollegeName() {
@@ -72,7 +82,7 @@ class TeacherDashboardCollegeTest {
         when(teacherService.getByUserId(55L)).thenReturn(profile);
         when(collegeMapper.getNameById(2L)).thenReturn("电子工程学院");
 
-        Map<?, ?> data = dataOf(controller.getDashboard("55"));
+        Map<?, ?> data = dataOf(controller.getDashboard("55", req(55L)));
 
         assertEquals("电子工程学院", data.get("college"));
         // 顺带确认没把原来那几个字段弄丢
@@ -89,7 +99,7 @@ class TeacherDashboardCollegeTest {
         profile.setCollegeId(null);          // 没填
         when(teacherService.getByUserId(19L)).thenReturn(profile);
 
-        Map<?, ?> data = dataOf(controller.getDashboard("19"));
+        Map<?, ?> data = dataOf(controller.getDashboard("19", req(19L)));
 
         assertEquals("", data.get("college"));
     }

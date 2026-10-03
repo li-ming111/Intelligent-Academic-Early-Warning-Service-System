@@ -62,3 +62,12 @@ testsprite/local-check/*.prev
 # 2026-10-02 起 mysqldump 生成的真备份 .sql 都落在这里。它们**不是**交付物 ——
 # 备份是"这台机器上当前那一刻的数据快照"，入库只会让仓库里躺着一份会和活库漂移的副本。
 /academic-microservices/*/exports/
+# ⚠️ 2026-10-04 补：上面那条少了一层 —— 备份落的是 `academic-microservices/exports/backups/`
+# （服务**外**，不是每个服务各自一份），`*/exports/` 匹配不到它，于是两份 566KB 的全库 dump
+# 一直以未跟踪状态躺在工作区里（内含 `users` 的密码哈希）。
+/academic-microservices/exports/
+
+# 写库探针跑之前拍的整库快照（同上一族：内含密码哈希，不该入库）。
+# 之所以要点名，是因为下面 `!/db_backups/*.sql` 把 .sql 白名单放开了 ——
+# 一次 `git add -A` 就会把它带进去。
+/db_backups/prerun_*_*.sql

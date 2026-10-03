@@ -29,7 +29,12 @@ public class StudentController {
 
     // ==================== Dashboard ====================
     @GetMapping("/dashboard/{studentId}")
-    public ApiResponse<StudentDashboardResponse> getStudentDashboard(@PathVariable String studentId) {
+    public ApiResponse<StudentDashboardResponse> getStudentDashboard(@PathVariable String studentId,
+                                                                     HttpServletRequest request) {
+        ApiResponse<StudentDashboardResponse> deny = denyUnlessSelf(Long.parseLong(studentId), request, "只能查看本人的学习看板");
+        if (deny != null) {
+            return deny;
+        }
         try {
             log.info("Get student dashboard: {}", studentId);
             return ApiResponse.success(studentService.getStudentDashboard(Long.parseLong(studentId)));
@@ -41,7 +46,12 @@ public class StudentController {
 
     // ==================== 成绩 ====================
     @GetMapping("/scores/{studentId}")
-    public ApiResponse<Object> getStudentScores(@PathVariable String studentId, @RequestParam(required = false) String semester) {
+    public ApiResponse<Object> getStudentScores(@PathVariable String studentId, @RequestParam(required = false) String semester,
+                                                HttpServletRequest request) {
+        ApiResponse<Object> deny = denyUnlessSelf(Long.parseLong(studentId), request, "只能查看本人的成绩");
+        if (deny != null) {
+            return deny;
+        }
         try {
             log.info("Get student scores: {}, semester: {}", studentId, semester);
             return ApiResponse.success(studentService.getStudentScores(Long.parseLong(studentId), semester));
@@ -146,6 +156,33 @@ public class StudentController {
     }
 
     /**
+     * 读侧归属闸（W11）：非本人且非管理员 ⇒ 回一个 403 信封；本人 / 管理员 ⇒ {@code null}（放行）。
+     *
+     * <p>写成"返回 null 就继续"的形状，是为了让每个读端点只要两行：
+     * <pre>{@code ApiResponse<Object> deny = denyUnlessSelf(id, request, "只能…");
+     * if (deny != null) return deny;}</pre>
+     * 比在每个方法里重复 {@code !isSelf(...) && !isAdmin(...)} 更不容易写错（漏一个 {@code isAdmin}
+     * 就会把管理员挡在外面）。
+     *
+     * <p>泛型是因为本控制器有 {@code ApiResponse<StudentDashboardResponse>}、
+     * {@code ApiResponse<Long>} 等多种返回类型，钉死 {@code <Object>} 会编译不过。
+     */
+    private <T> ApiResponse<T> denyUnlessSelf(Long userId, HttpServletRequest request, String message) {
+        return (!isSelf(userId) && !isAdmin(request)) ? ApiResponse.error(403, message) : null;
+    }
+
+    /**
+     * 同上，但用于 {@code student_profile.id} 那一族（订阅 / 评价）。
+     *
+     * <p>⚠️ 与 {@link #denyUnlessSelf} 分开是**必须的**，不是风格问题：这两套 id 不相交
+     * （司明 users.id=27 / profile.id=3），用错帮手的结果是"本人的请求也被拦"（功能坏了）
+     * 或"拿 users.id 反而放行去读档案 27"。
+     */
+    private <T> ApiResponse<T> denyUnlessSelfProfile(Long pathProfileId, HttpServletRequest request, String message) {
+        return isSelfProfile(pathProfileId, request) ? null : ApiResponse.error(403, message);
+    }
+
+    /**
      * 以 JSON 回一个错误。
      *
      * <p>响应已经被声明成 {@code responseType:'blob'}，前端拿到的是 Blob，
@@ -170,7 +207,11 @@ public class StudentController {
 
     // ==================== 预警 ====================
     @GetMapping("/warnings/{studentId}")
-    public ApiResponse<Object> getStudentWarnings(@PathVariable String studentId) {
+    public ApiResponse<Object> getStudentWarnings(@PathVariable String studentId, HttpServletRequest request) {
+        ApiResponse<Object> deny = denyUnlessSelf(Long.parseLong(studentId), request, "只能查看本人的预警");
+        if (deny != null) {
+            return deny;
+        }
         try {
             log.info("Get student warnings: {}", studentId);
             return ApiResponse.success(studentService.getStudentWarnings(Long.parseLong(studentId)));
@@ -182,7 +223,11 @@ public class StudentController {
 
     // ==================== 学生信息 ====================
     @GetMapping("/info/{studentId}")
-    public ApiResponse<Object> getStudentInfo(@PathVariable String studentId) {
+    public ApiResponse<Object> getStudentInfo(@PathVariable String studentId, HttpServletRequest request) {
+        ApiResponse<Object> deny = denyUnlessSelf(Long.parseLong(studentId), request, "只能查看本人的信息");
+        if (deny != null) {
+            return deny;
+        }
         try {
             log.info("Get student info: {}", studentId);
             return ApiResponse.success(studentService.getStudentInfo(Long.parseLong(studentId)));
@@ -193,7 +238,11 @@ public class StudentController {
     }
 
     @GetMapping("/{studentId}")
-    public ApiResponse<Object> getStudentInfoByPath(@PathVariable String studentId) {
+    public ApiResponse<Object> getStudentInfoByPath(@PathVariable String studentId, HttpServletRequest request) {
+        ApiResponse<Object> deny = denyUnlessSelf(Long.parseLong(studentId), request, "只能查看本人的信息");
+        if (deny != null) {
+            return deny;
+        }
         try {
             log.info("Get student info by path: {}", studentId);
             return ApiResponse.success(studentService.getStudentInfo(Long.parseLong(studentId)));
@@ -204,7 +253,11 @@ public class StudentController {
     }
 
     @GetMapping("/student-by-user/{userId}")
-    public ApiResponse<Object> getStudentByUserId(@PathVariable String userId) {
+    public ApiResponse<Object> getStudentByUserId(@PathVariable String userId, HttpServletRequest request) {
+        ApiResponse<Object> deny = denyUnlessSelf(Long.parseLong(userId), request, "只能查看本人的信息");
+        if (deny != null) {
+            return deny;
+        }
         try {
             log.info("Get student by user ID: {}", userId);
             return ApiResponse.success(studentService.getStudentInfo(Long.parseLong(userId)));
@@ -215,7 +268,11 @@ public class StudentController {
     }
 
     @GetMapping("/{studentId}/gpa")
-    public ApiResponse<Object> getStudentGpa(@PathVariable String studentId) {
+    public ApiResponse<Object> getStudentGpa(@PathVariable String studentId, HttpServletRequest request) {
+        ApiResponse<Object> deny = denyUnlessSelf(Long.parseLong(studentId), request, "只能查看本人的绩点");
+        if (deny != null) {
+            return deny;
+        }
         try {
             log.info("Get student GPA: {}", studentId);
             return ApiResponse.success(studentService.getHistoryBenchmark(Long.parseLong(studentId)));
@@ -226,7 +283,11 @@ public class StudentController {
     }
 
     @GetMapping("/{studentId}/class-info")
-    public ApiResponse<Object> getClassInfo(@PathVariable String studentId) {
+    public ApiResponse<Object> getClassInfo(@PathVariable String studentId, HttpServletRequest request) {
+        ApiResponse<Object> deny = denyUnlessSelf(Long.parseLong(studentId), request, "只能查看本人的班级信息");
+        if (deny != null) {
+            return deny;
+        }
         try {
             log.info("Get class info: {}", studentId);
             return ApiResponse.success(studentService.getClassInfo(Long.parseLong(studentId)));
@@ -238,7 +299,11 @@ public class StudentController {
 
     // ==================== 帮扶 ====================
     @GetMapping("/assistance/{studentId}")
-    public ApiResponse<Object> getAssistance(@PathVariable String studentId) {
+    public ApiResponse<Object> getAssistance(@PathVariable String studentId, HttpServletRequest request) {
+        ApiResponse<Object> deny = denyUnlessSelf(Long.parseLong(studentId), request, "只能查看本人的帮扶计划");
+        if (deny != null) {
+            return deny;
+        }
         try {
             log.info("Get assistance: {}", studentId);
             return ApiResponse.success(studentService.getAssistancePlans(Long.parseLong(studentId)));
@@ -249,7 +314,11 @@ public class StudentController {
     }
 
     @GetMapping("/assistance-plans/{studentId}")
-    public ApiResponse<Object> getAssistancePlans(@PathVariable String studentId) {
+    public ApiResponse<Object> getAssistancePlans(@PathVariable String studentId, HttpServletRequest request) {
+        ApiResponse<Object> deny = denyUnlessSelf(Long.parseLong(studentId), request, "只能查看本人的帮扶计划");
+        if (deny != null) {
+            return deny;
+        }
         try {
             log.info("Get assistance plans: {}", studentId);
             return ApiResponse.success(studentService.getAssistancePlans(Long.parseLong(studentId)));
@@ -282,7 +351,11 @@ public class StudentController {
 
     // ==================== 学业建议 ====================
     @GetMapping("/suggestions/{studentId}")
-    public ApiResponse<Object> getSuggestions(@PathVariable String studentId) {
+    public ApiResponse<Object> getSuggestions(@PathVariable String studentId, HttpServletRequest request) {
+        ApiResponse<Object> deny = denyUnlessSelf(Long.parseLong(studentId), request, "只能查看本人的学业建议");
+        if (deny != null) {
+            return deny;
+        }
         try {
             log.info("Get suggestions: {}", studentId);
             return ApiResponse.success(studentService.getSuggestions(Long.parseLong(studentId)));
@@ -311,7 +384,11 @@ public class StudentController {
     }
 
     @GetMapping("/appeals/{studentId}/list")
-    public ApiResponse<Object> getStudentAppeals(@PathVariable String studentId) {
+    public ApiResponse<Object> getStudentAppeals(@PathVariable String studentId, HttpServletRequest request) {
+        ApiResponse<Object> deny = denyUnlessSelf(Long.parseLong(studentId), request, "只能查看本人的申诉");
+        if (deny != null) {
+            return deny;
+        }
         try {
             log.info("Get student appeals: {}", studentId);
             return ApiResponse.success(studentService.getStudentAppeals(Long.parseLong(studentId)));
@@ -356,7 +433,11 @@ public class StudentController {
     }
 
     @GetMapping("/appeals/{studentId}/pending")
-    public ApiResponse<Object> getPendingAppeals(@PathVariable String studentId) {
+    public ApiResponse<Object> getPendingAppeals(@PathVariable String studentId, HttpServletRequest request) {
+        ApiResponse<Object> deny = denyUnlessSelf(Long.parseLong(studentId), request, "只能查看本人的申诉");
+        if (deny != null) {
+            return deny;
+        }
         try {
             log.info("Get pending appeals: {}", studentId);
             return ApiResponse.success(studentService.getPendingAppeals(Long.parseLong(studentId)));
@@ -367,7 +448,11 @@ public class StudentController {
     }
 
     @GetMapping("/appeals/{studentId}/statistics")
-    public ApiResponse<Object> getAppealStatistics(@PathVariable String studentId) {
+    public ApiResponse<Object> getAppealStatistics(@PathVariable String studentId, HttpServletRequest request) {
+        ApiResponse<Object> deny = denyUnlessSelf(Long.parseLong(studentId), request, "只能查看本人的申诉统计");
+        if (deny != null) {
+            return deny;
+        }
         try {
             log.info("Get appeal statistics: {}", studentId);
             return ApiResponse.success(studentService.getAppealStatistics(Long.parseLong(studentId)));
@@ -378,7 +463,11 @@ public class StudentController {
     }
 
     @GetMapping("/appeals/{studentId}/success-rate")
-    public ApiResponse<Object> getAppealSuccessRate(@PathVariable String studentId) {
+    public ApiResponse<Object> getAppealSuccessRate(@PathVariable String studentId, HttpServletRequest request) {
+        ApiResponse<Object> deny = denyUnlessSelf(Long.parseLong(studentId), request, "只能查看本人的申诉统计");
+        if (deny != null) {
+            return deny;
+        }
         try {
             log.info("Get appeal success rate: {}", studentId);
             return ApiResponse.success(studentService.getAppealSuccessRate(Long.parseLong(studentId)));
@@ -389,7 +478,12 @@ public class StudentController {
     }
 
     @GetMapping("/appeals/{studentId}/by-status")
-    public ApiResponse<Object> getAppealsByStatus(@PathVariable String studentId, @RequestParam Integer status) {
+    public ApiResponse<Object> getAppealsByStatus(@PathVariable String studentId, @RequestParam Integer status,
+                                                  HttpServletRequest request) {
+        ApiResponse<Object> deny = denyUnlessSelf(Long.parseLong(studentId), request, "只能查看本人的申诉");
+        if (deny != null) {
+            return deny;
+        }
         try {
             log.info("Get appeals by status: studentId={}, status={}", studentId, status);
             return ApiResponse.success(studentService.getAppealsByStatus(Long.parseLong(studentId), status));
@@ -402,7 +496,12 @@ public class StudentController {
     @GetMapping("/appeals/{studentId}/history")
     public ApiResponse<Object> getAppealHistory(@PathVariable String studentId,
                                                  @RequestParam(defaultValue = "1") int page,
-                                                 @RequestParam(defaultValue = "10") int pageSize) {
+                                                 @RequestParam(defaultValue = "10") int pageSize,
+                                                 HttpServletRequest request) {
+        ApiResponse<Object> deny = denyUnlessSelf(Long.parseLong(studentId), request, "只能查看本人的申诉");
+        if (deny != null) {
+            return deny;
+        }
         try {
             log.info("Get appeal history: studentId={}, page={}, pageSize={}", studentId, page, pageSize);
             return ApiResponse.success(studentService.getAppealHistory(Long.parseLong(studentId), page, pageSize));
@@ -413,7 +512,11 @@ public class StudentController {
     }
 
     @GetMapping("/appeals/{studentId}/reason-statistics")
-    public ApiResponse<Object> getAppealReasonStatistics(@PathVariable String studentId) {
+    public ApiResponse<Object> getAppealReasonStatistics(@PathVariable String studentId, HttpServletRequest request) {
+        ApiResponse<Object> deny = denyUnlessSelf(Long.parseLong(studentId), request, "只能查看本人的申诉统计");
+        if (deny != null) {
+            return deny;
+        }
         try {
             log.info("Get appeal reason statistics: {}", studentId);
             return ApiResponse.success(studentService.getAppealReasonStatistics(Long.parseLong(studentId)));
@@ -425,7 +528,11 @@ public class StudentController {
 
     // ==================== 对标分析 (P0新增) ====================
     @GetMapping("/benchmark/{studentId}/latest")
-    public ApiResponse<Object> getLatestBenchmark(@PathVariable String studentId) {
+    public ApiResponse<Object> getLatestBenchmark(@PathVariable String studentId, HttpServletRequest request) {
+        ApiResponse<Object> deny = denyUnlessSelf(Long.parseLong(studentId), request, "只能查看本人的对标分析");
+        if (deny != null) {
+            return deny;
+        }
         try {
             log.info("Get latest benchmark: {}", studentId);
             return ApiResponse.success(studentService.getLatestBenchmark(Long.parseLong(studentId)));
@@ -436,7 +543,12 @@ public class StudentController {
     }
 
     @GetMapping("/benchmark/{studentId}/semester")
-    public ApiResponse<Object> getSemesterBenchmark(@PathVariable String studentId, @RequestParam String semester) {
+    public ApiResponse<Object> getSemesterBenchmark(@PathVariable String studentId, @RequestParam String semester,
+                                                    HttpServletRequest request) {
+        ApiResponse<Object> deny = denyUnlessSelf(Long.parseLong(studentId), request, "只能查看本人的对标分析");
+        if (deny != null) {
+            return deny;
+        }
         try {
             log.info("Get semester benchmark: {}, semester: {}", studentId, semester);
             return ApiResponse.success(studentService.getSemesterBenchmark(Long.parseLong(studentId), semester));
@@ -447,7 +559,11 @@ public class StudentController {
     }
 
     @GetMapping("/benchmark/{studentId}/history")
-    public ApiResponse<Object> getHistoryBenchmark(@PathVariable String studentId) {
+    public ApiResponse<Object> getHistoryBenchmark(@PathVariable String studentId, HttpServletRequest request) {
+        ApiResponse<Object> deny = denyUnlessSelf(Long.parseLong(studentId), request, "只能查看本人的对标分析");
+        if (deny != null) {
+            return deny;
+        }
         try {
             log.info("Get history benchmark: {}", studentId);
             return ApiResponse.success(studentService.getHistoryBenchmark(Long.parseLong(studentId)));
@@ -460,7 +576,12 @@ public class StudentController {
     @GetMapping("/benchmark/{studentId}/class-ranking")
     public ApiResponse<Object> getBenchmarkClassRanking(@PathVariable String studentId,
                                                          @RequestParam(required = false) Long classId,
-                                                         @RequestParam(required = false) String semester) {
+                                                         @RequestParam(required = false) String semester,
+                                                         HttpServletRequest request) {
+        ApiResponse<Object> deny = denyUnlessSelf(Long.parseLong(studentId), request, "只能查看本人的对标分析");
+        if (deny != null) {
+            return deny;
+        }
         try {
             log.info("Get benchmark class ranking: studentId={}, classId={}, semester={}", studentId, classId, semester);
             return ApiResponse.success(studentService.getBenchmarkClassRanking(Long.parseLong(studentId), classId, semester));
@@ -473,7 +594,12 @@ public class StudentController {
     @GetMapping("/benchmark/{studentId}/major-ranking")
     public ApiResponse<Object> getBenchmarkMajorRanking(@PathVariable String studentId,
                                                          @RequestParam(required = false) Long majorId,
-                                                         @RequestParam(required = false) String semester) {
+                                                         @RequestParam(required = false) String semester,
+                                                         HttpServletRequest request) {
+        ApiResponse<Object> deny = denyUnlessSelf(Long.parseLong(studentId), request, "只能查看本人的对标分析");
+        if (deny != null) {
+            return deny;
+        }
         try {
             log.info("Get benchmark major ranking: studentId={}, majorId={}, semester={}", studentId, majorId, semester);
             return ApiResponse.success(studentService.getBenchmarkMajorRanking(Long.parseLong(studentId), majorId, semester));
@@ -506,7 +632,11 @@ public class StudentController {
     }
 
     @GetMapping("/benchmark/{studentId}/progress-report")
-    public ApiResponse<Object> getProgressReport(@PathVariable String studentId) {
+    public ApiResponse<Object> getProgressReport(@PathVariable String studentId, HttpServletRequest request) {
+        ApiResponse<Object> deny = denyUnlessSelf(Long.parseLong(studentId), request, "只能查看本人的对标分析");
+        if (deny != null) {
+            return deny;
+        }
         try {
             log.info("Get progress report: {}", studentId);
             return ApiResponse.success(studentService.getProgressReport(Long.parseLong(studentId)));
@@ -520,7 +650,12 @@ public class StudentController {
     @GetMapping("/notification-center/{userId}/list")
     public ApiResponse<Object> getNotificationList(@PathVariable String userId,
                                                     @RequestParam(defaultValue = "1") int page,
-                                                    @RequestParam(defaultValue = "10") int pageSize) {
+                                                    @RequestParam(defaultValue = "10") int pageSize,
+                                                    HttpServletRequest request) {
+        ApiResponse<Object> deny = denyUnlessSelf(Long.parseLong(userId), request, "只能查看本人的通知");
+        if (deny != null) {
+            return deny;
+        }
         try {
             log.info("Get notification list: userId={}, page={}, pageSize={}", userId, page, pageSize);
             return ApiResponse.success(studentService.getNotificationCenterList(Long.parseLong(userId), page, pageSize));
@@ -531,7 +666,11 @@ public class StudentController {
     }
 
     @GetMapping("/notification-center/{userId}/unread-count")
-    public ApiResponse<Object> getNotificationUnreadCount(@PathVariable String userId) {
+    public ApiResponse<Object> getNotificationUnreadCount(@PathVariable String userId, HttpServletRequest request) {
+        ApiResponse<Object> deny = denyUnlessSelf(Long.parseLong(userId), request, "只能查看本人的通知");
+        if (deny != null) {
+            return deny;
+        }
         try {
             log.info("Get notification unread count: {}", userId);
             return ApiResponse.success(studentService.getNotificationUnreadCount(Long.parseLong(userId)));
@@ -542,7 +681,11 @@ public class StudentController {
     }
 
     @GetMapping("/notification-center/{userId}/unread")
-    public ApiResponse<Object> getUnreadNotifications(@PathVariable String userId) {
+    public ApiResponse<Object> getUnreadNotifications(@PathVariable String userId, HttpServletRequest request) {
+        ApiResponse<Object> deny = denyUnlessSelf(Long.parseLong(userId), request, "只能查看本人的通知");
+        if (deny != null) {
+            return deny;
+        }
         try {
             log.info("Get unread notifications: {}", userId);
             return ApiResponse.success(studentService.getUnreadNotifications(Long.parseLong(userId)));
@@ -618,7 +761,11 @@ public class StudentController {
 
     // 兼容原有路径
     @GetMapping("/notification-center/{studentId}")
-    public ApiResponse<Object> getNotificationCenter(@PathVariable String studentId) {
+    public ApiResponse<Object> getNotificationCenter(@PathVariable String studentId, HttpServletRequest request) {
+        ApiResponse<Object> deny = denyUnlessSelf(Long.parseLong(studentId), request, "只能查看本人的通知");
+        if (deny != null) {
+            return deny;
+        }
         try {
             log.info("Get notification center (legacy): {}", studentId);
             return ApiResponse.success(studentService.getNotificationCenterList(Long.parseLong(studentId), 1, 10));
@@ -647,7 +794,12 @@ public class StudentController {
 
     // ==================== 订阅管理 (P0新增) ====================
     @GetMapping("/subscription/{studentId}/preferences")
-    public ApiResponse<Object> getSubscriptionPreferences(@PathVariable String studentId) {
+    public ApiResponse<Object> getSubscriptionPreferences(@PathVariable String studentId, HttpServletRequest request) {
+        // ⚠️ 这一族收的是 student_profile.id（不是 users.id）—— 归属走 isSelfProfile 换算。
+        ApiResponse<Object> deny = denyUnlessSelfProfile(Long.parseLong(studentId), request, "只能查看本人的订阅设置");
+        if (deny != null) {
+            return deny;
+        }
         try {
             log.info("Get subscription preferences: {}", studentId);
             return ApiResponse.success(studentService.getSubscriptionPreferences(Long.parseLong(studentId)));
@@ -728,8 +880,8 @@ public class StudentController {
 
     // 兼容原有路径
     @GetMapping("/subscription/{studentId}")
-    public ApiResponse<Object> getSubscriptions(@PathVariable String studentId) {
-        return getSubscriptionPreferences(studentId);
+    public ApiResponse<Object> getSubscriptions(@PathVariable String studentId, HttpServletRequest request) {
+        return getSubscriptionPreferences(studentId, request);
     }
 
     @PutMapping("/subscription/{studentId}")
@@ -766,7 +918,12 @@ public class StudentController {
      * 两个 id 空间有重叠值，传错**不报错、只会返回空数组**。
      */
     @GetMapping("/evaluations/{studentId}/list")
-    public ApiResponse<Object> getEvaluationsByStudent(@PathVariable String studentId) {
+    public ApiResponse<Object> getEvaluationsByStudent(@PathVariable String studentId, HttpServletRequest request) {
+        // ⚠️ 这一族收的是 student_profile.id（见方法注释）—— 归属走 isSelfProfile 换算。
+        ApiResponse<Object> deny = denyUnlessSelfProfile(Long.parseLong(studentId), request, "只能查看本人的评价");
+        if (deny != null) {
+            return deny;
+        }
         try {
             log.info("Get evaluations list: {}", studentId);
             return ApiResponse.success(studentService.getEvaluationsByStudent(Long.parseLong(studentId)));
@@ -795,7 +952,12 @@ public class StudentController {
 
     /** 评价统计。⚠️ `{studentId}` 同样是 **`student_profile.id`**（见上面的 list 接口）。 */
     @GetMapping("/evaluations/{studentId}/statistics")
-    public ApiResponse<Object> getEvaluationStatistics(@PathVariable String studentId) {
+    public ApiResponse<Object> getEvaluationStatistics(@PathVariable String studentId, HttpServletRequest request) {
+        // ⚠️ 同样是 student_profile.id（见方法注释）。
+        ApiResponse<Object> deny = denyUnlessSelfProfile(Long.parseLong(studentId), request, "只能查看本人的评价");
+        if (deny != null) {
+            return deny;
+        }
         try {
             log.info("Get evaluation statistics: {}", studentId);
             return ApiResponse.success(studentService.getEvaluationStatistics(Long.parseLong(studentId)));
@@ -807,8 +969,8 @@ public class StudentController {
 
     // 兼容原有路径
     @GetMapping("/evaluations/{studentId}")
-    public ApiResponse<Object> getEvaluations(@PathVariable String studentId) {
-        return getEvaluationsByStudent(studentId);
+    public ApiResponse<Object> getEvaluations(@PathVariable String studentId, HttpServletRequest request) {
+        return getEvaluationsByStudent(studentId, request);
     }
 
     @PostMapping("/evaluations/{studentId}")
@@ -818,7 +980,11 @@ public class StudentController {
 
     // ==================== 设置 (P0新增) ====================
     @GetMapping("/settings/{studentId}")
-    public ApiResponse<Object> getStudentSettings(@PathVariable String studentId) {
+    public ApiResponse<Object> getStudentSettings(@PathVariable String studentId, HttpServletRequest request) {
+        ApiResponse<Object> deny = denyUnlessSelf(Long.parseLong(studentId), request, "只能查看本人的设置");
+        if (deny != null) {
+            return deny;
+        }
         try {
             log.info("Get student settings: {}", studentId);
             return ApiResponse.success(studentService.getStudentSettings(Long.parseLong(studentId)));
@@ -875,7 +1041,12 @@ public class StudentController {
     }
 
     @GetMapping("/settings/{studentId}/security-logs")
-    public ApiResponse<Object> getSecurityLogs(@PathVariable String studentId, @RequestParam int page, @RequestParam int pageSize) {
+    public ApiResponse<Object> getSecurityLogs(@PathVariable String studentId, @RequestParam int page, @RequestParam int pageSize,
+                                               HttpServletRequest request) {
+        ApiResponse<Object> deny = denyUnlessSelf(Long.parseLong(studentId), request, "只能查看本人的登录历史");
+        if (deny != null) {
+            return deny;
+        }
         try {
             log.info("Get security logs: {}, page: {}, pageSize: {}", studentId, page, pageSize);
             return ApiResponse.success(studentService.getSecurityLogs(Long.parseLong(studentId), page, pageSize));
@@ -887,7 +1058,11 @@ public class StudentController {
 
     // ==================== 消息 ====================
     @GetMapping("/messages/{studentId}")
-    public ApiResponse<Object> getStudentMessages(@PathVariable String studentId) {
+    public ApiResponse<Object> getStudentMessages(@PathVariable String studentId, HttpServletRequest request) {
+        ApiResponse<Object> deny = denyUnlessSelf(Long.parseLong(studentId), request, "只能查看本人的消息");
+        if (deny != null) {
+            return deny;
+        }
         try {
             log.info("Get student messages: {}", studentId);
             return ApiResponse.success(studentService.getStudentMessages(Long.parseLong(studentId)));
@@ -898,7 +1073,11 @@ public class StudentController {
     }
 
     @GetMapping("/messages/{studentId}/unread-count")
-    public ApiResponse<Object> getUnreadMessageCount(@PathVariable String studentId) {
+    public ApiResponse<Object> getUnreadMessageCount(@PathVariable String studentId, HttpServletRequest request) {
+        ApiResponse<Object> deny = denyUnlessSelf(Long.parseLong(studentId), request, "只能查看本人的消息");
+        if (deny != null) {
+            return deny;
+        }
         try {
             log.info("Get unread message count: {}", studentId);
             return ApiResponse.success(studentService.getUnreadMessageCount(Long.parseLong(studentId)));
@@ -910,7 +1089,11 @@ public class StudentController {
 
     // ==================== 班级 ====================
     @GetMapping("/class-members/{studentId}")
-    public ApiResponse<Object> getClassMembers(@PathVariable String studentId) {
+    public ApiResponse<Object> getClassMembers(@PathVariable String studentId, HttpServletRequest request) {
+        ApiResponse<Object> deny = denyUnlessSelf(Long.parseLong(studentId), request, "只能查看本人的班级");
+        if (deny != null) {
+            return deny;
+        }
         try {
             log.info("Get class members: {}", studentId);
             // 从班级信息中间接获取，实际可查 student_profile 同班级学生
@@ -922,7 +1105,11 @@ public class StudentController {
     }
 
     @GetMapping("/class-ranking/{studentId}")
-    public ApiResponse<Object> getClassRanking(@PathVariable String studentId) {
+    public ApiResponse<Object> getClassRanking(@PathVariable String studentId, HttpServletRequest request) {
+        ApiResponse<Object> deny = denyUnlessSelf(Long.parseLong(studentId), request, "只能查看本人的班级排名");
+        if (deny != null) {
+            return deny;
+        }
         try {
             log.info("Get class ranking: {}", studentId);
             return ApiResponse.success(studentService.getBenchmarkClassRanking(Long.parseLong(studentId), null, null));

@@ -33,10 +33,11 @@ class StudentControllerTest {
 
     @Test
     void testGetStudentDashboard() {
+        loginAs(100L);
         StudentDashboardResponse response = new StudentDashboardResponse();
         when(studentService.getStudentDashboard(100L)).thenReturn(response);
 
-        ApiResponse<StudentDashboardResponse> result = studentController.getStudentDashboard("100");
+        ApiResponse<StudentDashboardResponse> result = studentController.getStudentDashboard("100", req());
 
         assertNotNull(result);
         verify(studentService, times(1)).getStudentDashboard(100L);
@@ -44,9 +45,10 @@ class StudentControllerTest {
 
     @Test
     void testGetStudentDashboard_InvalidId() {
+        loginAs(999L);
         when(studentService.getStudentDashboard(anyLong())).thenThrow(new RuntimeException("学生不存在"));
 
-        ApiResponse<StudentDashboardResponse> result = studentController.getStudentDashboard("999");
+        ApiResponse<StudentDashboardResponse> result = studentController.getStudentDashboard("999", req());
 
         assertNotNull(result);
         verify(studentService, times(1)).getStudentDashboard(anyLong());
@@ -54,9 +56,10 @@ class StudentControllerTest {
 
     @Test
     void testGetStudentScores() {
+        loginAs(100L);
         when(studentService.getStudentScores(100L, null)).thenReturn(Collections.emptyList());
 
-        ApiResponse<Object> result = studentController.getStudentScores("100", null);
+        ApiResponse<Object> result = studentController.getStudentScores("100", null, req());
 
         assertNotNull(result);
         verify(studentService, times(1)).getStudentScores(100L, null);
@@ -64,15 +67,26 @@ class StudentControllerTest {
 
     @Test
     void testGetStudentScores_WithSemester() {
+        loginAs(100L);
         when(studentService.getStudentScores(100L, "2025-1")).thenReturn(Collections.emptyList());
 
-        ApiResponse<Object> result = studentController.getStudentScores("100", "2025-1");
+        ApiResponse<Object> result = studentController.getStudentScores("100", "2025-1", req());
 
         assertNotNull(result);
         verify(studentService, times(1)).getStudentScores(100L, "2025-1");
     }
 
     // ==================== 成绩导出（W1.8） ====================
+
+    /**
+     * 网关注入的身份头。
+     *
+     * <p>W11 起读端点也有归属闸：身份取自 {@code SecurityContext}（见 {@link #loginAs}），
+     * 而 {@code X-Role} 头只用来判"是不是管理员"。这里的 mock 没有任何头 ⇒ 非管理员。
+     */
+    private static jakarta.servlet.http.HttpServletRequest req() {
+        return mock(jakarta.servlet.http.HttpServletRequest.class);
+    }
 
     /** 把当前登录用户塞进 SecurityContext —— 导出端点靠它做归属校验。 */
     private static void loginAs(Long userId) {
@@ -137,9 +151,10 @@ class StudentControllerTest {
 
     @Test
     void testGetStudentWarnings() {
+        loginAs(100L);
         when(studentService.getStudentWarnings(100L)).thenReturn(Collections.emptyList());
 
-        ApiResponse<Object> result = studentController.getStudentWarnings("100");
+        ApiResponse<Object> result = studentController.getStudentWarnings("100", req());
 
         assertNotNull(result);
         verify(studentService, times(1)).getStudentWarnings(100L);
