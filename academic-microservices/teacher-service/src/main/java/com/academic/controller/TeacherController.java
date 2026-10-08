@@ -460,19 +460,29 @@ public class TeacherController {
     @GetMapping("/scores/by-class")
     public ApiResponse<Object> getScoresByClass(@RequestParam String class_name, @RequestParam(required = false) Long teacher_id,
                                                 HttpServletRequest request) {
-        // W11 读侧归属闸：teacher_id 收 users.id。不传则按班级名查（不带教师过滤）——
-        // 那是"全班成绩"视图，前端 useTeacherRoster 就是靠它拿姓名+分数的，保持放行。
-        if (teacher_id != null && !isSelf(teacher_id, request)) {
-            return forbidden("只能查看本人所授班级的成绩");
+        // W11 读侧归属闸：teacher_id 收 users.id，传了就必须是本人。
+        // 不传的那条分支是"全班成绩"视图（含别位教师录的行）—— W30（2026-10-08）之前
+        // **完全没有校验**，理由是"前端 useTeacherRoster 靠它拿姓名+分数"。
+        // 该理由已被证伪（useTeacherRoster 走的是带 teacher_id 的过滤分支），
+        // 见 denyUnlessMyClassByName 的 javadoc。现在按班级归属把关：
+        // 只有这个班的班主任（或管理员）能看全班成绩。
+        if (teacher_id != null) {
+            if (!isSelf(teacher_id, request)) {
+                return forbidden("只能查看本人所授班级的成绩");
+            }
+            try {
+                return ApiResponse.success((List<Object>) (List<?>) scoreRecordService
+                        .getScoresByClassNameAndTeacherId(class_name, teacher_id));
+            } catch (Exception e) {
+                return ApiResponse.error(e.getMessage());
+            }
+        }
+        ApiResponse<Object> deny = denyUnlessMyClassByName(class_name, request, "只能查看本人所带班级的成绩");
+        if (deny != null) {
+            return deny;
         }
         try {
-            List<Object> scores;
-            if (teacher_id != null) {
-                scores = (List<Object>) (List<?>) scoreRecordService.getScoresByClassNameAndTeacherId(class_name, teacher_id);
-            } else {
-                scores = (List<Object>) (List<?>) scoreRecordService.getScoresByClassName(class_name);
-            }
-            return ApiResponse.success(scores);
+            return ApiResponse.success((List<Object>) (List<?>) scoreRecordService.getScoresByClassName(class_name));
         } catch (Exception e) {
             return ApiResponse.error(e.getMessage());
         }
@@ -2760,6 +2770,45 @@ public class TeacherController {
             return null;
         }
         return forbidden(message);
+    }
+
+    /**
+     * 资源归属闸：**班级名**。{@code classes.teacher_id} 是 {@code users.id}。W30，2026-10-08。
+     *
+     * <p>用于 {@code GET /teachers/scores/by-class} 里 {@code teacher_id} 缺省的那条分支 ——
+     * 那条分支按班级名查**全班成绩**（含别位教师录的行），此前**一道校验都没有**：
+     * {@code teacher_id} 只在传了的时候才过 {@link #isSelf}。W11 当时**有意保留**，
+     * 理由写在注释里是「前端 {@code useTeacherRoster} 就是靠它拿姓名+分数的，保持放行」。
+     * 这个理由**站不住**：
+     * <ul>
+     *   <li>{@code useTeacherRoster}（小程序 {@code composables/useTeacherRoster.js} 的消费方
+     *       {@code services/api.js}）**是带 {@code teacher_id} 的** —— 它走的是过滤分支，
+     *       压根不依赖这条无闸路径；</li>
+     *   <li>PC 端唯一不传 {@code teacher_id} 的调用点是 {@code TeacherAnalysis.vue}，
+     *       而它的班级下拉来自 {@code /class-management/my-classes}（按 {@code classes.teacher_id}
+     *       限死）⇒ 它能选到的班**必然是自己带的**；</li>
+     *   <li>本服务 SecurityConfig 是 {@code anyRequest().authenticated()} —— **控制器只认
+     *       {@code X-User-Id} 头、不认角色**；网关上 {@code /api/teachers/**} 有
+     *       {@code role != ROLE_TEACHER ⇒ false}（{@code AuthenticationFilter:365}），
+     *       管理员在更上面已 {@code return true} ⇒ **经网关可达的严重性是「任意教师
+     *       （role 2）可读任意班的整份成绩单」**。直连服务端口时（本仓服务均直连可达，
+     *       网关不是网络边界）任何角色、乃至伪造的头都能读 —— 实测见手册 W30。</li>
+     * </ul>
+     * ⇒ 两条"放行的理由"都不成立，而代价是任意教师可读任意班成绩。
+     *
+     * <p>判据：{@code classes.name = class_name AND teacher_id = 本人} 至少一行。
+     * 0 行（没有这个班 / 这个班不是我的 / 班级没有班主任）一律**拒绝** ——
+     * 在归属闸里这三者必须同解，否则畸形请求就是一条绕过路径。
+     */
+    private ApiResponse<Object> denyUnlessMyClassByName(String className, HttpServletRequest request, String message) {
+        if (isAdmin(request)) {
+            return null;
+        }
+        Long me = getUserIdFromGateway(request);
+        if (me == null || className == null || className.isBlank()) {
+            return forbidden(message);
+        }
+        return classInfoMapper.countClassesNamedAndOwned(className, me) > 0 ? null : forbidden(message);
     }
 
     /**

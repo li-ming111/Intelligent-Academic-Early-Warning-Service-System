@@ -53,7 +53,8 @@ class TeacherControllerReadOwnershipTest {
     /** courseId 分支会去查选课学生 —— 放行面必须喂住，否则 NPE 会伪装成 500。 */
     @Mock private ScoreRecordService scoreRecordService;
     @Mock private com.academic.service.TeacherCourseService teacherCourseService;
-
+    /** W30：{@code /scores/by-class} 不传 teacher_id 那条分支的班级归属闸要查它。 */
+    @Mock private com.academic.mapper.ClassInfoMapper classInfoMapper;
     @InjectMocks private TeacherController controller;
 
     /** 教师 A：users.id=18（teacher001 刘教授）。 */
@@ -300,11 +301,74 @@ class TeacherControllerReadOwnershipTest {
     }
 
     @Test
-    @DisplayName("/scores/by-class：带别人的 teacher_id ⇒ 403；不带 ⇒ 按班级名查，放行")
-    void scoresByClassGuard() {
+    @DisplayName("/scores/by-class：带别人的 teacher_id ⇒ 403，且不查库")
+    void scoresByClassOthersIdDenied() {
         assertEquals(403, controller.getScoresByClass("计科2306班", OTHER, as(ME)).getCode());
 
-        when(scoreRecordService.getScoresByClassName("计科2306班")).thenReturn(new ArrayList<>());
-        assertEquals(200, controller.getScoresByClass("计科2306班", null, as(ME)).getCode());
+        verify(scoreRecordService, never()).getScoresByClassNameAndTeacherId(anyString(), anyLong());
+    }
+
+    // ================================================== W30：不传 teacher_id 那条分支
+
+    /** 演示库里唯一有成绩的班：{@code classes.id=1}，{@code teacher_id=29}（于凤海）。 */
+    private static final String MY_CLASS_NAME = "计科2306班";
+    private static final String OTHERS_CLASS_NAME = "软件工程2101班";
+
+    @Test
+    @DisplayName("/scores/by-class：不传 teacher_id 且是本人的班 ⇒ 200（全班成绩视图保住）")
+    void scoresByClassUnfilteredOwnClassAllowed() {
+        when(classInfoMapper.countClassesNamedAndOwned(MY_CLASS_NAME, ME)).thenReturn(1);
+        when(scoreRecordService.getScoresByClassName(MY_CLASS_NAME)).thenReturn(new ArrayList<>());
+
+        assertEquals(200, controller.getScoresByClass(MY_CLASS_NAME, null, as(ME)).getCode());
+
+        verify(scoreRecordService).getScoresByClassName(MY_CLASS_NAME);
+    }
+
+    @Test
+    @DisplayName("⭐ /scores/by-class：不传 teacher_id 且不是本人的班 ⇒ 403（W30 之前是 200）")
+    void scoresByClassUnfilteredOthersClassDenied() {
+        when(classInfoMapper.countClassesNamedAndOwned(OTHERS_CLASS_NAME, ME)).thenReturn(0);
+
+        assertEquals(403, controller.getScoresByClass(OTHERS_CLASS_NAME, null, as(ME)).getCode());
+
+        verify(scoreRecordService, never()).getScoresByClassName(anyString());
+    }
+
+    @Test
+    @DisplayName("/scores/by-class：不传 teacher_id 且班级不存在 ⇒ 403（fail-closed，不是放行）")
+    void scoresByClassUnfilteredUnknownClassDenied() {
+        when(classInfoMapper.countClassesNamedAndOwned("查无此班", ME)).thenReturn(0);
+
+        assertEquals(403, controller.getScoresByClass("查无此班", null, as(ME)).getCode());
+
+        verify(scoreRecordService, never()).getScoresByClassName(anyString());
+    }
+
+    @Test
+    @DisplayName("/scores/by-class：不传 teacher_id 且没有身份头 ⇒ 403，且不查库")
+    void scoresByClassUnfilteredAnonymousDenied() {
+        assertEquals(403, controller.getScoresByClass(MY_CLASS_NAME, null, anonymous()).getCode());
+
+        verify(classInfoMapper, never()).countClassesNamedAndOwned(anyString(), anyLong());
+        verify(scoreRecordService, never()).getScoresByClassName(anyString());
+    }
+
+    @Test
+    @DisplayName("/scores/by-class：班级名为空 ⇒ 403，且不查库")
+    void scoresByClassUnfilteredBlankNameDenied() {
+        assertEquals(403, controller.getScoresByClass("  ", null, as(ME)).getCode());
+
+        verify(classInfoMapper, never()).countClassesNamedAndOwned(anyString(), anyLong());
+    }
+
+    @Test
+    @DisplayName("/scores/by-class：管理员（X-Role: 4）不传 teacher_id ⇒ 放行且绕过归属查询")
+    void scoresByClassUnfilteredAdminBypass() {
+        when(scoreRecordService.getScoresByClassName(OTHERS_CLASS_NAME)).thenReturn(new ArrayList<>());
+
+        assertEquals(200, controller.getScoresByClass(OTHERS_CLASS_NAME, null, asAdmin(4L)).getCode());
+
+        verify(classInfoMapper, never()).countClassesNamedAndOwned(anyString(), anyLong());
     }
 }

@@ -76,6 +76,25 @@ public interface ClassInfoMapper extends BaseMapper<ClassInfo> {
     Long findClassIdOfProfile(@Param("profileId") Long profileId);
 
     /**
+     * 这个名字的班级里，有几个是 {@code teacherId}（{@code users.id}）所带的。
+     * 2026-10-08（W30）补，给 {@code GET /teachers/scores/by-class} 不传
+     * {@code teacher_id} 的那条分支做归属闸用。
+     *
+     * <p>为什么是 {@code COUNT} 而不是 {@code SELECT teacher_id ... LIMIT 1}：
+     * {@code classes.name} **没有唯一约束**（只有一个 {@code idx_classes_college_id}），
+     * 同名班级在结构上是允许的。返回"有几个是我的"⇒ 判据写成 {@code >0}，
+     * 语义是「本人确实带过这个名字的班」，不会被同名行里任意一行的 {@code teacher_id}
+     * 左右。返回 0 涵盖"没有这个班"与"这个班不是我的"两种情况 ——
+     * 在归属闸里这两者必须同解（判不出来 ≠ 放行）。
+     *
+     * <p>⚠️ 已知边界：{@code score_record} 只存 {@code class_name} 字符串、不存 {@code class_id}，
+     * 所以同名班级的成绩行在数据模型里**本来就分不开**。若真出现两个同名班，
+     * 本闸放行的是"按名字取到的那些行"，这是数据模型的上限，不是闸的疏漏。
+     */
+    @Select("SELECT COUNT(*) FROM classes WHERE name = #{className} AND teacher_id = #{teacherId}")
+    int countClassesNamedAndOwned(@Param("className") String className, @Param("teacherId") Long teacherId);
+
+    /**
      * 把学生归入班级。
      *
      * <p>只改 {@code student_profile.class_id} 与 {@code class_name} —— 班级名单、班级人数、
@@ -88,8 +107,30 @@ public interface ClassInfoMapper extends BaseMapper<ClassInfo> {
                              @Param("className") String className);
 
     /**
-     * 根据班级名称获取辅导员信息
+     * 根据班级名称获取辅导员信息。
+     *
+     * <p><b>2026-10-08（W30）修：join 跨错了 id 空间 ⇒ {@code counselorName}/{@code counselorPhone}
+     * 恒为 null。</b>原写法是 {@code ON c.counselor_id = cp.id}，但 {@code classes.counselor_id}
+     * 存的是 <b>{@code users.id}</b>（活库全 53），而 {@code counselor_profiles.id} 是 1 ——
+     * 两套 id 不相交，{@code 53 = 1} 永假 ⇒ LEFT JOIN 不命中，两个字段一路返回 {@code null}，
+     * 而 {@code counselorId}（取自 {@code c.counselor_id}，不走 join）是好的。
+     * 于是前端 {@code TeacherScores.vue}「通知辅导员」对话框里**辅导员姓名/电话是空白**，
+     * 但 {@code counselorId} 有值、通知发得出去 —— 典型的"接口 200、字段恒空"。
+     *
+     * <p>改法不是把 join 换成 {@code cp.user_id}，而是**直接取 {@code users}**：
+     * {@code counselor_profiles.phone} 活库那唯一一行本身就是 {@code NULL}
+     * （该列没人维护），真值在 {@code users.phone}（53 → 13800000014）；
+     * 姓名同理（{@code users.name} 才是登录接口回的那个值）。这与本仓既有口径一致
+     * —— "电话/邮箱的真源在 {@code users}"（W4 在同一族上已经踩过一次）。
+     * 跨空间 join 换成同空间 join，顺带把两个字段都变成真的有值。
+     *
+     * <p>{@code LIMIT 1}：{@code classes.name} 没有唯一约束（见
+     * {@link #countClassesNamedAndOwned}），同名的两行会让本方法返回多行，
+     * 而返回类型是 {@code Map} ⇒ MyBatis 的 {@code selectOne} 直接抛
+     * {@code TooManyResultsException}（500）。按名字本来也分不开，取一行即可。
      */
-    @Select("SELECT c.counselor_id as counselorId, cp.name as counselorName, cp.phone as counselorPhone FROM classes c LEFT JOIN counselor_profiles cp ON c.counselor_id = cp.id WHERE c.name = #{className}")
+    @Select("SELECT c.counselor_id as counselorId, u.name as counselorName, u.phone as counselorPhone "
+          + "FROM classes c LEFT JOIN users u ON u.id = c.counselor_id "
+          + "WHERE c.name = #{className} LIMIT 1")
     Map<String, Object> getCounselorByClassName(@Param("className") String className);
 }
