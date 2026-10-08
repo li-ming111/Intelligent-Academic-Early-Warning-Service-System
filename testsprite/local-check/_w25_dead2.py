@@ -164,9 +164,13 @@ print(f"零调用封装：{len(DEAD)}  (PC {sum(1 for d in DEAD if d[0]==PC)} / 
 
 # ---------- 打靶 ----------
 print("=" * 100); print("0. 打靶"); print("=" * 100)
+# ⚠️ 负对照会**过期**：W25 写这条时 `aiAPI.predictRisk` 确是零调用，但 W19 在
+# `TeacherScores.vue` 给它接了 2 个调用点（`aiPredictRisk` / 直接 await）⇒ 打靶报 BAD。
+# 这是**判据过期**、不是产品坏了 —— 处置办法是换一个**先 grep 过确实零调用**的样本，
+# 而不是把断言放宽。（同 W25 自己的教训：换对照前先 grep 一遍它真的在／真的不在。）
 CTRL = [("studentAPI.getDashboard", True,  "正: 小程序学生首页务必在用"),
         ("aiAPI.getResponse",      True,  "正: PC 唯一在用的 AI 封装"),
-        ("aiAPI.predictRisk",      False, "负: 零调用"),
+        ("studentAPI.getUserSettings", False, "负: 零调用（2026-10-08 换，原 aiAPI.predictRisk 已被 W19 接线）"),
         ("teacherAPI.getCourseAnomalies", False, "负: 零调用")]
 ok_all = True
 for name, expect, label in CTRL:
