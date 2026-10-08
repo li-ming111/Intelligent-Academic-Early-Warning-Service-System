@@ -437,4 +437,41 @@ class StudentServiceImplTest {
         // 只有真正带 scoreId 的那一行才该去查成绩（少一次无用查询）
         verify(scoreMapper, times(1)).selectById(any());
     }
+
+    /**
+     * W16：{@code collegeId == null} 必须表示「全部学生」。
+     *
+     * <p>改前这里无条件走 {@code selectByCollegeId(null)} ⇒ SQL 成 {@code college_id = NULL}
+     * ⇒ 恒空。{@code /admin/students}（{@code AdminController.getAllStudents} 传的就是 null）
+     * 于是永远回空数组，而同一个动作在辅导员侧（{@code /admin/counselors}）却正常有数据。
+     */
+    @Test
+    void getStudentsByCollege_nullMeansAll_neverTheNullOrEqSql() {
+        StudentProfile a = new StudentProfile();
+        a.setId(1L);
+        StudentProfile b = new StudentProfile();
+        b.setId(2L);
+        when(studentProfileMapper.selectList(null)).thenReturn(List.of(a, b));
+
+        List<?> list = service.getStudentsByCollege(null);
+
+        assertEquals(2, list.size(), "null 学院 = 全部，不许回空");
+        verify(studentProfileMapper).selectList(null);
+        // 负向对照：不许再走那条把 null 变成 `= NULL` 的查询
+        verify(studentProfileMapper, never()).selectByCollegeId(any());
+    }
+
+    /** W16 负向对照（另一方向）：给了具体学院时**必须**走筛选，不许退化成"全表"。 */
+    @Test
+    void getStudentsByCollege_withId_filtersAndNeverFallsBackToAll() {
+        StudentProfile a = new StudentProfile();
+        a.setId(3L);
+        when(studentProfileMapper.selectByCollegeId(1L)).thenReturn(List.of(a));
+
+        List<?> list = service.getStudentsByCollege(1L);
+
+        assertEquals(1, list.size());
+        verify(studentProfileMapper).selectByCollegeId(1L);
+        verify(studentProfileMapper, never()).selectList(any());
+    }
 }

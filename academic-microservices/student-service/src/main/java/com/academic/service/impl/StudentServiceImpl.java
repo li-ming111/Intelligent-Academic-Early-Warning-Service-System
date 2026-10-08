@@ -292,11 +292,9 @@ public class StudentServiceImpl implements StudentService {
         return sp;
     }
 
-    @Override
-    public Object registerStudent(Object request) {
-        log.info("学生注册");
-        return "注册成功";
-    }
+    // registerStudent 已删（2026-10-08 W27）：原来的实现体是 `log.info("学生注册"); return "注册成功";`
+    // —— 回 HTTP 200 + success:true 却一行都不写库（W25 实测：users/student_profile 打前打后一致）。
+    // 真实注册走 user-service `/auth/register/student`。
 
     // ==================== 对标分析 ====================
     /**
@@ -2215,9 +2213,22 @@ public class StudentServiceImpl implements StudentService {
         return studentProfileMapper.countByCollegeId(collegeId);
     }
 
+    /**
+     * 按学院取学生列表；{@code collegeId == null} 表示**不筛学院（全部）**。
+     *
+     * <p><b>W16 修的静默错</b>：此前无条件调 {@code selectByCollegeId(collegeId)}，而那条
+     * SQL 是 {@code WHERE college_id = #{collegeId}} —— 传 null 时成了 {@code college_id = NULL}，
+     * 恒不成立 ⇒ "取全部学生"的调用（{@code AdminController.getAllStudents} 传的就是 null）
+     * 恒定返回**空数组**，而不是"学生服务出错"。同一语义在辅导员侧是**对的**
+     * （{@code CounselorServiceImpl.getAllCounselors} 用 {@code LambdaQueryWrapper} +
+     * {@code if (collegeId != null)}），于是 {@code /admin/counselors} 有数据、
+     * {@code /admin/students} 空 —— 两个同形的管理员列表端点给出互相矛盾的结果。
+     */
     @Override
     public java.util.List<Object> getStudentsByCollege(Long collegeId) {
-        List<StudentProfile> profiles = studentProfileMapper.selectByCollegeId(collegeId);
+        List<StudentProfile> profiles = (collegeId == null)
+                ? studentProfileMapper.selectList(null)
+                : studentProfileMapper.selectByCollegeId(collegeId);
         return new ArrayList<>(profiles);
     }
 
