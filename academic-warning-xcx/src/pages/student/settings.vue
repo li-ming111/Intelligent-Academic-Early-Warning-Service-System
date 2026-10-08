@@ -121,8 +121,13 @@ const info = ref({})
  * 字段名**必须**与 `user_settings` 表的列一致 —— 这五个是
  * `GET /users/{uid}/settings` 实际返回的键（实测）。
  *
- * ⚠️ 不用 `/students/settings/{uid}`：那个 PUT 直接 `return {success:true}`，
- * 一个字段都不写库，表现成"改完提示成功、退出再进全变回去"。
+ * ⚠️ 2026-10-08（W28）订正一句**已过期**的理由。这里原来写着
+ * 「不用 `/students/settings/{uid}`：那个 PUT 直接 `return {success:true}`，一个字段都不写库」——
+ * 那句在**当时**是真的，但 `StudentServiceImpl.updateStudentSettings` **后来已经改成真写**
+ * `user_settings`（键同样是 users.id，与 `/users/{uid}/settings` 同一张表、同一套键，
+ * 见那边的类注释「这条路由是那个入口的学生侧别名，不是第二套设置」）。
+ * ⇒ 两条路现在**等价**，继续走 `/users/{uid}/settings` 没问题，但**别再拿"那个是桩"当理由**：
+ * 判据比实现旧一版正是本仓反复栽的一类（会让人去"修"一个并不存在的桩）。
  */
 const form = ref({
   warningNotification: false,
