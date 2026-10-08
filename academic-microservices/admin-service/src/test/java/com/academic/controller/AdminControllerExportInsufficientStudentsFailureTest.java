@@ -1,7 +1,7 @@
 package com.academic.controller;
 
 import com.academic.mapper.ExportHistoryMapper;
-import com.academic.mapper.ScoreRecordMapper;
+import com.academic.mapper.ScoreStatMapper;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -43,7 +43,10 @@ import static org.mockito.Mockito.*;
 @ExtendWith(MockitoExtension.class)
 class AdminControllerExportInsufficientStudentsFailureTest {
 
-    @Mock private ScoreRecordMapper scoreRecordMapper;
+    // ⚠️ 必须 mock 的是 ScoreStatMapper（不是 ScoreRecordMapper）—— 本端点的口径在 W26 换成了
+    // ScoreCaliber 聚合查询 selectInsufficientStudentsAll()；对着 ScoreRecordMapper 打桩会得到
+    // 「scoreStatMapper 为 null → NPE → 500」+「打桩没用上 → UnnecessaryStubbing」两条假红。
+    @Mock private ScoreStatMapper scoreStatMapper;
     @Mock private ExportHistoryMapper exportHistoryMapper;
 
     @InjectMocks private AdminController controller;
@@ -58,7 +61,7 @@ class AdminControllerExportInsufficientStudentsFailureTest {
     void testFailureIsRealHttpErrorWithJsonBody(@TempDir Path tmp) throws Exception {
         pointExportDirTo(tmp);
         // 让导出在**查库**这一步就炸 —— 此刻 Content-Type 还没被设成 xlsx
-        when(scoreRecordMapper.selectList(any())).thenThrow(new RuntimeException("数据库连接中断"));
+        when(scoreStatMapper.selectInsufficientStudentsAll()).thenThrow(new RuntimeException("数据库连接中断"));
 
         MockHttpServletResponse response = new MockHttpServletResponse();
         controller.exportInsufficientStudents(response);
@@ -86,7 +89,7 @@ class AdminControllerExportInsufficientStudentsFailureTest {
     @DisplayName("成功路径未被改坏 → HTTP 200 + xlsx Content-Type + 真的是 OOXML（PK 魔数）")
     void testSuccessStillProducesRealXlsx(@TempDir Path tmp) throws Exception {
         pointExportDirTo(tmp);
-        when(scoreRecordMapper.selectList(any())).thenReturn(List.of());
+        when(scoreStatMapper.selectInsufficientStudentsAll()).thenReturn(List.of());
         when(exportHistoryMapper.insert(any())).thenReturn(1);
 
         MockHttpServletResponse response = new MockHttpServletResponse();
@@ -106,7 +109,7 @@ class AdminControllerExportInsufficientStudentsFailureTest {
     @DisplayName("失败时**不写导出历史** —— 不能给一次失败的导出留下一条成功记录")
     void testFailureDoesNotWriteExportHistory(@TempDir Path tmp) throws Exception {
         pointExportDirTo(tmp);
-        when(scoreRecordMapper.selectList(any())).thenThrow(new RuntimeException("boom"));
+        when(scoreStatMapper.selectInsufficientStudentsAll()).thenThrow(new RuntimeException("boom"));
 
         controller.exportInsufficientStudents(new MockHttpServletResponse());
 
