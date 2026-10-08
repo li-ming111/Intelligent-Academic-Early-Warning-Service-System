@@ -71,3 +71,15 @@ testsprite/local-check/*.prev
 # 之所以要点名，是因为下面 `!/db_backups/*.sql` 把 .sql 白名单放开了 ——
 # 一次 `git add -A` 就会把它带进去。
 /db_backups/prerun_*_*.sql
+
+# 仓库根的 ./exports —— 服务配置 `export.dir` 的默认落点，运行期生成的管理员导出
+# Excel。上面只忽略了 `academic-microservices/{exports,*/exports/}` 两种，漏了根目录这一份，
+# 于是 `exports/成绩导入模板.xlsx` 一直以未跟踪状态挂在 `git status` 里。
+/exports/
+
+# testsprite 探针的**一次性产物**：
+# `*.bak` = 变异测试前对被测源码拍的备份（内容是已入库源码的副本，跑完即弃）；
+# `*.xlsx` = W19 成绩导入探针现造的 Excel 夹具（探针每次自己重建）。
+# 与上面 `*.txt/*.png/*.prev` 同族：脚本入库、产物不入库。
+testsprite/local-check/*.bak
+testsprite/local-check/*.xlsx
