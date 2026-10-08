@@ -132,7 +132,62 @@ class AuthenticationFilterTest {
 
         // —— 没被任何前缀管到的路径：已认证即放行（与改动前一致） ——
         assertTrue(allow(STUDENT, HttpMethod.GET, "/api/warnings/scan"));
-        assertTrue(allow(TEACHER, HttpMethod.GET, "/api/courses/1"));
+        // ⚠️ 2026-10-08（W31）：这里原来还有一条
+        //      assertTrue(allow(TEACHER, HttpMethod.GET, "/api/courses/1"));
+        //    —— 它**把缺陷钉住了**：`/api/courses/**` 对内置角色 1/2/3 当时没有任何检查，
+        //    学生/教师可增、改、删课程（同轮直连实测过）。已改为下面的 `courseSurface_*` 组。
+        //    `/api/warnings/**` 仍然放行 —— 它的闸在**控制器层**（W26
+        //    `IntelligentWarningController.isScanAllowed`），刻意不在网关这层。
+    }
+
+    // ==================== /api/courses/**：W31 补的内置角色闸（2026-10-08） ====================
+    //
+    // 补闸前：`PREFIX_COURSE` 只出现在 `customRoleAllows`（role ≥ 6）里，内置角色 1/2/3
+    // 落到 `hasPermission` 末尾的 `return true` ⇒ 整套课程写接口对任何已登录用户开放。
+    // 下游 course-service 只 `authenticated()`，所以那不是理论问题（同轮直连实测：学生
+    // POST/DELETE 真的落库、PUT 真的改到 courses.id=1）。
+
+    @Test
+    @DisplayName("W31：内置角色 1/2/3 进不去课程管理面（补闸前是全部放行）")
+    void courseSurface_deniedForBuiltInNonAdminRoles() {
+        filter = filterWithBuiltInBindings();
+
+        // 三个写端点是题眼：补闸前 1/2/3 全 200，且真的落库。
+        assertFalse(allow(STUDENT, HttpMethod.POST, "/api/courses/add"));
+        assertFalse(allow(STUDENT, HttpMethod.PUT, "/api/courses/update/1"));
+        assertFalse(allow(STUDENT, HttpMethod.DELETE, "/api/courses/delete/1"));
+        assertFalse(allow(TEACHER, HttpMethod.POST, "/api/courses/add"));
+        assertFalse(allow(COUNSELOR, HttpMethod.DELETE, "/api/courses/delete/1"));
+
+        // 读也一起拒：这是管理面的分页课程表；教师/学生的课表走 /api/teachers/courses。
+        assertFalse(allow(TEACHER, HttpMethod.GET, "/api/courses/1"));
+        assertFalse(allow(TEACHER, HttpMethod.GET, "/api/courses/list"));
+
+        // 学院管理员在**这一层**补闸前就已经被拒（`role == ROLE_COLLEGE_ADMIN` 段末尾
+        // `return false`）—— 钉住它，免得后人误以为缺口在 5：被放行的恰恰是 1/2/3。
+        assertFalse(allow(COLLEGE_ADMIN, HttpMethod.GET, "/api/courses/list"));
+    }
+
+    @Test
+    @DisplayName("W31：管理员照常通行（新闸不能误伤 4）")
+    void courseSurface_adminUnaffected() {
+        filter = filterWithBuiltInBindings();
+        assertTrue(allow(ADMIN, HttpMethod.GET, "/api/courses/list"));
+        assertTrue(allow(ADMIN, HttpMethod.POST, "/api/courses/add"));
+        assertTrue(allow(ADMIN, HttpMethod.DELETE, "/api/courses/delete/1"));
+    }
+
+    @Test
+    @DisplayName("W31：自定义角色的课程面不受新闸影响（仍由 role_permissions 决定）")
+    void courseSurface_customRoleStillRbacDriven() {
+        // MANAGE ⇒ 读写都行
+        filter = filterWith(Map.of("ROLE_ASSISTANT", List.of("PERM_COURSE_MANAGE")));
+        assertTrue(allow(CUSTOM, HttpMethod.GET, "/api/courses/list"));
+        assertTrue(allow(CUSTOM, HttpMethod.POST, "/api/courses/add"));
+        // VIEW ⇒ 只读
+        filter = filterWith(Map.of("ROLE_ASSISTANT", List.of("PERM_COURSE_VIEW")));
+        assertTrue(allow(CUSTOM, HttpMethod.GET, "/api/courses/list"));
+        assertFalse(allow(CUSTOM, HttpMethod.POST, "/api/courses/add"));
     }
 
     // ==================== 自定义角色：本轮新增的能力 ====================

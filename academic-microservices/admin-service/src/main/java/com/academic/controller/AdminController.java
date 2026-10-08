@@ -1638,9 +1638,23 @@ public class AdminController {
         return ApiResponse.notFound("Course not found");
     }
 
+    /**
+     * 新建课程。
+     *
+     * <p>2026-10-08（W31）：原来**忽略 {@code save()} 的返回值**，无论有没有写进去都回
+     * {@code "Course created successfully"} —— 同一段里的 {@code updateCourse} /
+     * {@code deleteCourse} 都检查了，只有这条没有。
+     *
+     * <p>⚠️ 如实记一句边界：MyBatis-Plus 的 {@code insert} 失败时**多半是抛异常**
+     * （如编码重复撞 {@code uk_courses_code} → {@code DuplicateKeyException} → 全局 500），
+     * 所以"0 行且不抛"这条路径**当前难以构造** ⇒ 这次属于**防御性对齐**，
+     * 不是修好了一个能被点出来的假成功。写在这里是为了不让下一个人以为它检查过了。
+     */
     @PostMapping("/courses")
     public ApiResponse<String> createCourse(@RequestBody Course course) {
-        courseService.save(course);
+        if (!courseService.save(course)) {
+            return ApiResponse.error("Course created failed");
+        }
         return ApiResponse.success("Course created successfully");
     }
 

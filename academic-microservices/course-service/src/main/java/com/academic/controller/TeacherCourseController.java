@@ -131,6 +131,10 @@ public class TeacherCourseController {
 
     /**
      * 删除教师课程关联
+     *
+     * <p>2026-10-08（W31）：0 行（该关联不存在）**原来回 {@code code:500「删除教师课程关联失败」}**，
+     * 与同文件 {@code updateTeacherCourse} 的 {@code notFound} 说法不一致（W8 只改了 update）。
+     * 0 行是"这条关联不存在"，不是"删除操作失败"。
      */
     @DeleteMapping("/delete/{id}")
     public ApiResponse<String> deleteTeacherCourse(@PathVariable Long id) {
@@ -140,7 +144,8 @@ public class TeacherCourseController {
             if (deleted) {
                 return ApiResponse.success("教师课程关联已删除");
             } else {
-                return ApiResponse.error("删除教师课程关联失败");
+                // 0 行 = 该关联不存在（与 updateTeacherCourse 同一口径）。
+                return ApiResponse.notFound("教师课程关联不存在");
             }
         } catch (Exception e) {
             log.error("Delete teacher course failed: {}", e.getMessage());

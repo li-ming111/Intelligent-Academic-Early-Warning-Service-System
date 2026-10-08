@@ -155,6 +155,12 @@ public class CourseController {
 
     /**
      * 删除课程
+     *
+     * <p>2026-10-08（W31）：0 行（该课程不存在）**原来回 {@code code:500「删除课程失败」}**
+     * —— 与同文件 {@code updateCourse} 的 {@code notFound} 说法不一致（W8 只改了 update）。
+     * 事实是"这门课不存在"，不是"删除操作失败"：前者修不了，后者值得重试。
+     * 实测对照：{@code DELETE /courses/delete/99999} → 500"删除课程失败"，
+     * 而 {@code PUT /courses/update/99999} → 404"课程不存在"。
      */
     @DeleteMapping("/delete/{courseId}")
     public ApiResponse<String> deleteCourse(@PathVariable Long courseId) {
@@ -164,7 +170,8 @@ public class CourseController {
             if (deleted) {
                 return ApiResponse.success("课程已删除");
             } else {
-                return ApiResponse.error("删除课程失败");
+                // 0 行 = 该课程不存在（与 updateCourse 同一口径）。
+                return ApiResponse.notFound("课程不存在");
             }
         } catch (Exception e) {
             log.error("Delete course failed: {}", e.getMessage());

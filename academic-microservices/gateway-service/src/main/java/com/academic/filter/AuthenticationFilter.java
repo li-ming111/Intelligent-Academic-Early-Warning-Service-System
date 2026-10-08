@@ -128,7 +128,13 @@ public class AuthenticationFilter implements GlobalFilter, Ordered {
     private static final String PREFIX_ROLE_PERMISSIONS = "/api/role-permissions";
 
     // 下面两条**只给自定义角色（role ≥ 6）用** —— 见 hasPermission 里那一块。
-    // 内置角色走的是各自的角色前缀（/api/teachers、/api/students…），不经这两条。
+    // ⚠️ 2026-10-08（W31）订正：这里原本接着写「内置角色走的是各自的角色前缀
+    // （/api/teachers、/api/students…），**不经这两条**」—— **后半句是错的**。
+    // "不经这两条常量" ≠ "不被放行"：内置角色 1/2/3 不匹配任何受限前缀，
+    // 结果是**穿过整个 hasPermission 被末尾 return true 放行**（这正是闸漏掉的原因）。
+    // `/api/courses` 已就地补闸（见 hasPermission 里 W31 那一段）；
+    // `/api/warnings` 走的是**控制器层**闸（W26 `IntelligentWarningController.isScanAllowed`），
+    // 网关这层刻意仍放行 —— 两处的判据不同，别按一边推另一边。
     private static final String PREFIX_COURSE = "/api/courses";
     private static final String PREFIX_WARNING = "/api/warnings";
 
@@ -407,6 +413,39 @@ public class AuthenticationFilter implements GlobalFilter, Ordered {
                 || path.startsWith(PREFIX_PERMISSIONS)
                 || path.startsWith(PREFIX_ROLE_PERMISSIONS)) {
             log.warn("拒绝非管理员访问账号/权限管理端点: role={}, path={}", role, path);
+            return false;
+        }
+
+        // ==================== /api/courses/** 的角色门禁（W31，2026-10-08） ====================
+        //
+        // 与上面 `/api/roles` 那一段是**同一族**：`PREFIX_COURSE` 此前只出现在
+        // {@link #customRoleAllows}（role ≥ 6）里，对内置角色 1/2/3 **一个检查都没有**
+        // ⇒ 一路落到本方法末尾的 `return true`。而下游 course-service 的
+        // `SecurityConfig` 是 `anyRequest().authenticated()`（不认角色），
+        // ⇒ **任何已登录用户（含学生）都能调 course-service 的整套写接口**。
+        // 2026-10-08 直连 8075 复刻"网关 StripPrefix=1 + 注入头"之后的请求实测：
+        //   POST   /courses/add          X-Role 1 → 200，库里真的多一行；
+        //   DELETE /courses/delete/{id}  X-Role 1 → 200，那一行真的没了；
+        //   PUT    /courses/update/1     X-Role 1 → 200，真改到了 courses.id=1 的字段。
+        //
+        // 注意 `PREFIX_COURSE` 上面那句注释写的是「下面两条**只给自定义角色（role ≥ 6）用** ——
+        // 内置角色走的是各自的角色前缀（/api/teachers、/api/students…），**不经这两条**」。
+        // 这句话的**后半句是错的**，而且错得刚好把闸漏掉：
+        //   "不经这两条常量" ≠ "不放行" —— 1/2/3 不匹配上面任何一条受限前缀，
+        //   结果就是**穿过整个函数、被末尾 return true 放行**。这正是 W30 那个形状
+        //   （「一条闸一直没装，是因为注释里写的理由本身是错的」）的第二次出现。
+        //
+        // 顺带核出闸的方向是**反的**：role 5（学院管理员）在 `role == ROLE_COLLEGE_ADMIN`
+        // 那一段末尾 `return false`（line ~331），**本来就被拒**；被放行的恰恰是 1/2/3。
+        //
+        // 加闸不影响任何现有功能：`/api/courses/**` 在**全仓零调用方** —— 前端课程管理打的是
+        // `/admin/courses`（admin-service）、教师/学生课表打的是 `/teachers/courses`
+        // （teacher-service），两条都不经过这里（已用正对照 grep 过：
+        // `teachers/courses` 在 PC 前端命中 11 处，裸 `/courses/` 命中 0 处）。
+        // role ≥ 6 在更上面已按权限表 return，role 4 在函数开头已 return true
+        // ⇒ 能走到这一句的只可能是 1/2/3，所以这里**无条件拒绝**就是 fail-closed。
+        if (path.startsWith(PREFIX_COURSE)) {
+            log.warn("拒绝非管理员访问课程管理端点: role={}, path={}", role, path);
             return false;
         }
 
