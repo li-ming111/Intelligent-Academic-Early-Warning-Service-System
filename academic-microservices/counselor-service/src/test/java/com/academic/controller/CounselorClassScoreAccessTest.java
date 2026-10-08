@@ -4,6 +4,7 @@ import com.academic.common.dto.ApiResponse;
 import com.academic.mapper.*;
 import com.academic.common.notify.StudentNotifier;
 import com.academic.service.*;
+import jakarta.servlet.http.HttpServletRequest;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -65,6 +66,17 @@ class CounselorClassScoreAccessTest {
     private static final long MY_CLASS = 7L;
     private static final long OTHER_CLASS = 8L;
 
+    /**
+     * W13 起 {@code getClassScores} 还要一个"你是谁"（{@code X-User-Id}）——
+     * 因为光有 W4.12 那句 {@code isClassOfCounselor(classId, counselorId)} 挡不住
+     * **借用别人的 counselor_id**。这个 helper 让调用方是 {@code COUNSELOR} 本人。
+     */
+    private static HttpServletRequest as(long userId) {
+        HttpServletRequest r = mock(HttpServletRequest.class);
+        lenient().when(r.getHeader("X-User-Id")).thenReturn(String.valueOf(userId));
+        return r;
+    }
+
     /** 造一条 {@code classes} 查询结果（{@code id} 是 MyBatis 回的 BIGINT ⇒ Long）。 */
     private static Map<String, Object> cls(long id) {
         Map<String, Object> m = new HashMap<>();
@@ -88,7 +100,7 @@ class CounselorClassScoreAccessTest {
         List<Map<String, Object>> scores = List.of(Map.of("studentId", 1L, "score", 88));
         when(scoreMapper.getScoresByClassId(MY_CLASS)).thenReturn(scores);
 
-        ApiResponse<List<Map<String, Object>>> resp = controller.getClassScores(MY_CLASS, COUNSELOR);
+        ApiResponse<List<Map<String, Object>>> resp = controller.getClassScores(MY_CLASS, COUNSELOR, as(COUNSELOR));
 
         assertEquals(200, resp.getCode(), "自己的班要放行: " + resp.getMessage());
         assertSame(scores, resp.getData(), "成绩要原样返回");
@@ -102,7 +114,7 @@ class CounselorClassScoreAccessTest {
     void otherClass_forbidden_andNeverReadsScores() {
         ownsClasses(MY_CLASS, 9L);
 
-        ApiResponse<List<Map<String, Object>>> resp = controller.getClassScores(OTHER_CLASS, COUNSELOR);
+        ApiResponse<List<Map<String, Object>>> resp = controller.getClassScores(OTHER_CLASS, COUNSELOR, as(COUNSELOR));
 
         assertEquals(403, resp.getCode(), "不是自己的班必须拒绝");
         assertNull(resp.getData(), "拒绝时不该带任何数据");
@@ -115,7 +127,7 @@ class CounselorClassScoreAccessTest {
     @Test
     @DisplayName("缺 counselor_id：403（缺参数 ≠ 有权限）")
     void nullCounselor_forbidden() {
-        ApiResponse<List<Map<String, Object>>> resp = controller.getClassScores(MY_CLASS, null);
+        ApiResponse<List<Map<String, Object>>> resp = controller.getClassScores(MY_CLASS, null, as(COUNSELOR));
 
         assertEquals(403, resp.getCode(), "不给 counselor_id 不能等价于有权限");
         verify(scoreMapper, never()).getScoresByClassId(anyLong());
@@ -128,7 +140,7 @@ class CounselorClassScoreAccessTest {
     void counselorWithNoClass_forbidden() {
         when(classInfoService.getClassesByCounselorId(COUNSELOR)).thenReturn(new ArrayList<>());
 
-        ApiResponse<List<Map<String, Object>>> resp = controller.getClassScores(MY_CLASS, COUNSELOR);
+        ApiResponse<List<Map<String, Object>>> resp = controller.getClassScores(MY_CLASS, COUNSELOR, as(COUNSELOR));
 
         assertEquals(403, resp.getCode());
         verify(scoreMapper, never()).getScoresByClassId(anyLong());
@@ -142,7 +154,7 @@ class CounselorClassScoreAccessTest {
     void classLookupFails_closed() {
         when(classInfoService.getClassesByCounselorId(COUNSELOR)).thenReturn(null);
 
-        ApiResponse<List<Map<String, Object>>> resp = controller.getClassScores(MY_CLASS, COUNSELOR);
+        ApiResponse<List<Map<String, Object>>> resp = controller.getClassScores(MY_CLASS, COUNSELOR, as(COUNSELOR));
 
         assertEquals(403, resp.getCode(), "底下一层抖了就当没权限，绝不能当有权限");
         verify(scoreMapper, never()).getScoresByClassId(anyLong());
@@ -162,7 +174,7 @@ class CounselorClassScoreAccessTest {
         list.add(m);
         when(classInfoService.getClassesByCounselorId(COUNSELOR)).thenReturn(list);
 
-        ApiResponse<List<Map<String, Object>>> resp = controller.getClassScores(MY_CLASS, COUNSELOR);
+        ApiResponse<List<Map<String, Object>>> resp = controller.getClassScores(MY_CLASS, COUNSELOR, as(COUNSELOR));
 
         assertEquals(403, resp.getCode(), "类型不对要判不匹配，不能炸成 500");
         verify(scoreMapper, never()).getScoresByClassId(anyLong());
@@ -180,7 +192,7 @@ class CounselorClassScoreAccessTest {
         when(classInfoService.getClassesByCounselorId(COUNSELOR)).thenReturn(list);
         when(scoreMapper.getScoresByClassId(MY_CLASS)).thenReturn(new ArrayList<>());
 
-        ApiResponse<List<Map<String, Object>>> resp = controller.getClassScores(MY_CLASS, COUNSELOR);
+        ApiResponse<List<Map<String, Object>>> resp = controller.getClassScores(MY_CLASS, COUNSELOR, as(COUNSELOR));
 
         assertEquals(200, resp.getCode(), "数值相等就该放行（Long 41 与 Integer 41 是一回事）");
         verify(scoreMapper).getScoresByClassId(MY_CLASS);

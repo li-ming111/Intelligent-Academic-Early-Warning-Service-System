@@ -94,29 +94,21 @@ public class CounselorController {
     @Autowired
     private StudentMapper studentMapper;
 
-    /**
-     * 辅导员注册
-     */
-    @PostMapping("/register")
-    public ApiResponse<CounselorProfile> register(@RequestBody CounselorProfile counselorProfile) {
-        try {
-            boolean success = counselorService.register(counselorProfile);
-            if (success) {
-                return ApiResponse.success(counselorProfile);
-            } else {
-                return ApiResponse.badRequest("辅导员ID已存在");
-            }
-        } catch (Exception e) {
-            log.error("注册失败: {}", e.getMessage());
-            return ApiResponse.serverError("注册失败: " + e.getMessage());
-        }
-    }
-
+    // ==================== 注册（已删，2026-10-08 W27） ====================
+    // 这里原来有一条 `POST /counselors/register`：它只往 `counselor_profiles` 插一行档案，
+    // **不建账号、不设口令、不经 `userService.register`**。`counselor_profiles.user_id` 是
+    // NOT NULL 但**没有外键**，所以它能插出一行**指向不存在用户**的孤儿档案。
+    // 全仓零调用方，真实注册路径是 `POST /api/auth/register/counselor`
+    // （`CounselorRegister.vue` 走的就是它），直接删。
     /**
      * 获取辅导员仪表板数据
      */
     @GetMapping("/dashboard/{userId}")
-    public ApiResponse<Map<String, Object>> getDashboard(@PathVariable Long userId) {
+    public ApiResponse<Map<String, Object>> getDashboard(@PathVariable Long userId,
+                                                         HttpServletRequest request) {
+        ApiResponse<Map<String, Object>> denied =
+                denyUnlessSelfCounselor(userId, request, "无权查看其他辅导员的首页");
+        if (denied != null) return denied;
         try {
             CounselorProfile counselor = counselorService.getByUserId(userId);
             
@@ -233,10 +225,19 @@ public class CounselorController {
      * 获取辅导员信息
      */
     @GetMapping("/{counselorId}")
-    public ApiResponse<CounselorProfile> getCounselorInfo(@PathVariable String counselorId) {
+    public ApiResponse<CounselorProfile> getCounselorInfo(@PathVariable String counselorId,
+                                                          HttpServletRequest request) {
         try {
             CounselorProfile counselor = counselorService.getByCounselorId(counselorId);
             if (counselor != null) {
+                // W13：这里收的是**业务编号字符串**（'C53'），不是 users.id ——
+                // 拿 `counselor_profiles.user_id` 去比登录人。
+                if (!isAdmin(request)) {
+                    Long me = callerId(request);
+                    if (me == null || !me.equals(counselor.getUserId())) {
+                        return ApiResponse.error(403, "无权查看其他辅导员的资料");
+                    }
+                }
                 return ApiResponse.success(counselor);
             } else {
                 return ApiResponse.notFound("辅导员不存在");
@@ -251,7 +252,11 @@ public class CounselorController {
      * 获取辅导员管理的学生列表（查询参数方式）
      */
     @GetMapping("/students")
-    public ApiResponse<List<Student>> getStudentsByParam(@RequestParam("counselor_id") Long counselorId) {
+    public ApiResponse<List<Student>> getStudentsByParam(@RequestParam("counselor_id") Long counselorId,
+                                                         HttpServletRequest request) {
+        ApiResponse<List<Student>> denied =
+                denyUnlessSelfCounselor(counselorId, request, "无权查看其他辅导员的学生");
+        if (denied != null) return denied;
         try {
             List<Student> students = studentService.getByCounselorId(counselorId);
             return ApiResponse.success(students);
@@ -265,8 +270,12 @@ public class CounselorController {
      * 获取预警列表
      */
     @GetMapping("/warnings")
-    public ApiResponse<List<Map<String, Object>>> getWarnings(@RequestParam("counselor_id") Long counselorId, 
-                                                 @RequestParam(value = "status", required = false) String status) {
+    public ApiResponse<List<Map<String, Object>>> getWarnings(@RequestParam("counselor_id") Long counselorId,
+                                                 @RequestParam(value = "status", required = false) String status,
+                                                 HttpServletRequest request) {
+        ApiResponse<List<Map<String, Object>>> denied =
+                denyUnlessSelfCounselor(counselorId, request, "无权查看其他辅导员的预警");
+        if (denied != null) return denied;
         try {
             List<Map<String, Object>> warnings = new ArrayList<>();
             // 获取辅导员管理的班级
@@ -349,7 +358,18 @@ public class CounselorController {
      * 更新辅导员信息
      */
     @PutMapping("/{id}")
-    public ApiResponse<String> updateCounselorInfo(@PathVariable Long id, @RequestBody CounselorProfile counselorProfile) {
+    public ApiResponse<String> updateCounselorInfo(@PathVariable Long id, @RequestBody CounselorProfile counselorProfile,
+                                                   HttpServletRequest request) {
+        // W13：路径参数是 `counselor_profiles.id`（活库 1，与 users.id=53 不是一套），
+        // 原来这里**只过了请求体守卫、没有任何身份检查** —— 任何辅导员都能改别人的档案。
+        // 改成拿档案行的 `user_id` 比登录人。
+        if (!isAdmin(request)) {
+            Long me = callerId(request);
+            CounselorProfile target = counselorService.getById(id);
+            if (me == null || target == null || !me.equals(target.getUserId())) {
+                return ApiResponse.error(403, "无权修改其他辅导员的资料");
+            }
+        }
         try {
             counselorProfile.setId(id);
             boolean success = counselorService.updateProfile(counselorProfile);
@@ -396,7 +416,13 @@ public class CounselorController {
      * 创建帮扶计划
      */
     @PostMapping("/assistance-plans")
-    public ApiResponse<AssistancePlan> createAssistancePlan(@RequestBody AssistancePlan plan) {
+    public ApiResponse<AssistancePlan> createAssistancePlan(@RequestBody AssistancePlan plan,
+                                                            HttpServletRequest request) {
+        // W13：`plan.counselorId` 是请求体里给的 —— 不核对就能**以别人的名义建计划**。
+        ApiResponse<AssistancePlan> denied =
+                denyUnlessSelfCounselor(plan == null ? null : plan.getCounselorId(), request,
+                        "无权以其他辅导员的名义创建帮扶计划");
+        if (denied != null) return denied;
         try {
             boolean success = assistancePlanService.createPlan(plan);
             if (success) {
@@ -414,7 +440,11 @@ public class CounselorController {
      * 获取学生的帮扶计划列表
      */
     @GetMapping("/students/{studentId}/assistance-plans")
-    public ApiResponse<List<AssistancePlan>> getStudentAssistancePlans(@PathVariable Long studentId) {
+    public ApiResponse<List<AssistancePlan>> getStudentAssistancePlans(@PathVariable Long studentId,
+                                                                      HttpServletRequest request) {
+        ApiResponse<List<AssistancePlan>> denied =
+                denyUnlessMyStudent(studentId, request, "该学生不在你带的班级里");
+        if (denied != null) return denied;
         try {
             List<AssistancePlan> plans = assistancePlanService.getPlansByStudentId(studentId);
             return ApiResponse.success(plans);
@@ -428,9 +458,17 @@ public class CounselorController {
      * 获取辅导员的帮扶计划列表
      */
     @GetMapping("/{counselorId}/assistance-plans")
-    public ApiResponse<List<AssistancePlan>> getCounselorAssistancePlans(@PathVariable Long counselorId) {
+    public ApiResponse<List<AssistancePlan>> getCounselorAssistancePlans(@PathVariable Long counselorId,
+                                                                        HttpServletRequest request) {
+        ApiResponse<List<AssistancePlan>> denied =
+                denyUnlessSelfCounselor(counselorId, request, "无权查看其他辅导员的帮扶计划");
+        if (denied != null) return denied;
         try {
-            List<AssistancePlan> plans = assistancePlanService.list();
+            // W13 顺带修：这里原来调的是 `assistancePlanService.list()` —— **收了 counselorId
+            // 却从没用过**，回的是全库**所有辅导员**的帮扶计划。接口名字说"我的"，内容是"大家的"。
+            // 参数既然已经校验过是本人，就按它过滤。
+            List<AssistancePlan> plans = assistancePlanService.list(
+                    new QueryWrapper<AssistancePlan>().eq("counselor_id", counselorId));
             return ApiResponse.success(plans);
         } catch (Exception e) {
             log.error("获取辅导员帮扶计划列表失败: {}", e.getMessage());
@@ -449,7 +487,11 @@ public class CounselorController {
      * @param planId {@code assistance_plans.id}
      */
     @GetMapping("/assistance-plans/{planId}/evaluations")
-    public ApiResponse<List<Map<String, Object>>> getPlanEvaluations(@PathVariable Long planId) {
+    public ApiResponse<List<Map<String, Object>>> getPlanEvaluations(@PathVariable Long planId,
+                                                                    HttpServletRequest request) {
+        ApiResponse<List<Map<String, Object>>> denied =
+                denyUnlessMyPlan(planId, request, "无权查看其他辅导员帮扶计划的评价");
+        if (denied != null) return denied;
         try {
             return ApiResponse.success(assistanceEvaluationMapper.selectByPlanId(planId));
         } catch (Exception e) {
@@ -464,7 +506,11 @@ public class CounselorController {
      * @param counselorId {@code users.id}（{@code assistance_plans.counselor_id}）
      */
     @GetMapping("/{counselorId}/evaluations")
-    public ApiResponse<List<Map<String, Object>>> getCounselorEvaluations(@PathVariable Long counselorId) {
+    public ApiResponse<List<Map<String, Object>>> getCounselorEvaluations(@PathVariable Long counselorId,
+                                                                         HttpServletRequest request) {
+        ApiResponse<List<Map<String, Object>>> denied =
+                denyUnlessSelfCounselor(counselorId, request, "无权查看其他辅导员的帮扶评价");
+        if (denied != null) return denied;
         try {
             return ApiResponse.success(assistanceEvaluationMapper.selectByCounselorId(counselorId));
         } catch (Exception e) {
@@ -477,7 +523,10 @@ public class CounselorController {
      * 更新帮扶计划
      */
     @PutMapping("/assistance-plans/{id}")
-    public ApiResponse<String> updateAssistancePlan(@PathVariable Long id, @RequestBody AssistancePlan plan) {
+    public ApiResponse<String> updateAssistancePlan(@PathVariable Long id, @RequestBody AssistancePlan plan,
+                                                    HttpServletRequest request) {
+        ApiResponse<String> denied = denyUnlessMyPlan(id, request, "无权修改其他辅导员的帮扶计划");
+        if (denied != null) return denied;
         try {
             plan.setId(id);
             boolean success = assistancePlanService.updatePlan(plan);
@@ -528,7 +577,10 @@ public class CounselorController {
      * 更新帮扶计划状态
      */
     @PatchMapping("/assistance-plans/{id}/status")
-    public ApiResponse<String> updateAssistancePlanStatus(@PathVariable Long id, @RequestBody Map<String, Object> statusMap) {
+    public ApiResponse<String> updateAssistancePlanStatus(@PathVariable Long id, @RequestBody Map<String, Object> statusMap,
+                                                          HttpServletRequest request) {
+        ApiResponse<String> denied = denyUnlessMyPlan(id, request, "无权修改其他辅导员的帮扶计划");
+        if (denied != null) return denied;
         try {
             Object raw = statusMap.get("status");
             if (raw == null) {
@@ -558,7 +610,10 @@ public class CounselorController {
      */
     @PatchMapping("/assistance-plans/{id}/progress")
     public ApiResponse<String> updateAssistancePlanProgress(@PathVariable Long id,
-                                                            @RequestBody Map<String, Object> body) {
+                                                            @RequestBody Map<String, Object> body,
+                                                            HttpServletRequest request) {
+        ApiResponse<String> denied = denyUnlessMyPlan(id, request, "无权修改其他辅导员的帮扶计划");
+        if (denied != null) return denied;
         try {
             Object raw = body.get("progress");
             if (raw == null) {
@@ -582,7 +637,14 @@ public class CounselorController {
      * 创建沟通记录
      */
     @PostMapping("/communication-logs")
-    public ApiResponse<CommunicationLog> createCommunicationLog(@RequestBody CommunicationLog communicationLog) {
+    public ApiResponse<CommunicationLog> createCommunicationLog(@RequestBody CommunicationLog communicationLog,
+                                                                HttpServletRequest request) {
+        // W13：与建帮扶计划同型 —— `communicationLog.counselorId` 来自请求体，不核对就能
+        // **以别人的名义写沟通记录**（而沟通记录里带着学生姓名与谈话内容）。
+        ApiResponse<CommunicationLog> denied = denyUnlessSelfCounselor(
+                communicationLog == null ? null : communicationLog.getCounselorId(), request,
+                "无权以其他辅导员的名义创建沟通记录");
+        if (denied != null) return denied;
         try {
             boolean success = communicationLogService.createLog(communicationLog);
             if (success) {
@@ -600,7 +662,11 @@ public class CounselorController {
      * 获取学生的沟通记录列表
      */
     @GetMapping("/students/{studentId}/communication-logs")
-    public ApiResponse<List<CommunicationLog>> getStudentCommunicationLogs(@PathVariable Long studentId) {
+    public ApiResponse<List<CommunicationLog>> getStudentCommunicationLogs(@PathVariable Long studentId,
+                                                                          HttpServletRequest request) {
+        ApiResponse<List<CommunicationLog>> denied =
+                denyUnlessMyStudent(studentId, request, "该学生不在你带的班级里");
+        if (denied != null) return denied;
         try {
             List<CommunicationLog> logs = communicationLogService.getLogsByStudentId(studentId);
             return ApiResponse.success(logs);
@@ -614,7 +680,11 @@ public class CounselorController {
      * 获取辅导员的沟通记录列表
      */
     @GetMapping("/{counselorId}/communication-logs")
-    public ApiResponse<List<CommunicationLog>> getCounselorCommunicationLogs(@PathVariable Long counselorId) {
+    public ApiResponse<List<CommunicationLog>> getCounselorCommunicationLogs(@PathVariable Long counselorId,
+                                                                            HttpServletRequest request) {
+        ApiResponse<List<CommunicationLog>> denied =
+                denyUnlessSelfCounselor(counselorId, request, "无权查看其他辅导员的沟通记录");
+        if (denied != null) return denied;
         try {
             List<CommunicationLog> logs = communicationLogService.getLogsByCounselorId(counselorId);
             return ApiResponse.success(logs);
@@ -628,7 +698,10 @@ public class CounselorController {
      * 更新沟通记录
      */
     @PutMapping("/communication-logs/{id}")
-    public ApiResponse<String> updateCommunicationLog(@PathVariable Long id, @RequestBody CommunicationLog communicationLog) {
+    public ApiResponse<String> updateCommunicationLog(@PathVariable Long id, @RequestBody CommunicationLog communicationLog,
+                                                      HttpServletRequest request) {
+        ApiResponse<String> denied = denyUnlessMyLog(id, request, "无权修改其他辅导员的沟通记录");
+        if (denied != null) return denied;
         try {
             communicationLog.setId(id);
             boolean success = communicationLogService.updateLog(communicationLog);
@@ -675,7 +748,11 @@ public class CounselorController {
      * 获取辅导员管理的学生列表
      */
     @GetMapping("/{counselorId}/students")
-    public ApiResponse<List<Student>> getCounselorStudents(@PathVariable Long counselorId) {
+    public ApiResponse<List<Student>> getCounselorStudents(@PathVariable Long counselorId,
+                                                           HttpServletRequest request) {
+        ApiResponse<List<Student>> denied =
+                denyUnlessSelfCounselor(counselorId, request, "无权查看其他辅导员的学生");
+        if (denied != null) return denied;
         try {
             List<Student> students = studentService.getByCounselorId(counselorId);
             return ApiResponse.success(students);
@@ -689,7 +766,10 @@ public class CounselorController {
      * 获取学生详情
      */
     @GetMapping("/students/{studentId}")
-    public ApiResponse<Student> getStudentInfo(@PathVariable Long studentId) {
+    public ApiResponse<Student> getStudentInfo(@PathVariable Long studentId,
+                                               HttpServletRequest request) {
+        ApiResponse<Student> denied = denyUnlessMyStudent(studentId, request, "该学生不在你带的班级里");
+        if (denied != null) return denied;
         try {
             Student student = studentService.getById(studentId);
             if (student != null) {
@@ -707,7 +787,10 @@ public class CounselorController {
      * 更新学生信息
      */
     @PutMapping("/students/{studentId}")
-    public ApiResponse<String> updateStudentInfo(@PathVariable Long studentId, @RequestBody Student student) {
+    public ApiResponse<String> updateStudentInfo(@PathVariable Long studentId, @RequestBody Student student,
+                                                 HttpServletRequest request) {
+        ApiResponse<String> denied = denyUnlessMyStudent(studentId, request, "该学生不在你带的班级里");
+        if (denied != null) return denied;
         try {
             student.setId(studentId);
             // W8：空请求体 ⇒ 无 SET 子句 ⇒ `UPDATE student_profile    WHERE id=?` ⇒ SQL 语法错。
@@ -732,7 +815,11 @@ public class CounselorController {
      * 获取辅导员管理的班级列表
      */
     @GetMapping("/class-management/my-classes")
-    public ApiResponse<List<Map<String, Object>>> getMyClasses(@RequestParam("counselorId") Long counselorId) {
+    public ApiResponse<List<Map<String, Object>>> getMyClasses(@RequestParam("counselorId") Long counselorId,
+                                                               HttpServletRequest request) {
+        ApiResponse<List<Map<String, Object>>> denied =
+                denyUnlessSelfCounselor(counselorId, request, "无权查看其他辅导员的班级");
+        if (denied != null) return denied;
         try {
             List<Map<String, Object>> classes = classInfoService.getClassesByCounselorId(counselorId);
             return ApiResponse.success(classes);
@@ -746,7 +833,11 @@ public class CounselorController {
      * 获取班级申请列表
      */
     @GetMapping("/class-management/requests")
-    public ApiResponse<List<Map<String, Object>>> getClassRequests(@RequestParam("counselorId") Long counselorId) {
+    public ApiResponse<List<Map<String, Object>>> getClassRequests(@RequestParam("counselorId") Long counselorId,
+                                                                   HttpServletRequest request) {
+        ApiResponse<List<Map<String, Object>>> denied =
+                denyUnlessSelfCounselor(counselorId, request, "无权查看其他辅导员的班级申请");
+        if (denied != null) return denied;
         try {
             List<CounselorClassApplication> apps = counselorClassApplicationMapper.selectList(
                 new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<CounselorClassApplication>()
@@ -811,12 +902,19 @@ public class CounselorController {
      * 业务拒绝以返回值回来，这里的 catch 在事务边界之外，只负责把 DB 异常转成提示。
      */
     @PostMapping("/class-management/apply")
-    public ApiResponse<String> applyForClass(@RequestBody Map<String, Object> request) {
+    public ApiResponse<String> applyForClass(@RequestBody Map<String, Object> request,
+                                             HttpServletRequest httpRequest) {
         try {
             Long counselorId = ((Number) request.get("counselorId")).longValue();
             Long classId = ((Number) request.get("classId")).longValue();
             String className = (String) request.get("className");
             String reason = (String) request.get("reason");
+
+            // W13：`counselorId` 来自请求体 —— 不核对就能**以别的辅导员的名义提交申请**
+            // （批准后班就记在他名下了）。
+            ApiResponse<String> denied = denyUnlessSelfCounselor(
+                    counselorId, httpRequest, "无权以其他辅导员的名义提交班级申请");
+            if (denied != null) return denied;
 
             // 获取申请类型，默认为0（申请管理）
             Integer applicationType = 0;
@@ -846,11 +944,17 @@ public class CounselorController {
      * "班级没人管、申请单还挂着已通过"。
      */
     @PostMapping("/class-management/cancel")
-    public ApiResponse<String> cancelClassManagement(@RequestBody Map<String, Object> request) {
+    public ApiResponse<String> cancelClassManagement(@RequestBody Map<String, Object> request,
+                                                     HttpServletRequest httpRequest) {
         try {
             // 前端传递的是用户ID（User.id）
             Long userId = ((Number) request.get("counselorId")).longValue();
             Long classId = ((Number) request.get("classId")).longValue();
+
+            // W13：同 apply —— 不核对就能**解除别人对某班的管理**（写的是 classes.counselor_id）。
+            ApiResponse<String> denied = denyUnlessSelfCounselor(
+                    userId, httpRequest, "无权解除其他辅导员的班级管理");
+            if (denied != null) return denied;
 
             String errorMessage = classManagementService.cancelClassManagement(userId, classId);
             if (errorMessage != null) {
@@ -868,7 +972,11 @@ public class CounselorController {
      */
     @GetMapping("/class-management/applications")
     public ApiResponse<List<CounselorClassApplication>> getCounselorApplications(
-            @RequestParam(value = "status", required = false) Integer status) {
+            @RequestParam(value = "status", required = false) Integer status,
+            HttpServletRequest request) {
+        ApiResponse<List<CounselorClassApplication>> denied =
+                denyUnlessAdmin(request, "仅管理员可查看全部班级申请");
+        if (denied != null) return denied;
         try {
             List<CounselorClassApplication> applications;
             if (status != null) {
@@ -899,7 +1007,11 @@ public class CounselorController {
     @PostMapping("/class-management/applications/{id}/review")
     public ApiResponse<String> reviewCounselorApplication(
             @PathVariable Long id,
-            @RequestBody Map<String, Object> request) {
+            @RequestBody Map<String, Object> request,
+            HttpServletRequest httpRequest) {
+        // W13：这是**审批**口，只有管理员能进 —— 见 denyUnlessAdmin 的注释（辅导员自批提权）。
+        ApiResponse<String> denied = denyUnlessAdmin(httpRequest, "仅管理员可审核班级申请");
+        if (denied != null) return denied;
         try {
             Integer status = (Integer) request.get("status");
             // 2026-10-02（W1.14）：拒绝理由。前端此前发的是 `{status}`，
@@ -929,7 +1041,11 @@ public class CounselorController {
      * 这里全部改为由 {@link #buildClassMonitors} 的真实统计得出。
      */
     @GetMapping("/credit-monitor")
-    public ApiResponse<Map<String, Object>> getCreditMonitor(@RequestParam("counselor_id") Long counselorId) {
+    public ApiResponse<Map<String, Object>> getCreditMonitor(@RequestParam("counselor_id") Long counselorId,
+                                                             HttpServletRequest request) {
+        ApiResponse<Map<String, Object>> denied =
+                denyUnlessSelfCounselor(counselorId, request, "无权查看其他辅导员的学分监控");
+        if (denied != null) return denied;
         try {
             List<Map<String, Object>> classMonitors = buildClassMonitors(counselorId);
 
@@ -1023,7 +1139,11 @@ public class CounselorController {
     @GetMapping("/credit-insufficient")
     public ApiResponse<Map<String, Object>> getInsufficientCreditStudents(@RequestParam("counselor_id") Long counselorId,
                                                                   @RequestParam(defaultValue = "1") Integer page,
-                                                                  @RequestParam(defaultValue = "20") Integer size) {
+                                                                  @RequestParam(defaultValue = "20") Integer size,
+                                                                  HttpServletRequest request) {
+        ApiResponse<Map<String, Object>> denied =
+                denyUnlessSelfCounselor(counselorId, request, "无权查看其他辅导员的学分不足名单");
+        if (denied != null) return denied;
         try {
             List<Map<String, Object>> rows = scoreMapper.getInsufficientCreditStudents(counselorId);
             List<Map<String, Object>> students = new ArrayList<>();
@@ -1060,7 +1180,11 @@ public class CounselorController {
     }
 
     /**
-     * 按学院统计辅导员数量
+     * 按学院统计辅导员数量。
+     *
+     * <p><b>W15 修的一条静默错</b>：原来 {@code catch} 里回的是 {@code ApiResponse.success(0L)} ——
+     * 查库炸了与"这个学院一个辅导员都没有"在响应上长得一模一样，调用方会把一次故障
+     * 显示成一个可信的 0。与 W14 修的 {@code StudentController.countByCollege} 同族，现在如实回错误。
      */
     @GetMapping("/count-by-college")
     public ApiResponse<Long> countByCollege(@RequestParam Long collegeId) {
@@ -1069,7 +1193,7 @@ public class CounselorController {
             return ApiResponse.success(count);
         } catch (Exception e) {
             log.error("统计辅导员数量失败: {}", e.getMessage());
-            return ApiResponse.success(0L);
+            return ApiResponse.error(e.getMessage());
         }
     }
 
@@ -1078,7 +1202,14 @@ public class CounselorController {
     @GetMapping("/scores/class/{classId}")
     public ApiResponse<List<Map<String, Object>>> getClassScores(
             @PathVariable Long classId,
-            @RequestParam("counselor_id") Long counselorId) {
+            @RequestParam("counselor_id") Long counselorId,
+            HttpServletRequest request) {
+        // W13：W4.12 那条 `isClassOfCounselor(classId, counselorId)` 挡不住"借用别人的 counselor_id"
+        // —— 甲辅导员拿乙的 classId 并**同时把 counselor_id 填成乙**，那句判断就会放行。
+        // 所以先核对"你是不是 counselor_id 这个人"，再谈"这个班是不是你的"。
+        ApiResponse<List<Map<String, Object>>> denied =
+                denyUnlessSelfCounselor(counselorId, request, "无权查看其他辅导员班级的成绩");
+        if (denied != null) return denied;
         try {
             // 2026-10-02（W4.12）：`counselor_id` 以前**收了但从没用过** —— 任何一个辅导员
             // 拿别人的 classId 就能读整个班的成绩（与学院管理员的跨院花名册同型，见 W1.13）。
@@ -1129,7 +1260,15 @@ public class CounselorController {
     @GetMapping("/scores/distribution/{courseId}")
     public ApiResponse<Map<String, Object>> getCourseScoreDistribution(
             @PathVariable Long courseId,
-            @RequestParam(value = "counselor_id", required = false) Long counselorId) {
+            @RequestParam(value = "counselor_id", required = false) Long counselorId,
+            HttpServletRequest request) {
+        // W13：`counselor_id` 可空且以前不核对 —— 甲把 counselor_id 填成乙即可读乙名下班级的成绩分布。
+        // 为空时保持原状（回空表，不泄露），非空则必须是自己。
+        if (counselorId != null) {
+            ApiResponse<Map<String, Object>> denied =
+                    denyUnlessSelfCounselor(counselorId, request, "无权查看其他辅导员的成绩分布");
+            if (denied != null) return denied;
+        }
         try {
             List<Map<String, Object>> scores;
             if (counselorId != null) {
@@ -1181,7 +1320,11 @@ public class CounselorController {
      */
     @GetMapping("/scores/low-score")
     public ApiResponse<List<Map<String, Object>>> getLowScoreStudents(
-            @RequestParam("counselor_id") Long counselorId) {
+            @RequestParam("counselor_id") Long counselorId,
+            HttpServletRequest request) {
+        ApiResponse<List<Map<String, Object>>> denied =
+                denyUnlessSelfCounselor(counselorId, request, "无权查看其他辅导员的低分名单");
+        if (denied != null) return denied;
         try {
             return ApiResponse.success(
                     scoreMapper.getLowScoresByCounselorId(counselorId, ScoreCaliber.ATTENTION_LINE));
@@ -1192,7 +1335,12 @@ public class CounselorController {
     }
 
     @GetMapping("/scores/student/{studentId}/trend")
-    public ApiResponse<List<Map<String, Object>>> getStudentScoreTrend(@PathVariable Long studentId) {
+    public ApiResponse<List<Map<String, Object>>> getStudentScoreTrend(@PathVariable Long studentId,
+                                                                      HttpServletRequest request) {
+        // W13：`studentId` 是 `student_profile.id`（见 ScoreMapper.getScoresByStudentId 的注释）。
+        ApiResponse<List<Map<String, Object>>> denied =
+                denyUnlessMyStudent(studentId, request, "该学生不在你带的班级里");
+        if (denied != null) return denied;
         try {
             List<Map<String, Object>> scores = scoreMapper.getScoresByStudentId(studentId);
             return ApiResponse.success(scores);
@@ -1214,7 +1362,11 @@ public class CounselorController {
      */
     @GetMapping("/analytics/credit-insufficient")
     public ApiResponse<Map<String, Object>> getCreditInsufficientRate(
-            @RequestParam("counselor_id") Long counselorId) {
+            @RequestParam("counselor_id") Long counselorId,
+            HttpServletRequest request) {
+        ApiResponse<Map<String, Object>> denied =
+                denyUnlessSelfCounselor(counselorId, request, "无权查看其他辅导员的学分不足率");
+        if (denied != null) return denied;
         try {
             List<Map<String, Object>> classStats = scoreMapper.getClassScoreStatsByCounselorId(counselorId);
             int totalStudents = 0;
@@ -1239,7 +1391,11 @@ public class CounselorController {
 
     @GetMapping("/analytics/warning-distribution")
     public ApiResponse<List<Map<String, Object>>> getWarningDistribution(
-            @RequestParam("counselor_id") Long counselorId) {
+            @RequestParam("counselor_id") Long counselorId,
+            HttpServletRequest request) {
+        ApiResponse<List<Map<String, Object>>> denied =
+                denyUnlessSelfCounselor(counselorId, request, "无权查看其他辅导员的预警分布");
+        if (denied != null) return denied;
         try {
             List<Map<String, Object>> distribution = warningMapper.getWarningDistributionByCounselor(counselorId);
             return ApiResponse.success(distribution);
@@ -1251,7 +1407,11 @@ public class CounselorController {
 
     @GetMapping("/analytics/handling-efficiency")
     public ApiResponse<Map<String, Object>> getWarningHandlingEfficiency(
-            @RequestParam("counselor_id") Long counselorId) {
+            @RequestParam("counselor_id") Long counselorId,
+            HttpServletRequest request) {
+        ApiResponse<Map<String, Object>> denied =
+                denyUnlessSelfCounselor(counselorId, request, "无权查看其他辅导员的预警处理效率");
+        if (denied != null) return denied;
         try {
             Map<String, Object> efficiency = warningMapper.getAvgHandleTimeByCounselor(counselorId);
             if (efficiency == null || efficiency.get("avg_handle_days") == null) {
@@ -1274,7 +1434,11 @@ public class CounselorController {
      */
     @GetMapping("/analytics/credit-achievement-ranking")
     public ApiResponse<List<Map<String, Object>>> getCreditAchievementRanking(
-            @RequestParam("counselor_id") Long counselorId) {
+            @RequestParam("counselor_id") Long counselorId,
+            HttpServletRequest request) {
+        ApiResponse<List<Map<String, Object>>> denied =
+                denyUnlessSelfCounselor(counselorId, request, "无权查看其他辅导员的学分达标排名");
+        if (denied != null) return denied;
         try {
             List<Map<String, Object>> classStats = scoreMapper.getClassScoreStatsByCounselorId(counselorId);
             List<Map<String, Object>> ranking = new ArrayList<>();
@@ -1296,7 +1460,11 @@ public class CounselorController {
 
     @GetMapping("/analytics/warning-trend")
     public ApiResponse<List<Map<String, Object>>> getWarningTrend(
-            @RequestParam("counselor_id") Long counselorId) {
+            @RequestParam("counselor_id") Long counselorId,
+            HttpServletRequest request) {
+        ApiResponse<List<Map<String, Object>>> denied =
+                denyUnlessSelfCounselor(counselorId, request, "无权查看其他辅导员的预警趋势");
+        if (denied != null) return denied;
         try {
             List<Map<String, Object>> trend = warningMapper.getWarningTrendByCounselor(counselorId);
             return ApiResponse.success(trend);
@@ -1308,7 +1476,11 @@ public class CounselorController {
 
     @GetMapping("/analytics/assistance-completion")
     public ApiResponse<Map<String, Object>> getAssistancePlanCompletionRate(
-            @RequestParam("counselor_id") Long counselorId) {
+            @RequestParam("counselor_id") Long counselorId,
+            HttpServletRequest request) {
+        ApiResponse<Map<String, Object>> denied =
+                denyUnlessSelfCounselor(counselorId, request, "无权查看其他辅导员的帮扶完成率");
+        if (denied != null) return denied;
         try {
             com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<com.academic.common.entity.AssistancePlan> wrapper =
                     new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<>();
@@ -1348,7 +1520,12 @@ public class CounselorController {
      * 学生若关掉了预警类通知，通知会正常跳过，<b>不影响处理本身</b>。
      */
     @PostMapping("/warnings/{warningId}/process")
-    public ApiResponse<Map<String, Object>> processWarning(@PathVariable Long warningId, @RequestBody Map<String, Object> data) {
+    public ApiResponse<Map<String, Object>> processWarning(@PathVariable Long warningId, @RequestBody Map<String, Object> data,
+                                                            HttpServletRequest request) {
+        // W13：处理动作会写库并给学生发通知 —— 只能处理自己班上的学生的那条预警。
+        ApiResponse<Map<String, Object>> denied =
+                denyUnlessMyWarning(warningId, request, "该预警不属于你带的班级");
+        if (denied != null) return denied;
         try {
             log.info("处理预警: warningId={}, data={}", warningId, data);
             com.academic.common.entity.AcademicWarning warning = warningMapper.selectById(warningId);
@@ -1372,7 +1549,17 @@ public class CounselorController {
 
     /** 批量处理预警，逐条通知学生。 */
     @PostMapping("/warnings/batch-process")
-    public ApiResponse<Map<String, Object>> batchProcessWarnings(@RequestBody List<Long> warningIds) {
+    public ApiResponse<Map<String, Object>> batchProcessWarnings(@RequestBody List<Long> warningIds,
+                                                                  HttpServletRequest request) {
+        // W13：逐条核对归属，只要有**一条**不属于本人就整单拒绝（fail-closed）——
+        // 半单成功会让"越权被拒"和"部分成功"长得一样，客户端分不清。
+        if (warningIds != null) {
+            for (Long wid : warningIds) {
+                ApiResponse<Map<String, Object>> denied =
+                        denyUnlessMyWarning(wid, request, "预警 " + wid + " 不属于你带的班级");
+                if (denied != null) return denied;
+            }
+        }
         try {
             log.info("批量处理预警: {}", warningIds);
             int processed = 0;
@@ -1426,9 +1613,46 @@ public class CounselorController {
      * {@link com.academic.service.CounselorNotificationService}。
      */
     @PostMapping("/students/notify")
-    public ApiResponse<Map<String, Object>> notifyStudents(@RequestBody Map<String, Object> data) {
+    public ApiResponse<Map<String, Object>> notifyStudents(@RequestBody Map<String, Object> data,
+                                                            HttpServletRequest request) {
+        // W17：发送人身份**只认请求头**，请求体里写的身份一律不算数。
+        //
+        // W13 在这里装过一道守卫，但它只读 `data.get("counselor_id")`（下划线），
+        // 而**两个真实调用方发的都是 `counselorId`（驼峰）**
+        // （`CounselorNotifications.vue`、`CounselorCourses.vue`），
+        // 服务层 `firstLong(counselorId, counselor_id)` 又恰好**驼峰优先** ⇒
+        // "传驼峰 = 守卫不生效，但身份照样被采纳"。后果两条：
+        //   ① 任何已认证用户都能以别的辅导员名义群发：
+        //      `{"counselorId":53,"recipients":["all"],"content":"…"}` ⇒ 发给 53 名下全部学生，
+        //      `communication_logs.counselor_id` 还记成 53（冒名 + 栽赃）；
+        //   ② 不传身份只传 `student_ids` 时服务层 `roster == null`，
+        //      那句"学生 X 不在该辅导员名下，已跳过"**根本不执行** ⇒ 可给任意学生发通知。
+        // 修法（两条一起，缺一条都还留着半个洞）：
+        //   ① **认的身份**＝ body 里两种拼写合并出来的那个；不是本人 ⇒ 403，
+        //      不再像 W13 那样只看下划线（那正是被绕开的那一处）。
+        //   ② **缺身份**时把本人 id 回填进去 —— 服务层只有拿到 counselorId 才会去取
+        //      rosters，「不在该辅导员名下，已跳过」那句才真正执行。回填是关掉②的唯一办法：
+        //      光拒绝"写了别人的"挡不住"什么都不写"。
+        // `callerId` 取自网关注入的 `X-User-Id`，取不到即拒（fail-closed）。
+        // 管理员保持原状（跨辅导员运维用），与 `denyUnlessSelfCounselor` 的口径一致。
+        Map<String, Object> payload = data == null ? new java.util.HashMap<>() : new java.util.HashMap<>(data);
+        if (!isAdmin(request)) {
+            Long me = callerId(request);
+            if (me == null) {
+                return ApiResponse.error(403, "无法确定发送人身份，拒绝发送通知");
+            }
+            Long claimed = asLong(payload.get("counselorId"));
+            if (claimed == null) {
+                claimed = asLong(payload.get("counselor_id"));
+            }
+            if (claimed != null && !claimed.equals(me)) {
+                return ApiResponse.error(403, "无权以其他辅导员身份发送通知");
+            }
+            payload.remove("counselor_id");
+            payload.put("counselorId", me);
+        }
         try {
-            return ApiResponse.success(counselorNotificationService.send(data));
+            return ApiResponse.success(counselorNotificationService.send(payload));
         } catch (IllegalArgumentException e) {
             // 内容为空 / 接收人解析不出来 / 缺少 counselor_id —— 都是请求的问题，不是 500
             return ApiResponse.badRequest(e.getMessage());
@@ -1448,7 +1672,11 @@ public class CounselorController {
     @GetMapping("/notifications/history")
     public ApiResponse<Map<String, Object>> getNotificationHistory(@RequestParam("counselor_id") Long counselorId,
                                                                     @RequestParam(defaultValue = "1") Integer page,
-                                                                    @RequestParam(defaultValue = "10") Integer size) {
+                                                                    @RequestParam(defaultValue = "10") Integer size,
+                                                                    HttpServletRequest request) {
+        ApiResponse<Map<String, Object>> denied =
+                denyUnlessSelfCounselor(counselorId, request, "无权查看其他辅导员的通知历史");
+        if (denied != null) return denied;
         try {
             return ApiResponse.success(counselorNotificationService.history(
                     counselorId, page == null ? 1 : page, size == null ? 10 : size));
@@ -1480,7 +1708,11 @@ public class CounselorController {
      * （见 {@link com.academic.service.CounselorNotificationService#weeklyCount}）。
      */
     @GetMapping("/notifications/weekly-count")
-    public ApiResponse<Map<String, Object>> getWeeklyNotificationCount(@RequestParam("counselor_id") Long counselorId) {
+    public ApiResponse<Map<String, Object>> getWeeklyNotificationCount(@RequestParam("counselor_id") Long counselorId,
+                                                                        HttpServletRequest request) {
+        ApiResponse<Map<String, Object>> denied =
+                denyUnlessSelfCounselor(counselorId, request, "无权查看其他辅导员的通知统计");
+        if (denied != null) return denied;
         try {
             return ApiResponse.success(counselorNotificationService.weeklyCount(counselorId));
         } catch (Exception e) {
@@ -1492,7 +1724,14 @@ public class CounselorController {
     // ==================== P0新增：选课 ====================
     /** 获取选课信息 */
     @GetMapping("/enrollments")
-    public ApiResponse<List<Map<String, Object>>> getEnrollments(@RequestParam(value = "counselor_id", required = false) Long counselorId) {
+    public ApiResponse<List<Map<String, Object>>> getEnrollments(@RequestParam(value = "counselor_id", required = false) Long counselorId,
+                                                                 HttpServletRequest request) {
+        // W13：`counselor_id` 可空。为空时保持原状（回空表，不泄露）；非空必须是自己。
+        if (counselorId != null) {
+            ApiResponse<List<Map<String, Object>>> denied =
+                    denyUnlessSelfCounselor(counselorId, request, "无权查看其他辅导员的选课信息");
+            if (denied != null) return denied;
+        }
         try {
             if (counselorId == null) return ApiResponse.success(new ArrayList<>());
             List<Map<String, Object>> classes = classInfoService.getClassesByCounselorId(counselorId);
@@ -1515,7 +1754,11 @@ public class CounselorController {
     // ==================== P0新增：班级管理 ====================
     /** 获取辅导员管理的班级列表 */
     @GetMapping("/classes")
-    public ApiResponse<List<Map<String, Object>>> getClasses(@RequestParam("counselor_id") Long counselorId) {
+    public ApiResponse<List<Map<String, Object>>> getClasses(@RequestParam("counselor_id") Long counselorId,
+                                                             HttpServletRequest request) {
+        ApiResponse<List<Map<String, Object>>> denied =
+                denyUnlessSelfCounselor(counselorId, request, "无权查看其他辅导员的班级列表");
+        if (denied != null) return denied;
         try {
             List<Map<String, Object>> classes = classInfoService.getClassesByCounselorId(counselorId);
             return ApiResponse.success(classes);
@@ -1533,7 +1776,12 @@ public class CounselorController {
      * （全仓没有任何视图在调这个接口。）
      */
     @GetMapping("/classes/activities")
-    public ApiResponse<List<Map<String, Object>>> getClassActivities(@RequestParam("counselor_id") Long counselorId) {
+    public ApiResponse<List<Map<String, Object>>> getClassActivities(@RequestParam("counselor_id") Long counselorId,
+                                                                     HttpServletRequest request) {
+        // W13：本接口恒回空列表（库里没有活动表），本无泄露；加闸只为让这一族口径一致。
+        ApiResponse<List<Map<String, Object>>> denied =
+                denyUnlessSelfCounselor(counselorId, request, "无权查看其他辅导员的班级活动");
+        if (denied != null) return denied;
         try {
             return ApiResponse.success(new ArrayList<>());
         } catch (Exception e) {
@@ -1544,7 +1792,11 @@ public class CounselorController {
 
     /** 获取班级详情 */
     @GetMapping("/classes/{classId}/detail")
-    public ApiResponse<Map<String, Object>> getClassDetail(@PathVariable Long classId) {
+    public ApiResponse<Map<String, Object>> getClassDetail(@PathVariable Long classId,
+                                                            HttpServletRequest request) {
+        ApiResponse<Map<String, Object>> denied =
+                denyUnlessMyClass(classId, request, "该班级不属于当前辅导员");
+        if (denied != null) return denied;
         try {
             ClassInfo classInfo = classInfoMapper.selectById(classId);
             if (classInfo == null) return ApiResponse.notFound("班级不存在");
@@ -1565,7 +1817,11 @@ public class CounselorController {
 
     /** 获取班级学生 */
     @GetMapping("/classes/{classId}/students")
-    public ApiResponse<List<Map<String, Object>>> getClassStudents(@PathVariable Long classId) {
+    public ApiResponse<List<Map<String, Object>>> getClassStudents(@PathVariable Long classId,
+                                                                   HttpServletRequest request) {
+        ApiResponse<List<Map<String, Object>>> denied =
+                denyUnlessMyClass(classId, request, "该班级不属于当前辅导员");
+        if (denied != null) return denied;
         try {
             List<Map<String, Object>> students = classInfoMapper.getStudentsByClassIdMap(classId);
             return ApiResponse.success(students);
@@ -1577,7 +1833,11 @@ public class CounselorController {
 
     /** 获取班级预警概览 */
     @GetMapping("/classes/{classId}/warnings")
-    public ApiResponse<Map<String, Object>> getClassWarningOverview(@PathVariable Long classId) {
+    public ApiResponse<Map<String, Object>> getClassWarningOverview(@PathVariable Long classId,
+                                                                     HttpServletRequest request) {
+        ApiResponse<Map<String, Object>> denied =
+                denyUnlessMyClass(classId, request, "该班级不属于当前辅导员");
+        if (denied != null) return denied;
         try {
             Map<String, Object> overview = new HashMap<>();
             overview.put("classId", classId);
@@ -1627,7 +1887,11 @@ public class CounselorController {
 
     /** 班级预警对比 */
     @GetMapping("/classes/warnings/compare")
-    public ApiResponse<List<Map<String, Object>>> compareClassWarnings(@RequestParam("counselor_id") Long counselorId) {
+    public ApiResponse<List<Map<String, Object>>> compareClassWarnings(@RequestParam("counselor_id") Long counselorId,
+                                                                       HttpServletRequest request) {
+        ApiResponse<List<Map<String, Object>>> denied =
+                denyUnlessSelfCounselor(counselorId, request, "无权查看其他辅导员的班级预警对比");
+        if (denied != null) return denied;
         try {
             List<Map<String, Object>> classes = classInfoService.getClassesByCounselorId(counselorId);
             // 两个聚合各查一次，再在内存里按 classId 拼装 —— 避免在 for 循环里逐班查库。
@@ -1673,5 +1937,164 @@ public class CounselorController {
     private boolean isAdmin(HttpServletRequest request) {
         String role = request.getHeader("X-Role");
         return "4".equals(role) || "admin".equals(role);
+    }
+
+    // ==================== 归属闸（W13，2026-10-04） ====================
+    //
+    // **这一整族的共同病根**：`counselor_id` / `{counselorId}` 以及各种资源 id
+    // **完全由客户端给**，控制器收到就照查，从不问一句"这是不是你的"。
+    // 网关只保证"打进来的 token 是辅导员"（`PREFIX_COUNSELOR` 那段要求 role=3），
+    // 挡得住学生/教师，**挡不住辅导员之间互相看/改** —— 而这条前缀下有近 60 个端点。
+    //
+    // 最典型的是 `GET /scores/class/{classId}?counselor_id=`：W4.12 已经加了一句
+    // `isClassOfCounselor(classId, counselorId)`，**但那个 counselorId 是客户端传的**
+    // ⇒ 换个辅导员的 id 传进去，"这个班是不是你的"就变成"这个班是不是**他**的"，
+    // 一句话绕过。判据必须建立在**网关注入的身份**上，不能建立在请求参数上。
+    //
+    // id 空间（2026-10-04 活库直查；xcx `services/api.js:363-380` 记着同一份）：
+    //   * `counselor_id` / `{counselorId}`（数值）＝ **`users.id`**（司明=53）——
+    //     `classes.counselor_id` / `assistance_plans.counselor_id` /
+    //     `communication_logs.counselor_id` 活库全是 53，`counselor_profiles.id` 是 1。
+    //   * `/counselors/students/{id}` 一族的 `studentId` ＝ **`student_profile.id`**（司明=3）
+    //   * `counselor_profiles.counselor_id` 是**业务编号字符串**（`'C53'`），
+    //     只被 `GET /counselors/{counselorId}` 用 —— 那条要拿 `profile.userId` 比。
+    //   * `assistance_plans.student_id` 与 `academic_warning.student_id` 都是 profile.id。
+    //
+    // 一律 **fail-closed**：缺身份、id 为空、资源查不到 —— 全部**拒绝**。
+    // 尤其"查不到也拒绝"是刻意的：不区分"没这条"与"不是你的"，免得变成存在性预言
+    // （同 W12 的取舍）。拒绝形状沿用本仓惯例 **HTTP 200 + body `code:403`**
+    // （`ApiResponse.forbidden/error(403,…)`），前端按 `code` 判。
+
+    /** 登录人的 `users.id`；取不到返回 {@code null} —— 调用方一律判为拒绝。 */
+    private Long callerId(HttpServletRequest request) {
+        return getUserIdFromGateway(request);
+    }
+
+    /**
+     * 请求体里传来的 id 往往是 {@code Integer}（Jackson 反序列化 JSON 数字的默认类型），
+     * 也可能是字符串。用它当身份基准之前必须归一化成 {@code Long}，否则
+     * {@code Integer(53).equals(Long(53))} 恒为 false ⇒ 本人也被拒。
+     * （同型坑见 W12 的 `53.equals(1)`：两套 id 都是数字，比错了不报错。）
+     */
+    private Long asLong(Object value) {
+        if (value instanceof Number) {
+            return ((Number) value).longValue();
+        }
+        if (value instanceof String) {
+            String s = ((String) value).trim();
+            if (!s.isEmpty()) {
+                try {
+                    return Long.valueOf(s);
+                } catch (NumberFormatException ignored) {
+                    return null;
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * 管理员专用。放行返回 {@code null}。
+     *
+     * <p>用在**审批**这一族上：`/class-management/applications/**` 两条接口在注释里
+     * 写着"供管理员使用"，但它们挂在 `/api/counselors/**` 下 ⇒ 网关那段
+     * `PREFIX_COUNSELOR && role != 3 → 拒绝` 恰好把**管理员以外的人全放进来**的是别人、
+     * 把**辅导员自己**放行。于是辅导员可以调 `POST …/applications/{id}/review {status:1}`
+     * **批掉自己刚提交的申请**，白拿一个班 —— 这是提权，比"看到别人的数据"更重。
+     */
+    private <T> ApiResponse<T> denyUnlessAdmin(HttpServletRequest request, String message) {
+        return isAdmin(request) ? null : ApiResponse.error(403, message);
+    }
+
+    /** `counselor_id` 型参数（= `users.id`）必须是本人。放行返回 {@code null}。 */
+    private <T> ApiResponse<T> denyUnlessSelfCounselor(Long counselorId, HttpServletRequest request, String message) {
+        if (isAdmin(request)) {
+            return null;
+        }
+        Long me = callerId(request);
+        if (me == null || counselorId == null || !me.equals(counselorId)) {
+            return ApiResponse.error(403, message);
+        }
+        return null;
+    }
+
+    /** 这条帮扶计划是不是本人建的（`assistance_plans.counselor_id` = users.id）。 */
+    private <T> ApiResponse<T> denyUnlessMyPlan(Long planId, HttpServletRequest request, String message) {
+        if (isAdmin(request)) {
+            return null;
+        }
+        Long me = callerId(request);
+        AssistancePlan plan = planId == null ? null : assistancePlanService.getById(planId);
+        if (me != null && plan != null && me.equals(plan.getCounselorId())) {
+            return null;
+        }
+        return ApiResponse.error(403, message);
+    }
+
+    /** 这条沟通记录是不是本人写的（`communication_logs.counselor_id` = users.id）。 */
+    private <T> ApiResponse<T> denyUnlessMyLog(Long logId, HttpServletRequest request, String message) {
+        if (isAdmin(request)) {
+            return null;
+        }
+        Long me = callerId(request);
+        CommunicationLog record = logId == null ? null : communicationLogService.getById(logId);
+        if (me != null && record != null && me.equals(record.getCounselorId())) {
+            return null;
+        }
+        return ApiResponse.error(403, message);
+    }
+
+    /**
+     * 这个班是不是本人带的。复用既有的 {@link #isClassOfCounselor(Long, Long)}，
+     * 但**基准换成登录人自己的 `users.id`**，不再信请求里那个数。
+     */
+    private <T> ApiResponse<T> denyUnlessMyClass(Long classId, HttpServletRequest request, String message) {
+        if (isAdmin(request)) {
+            return null;
+        }
+        if (isClassOfCounselor(classId, callerId(request))) {
+            return null;
+        }
+        return ApiResponse.error(403, message);
+    }
+
+    /**
+     * 这名学生（`student_profile.id`）是否挂在本人带的班上。
+     *
+     * <p>班级取自**档案行自己的 `class_id`**，不是客户端传的 classId —— 否则又是一句
+     * "拿着别人的班 id 说这是我的学生"。
+     */
+    private <T> ApiResponse<T> denyUnlessMyStudent(Long studentId, HttpServletRequest request, String message) {
+        if (isAdmin(request)) {
+            return null;
+        }
+        Long me = callerId(request);
+        Student profile = studentId == null ? null : studentService.getById(studentId);
+        if (me != null && profile != null && isClassOfCounselor(profile.getClassId(), me)) {
+            return null;
+        }
+        return ApiResponse.error(403, message);
+    }
+
+    /**
+     * 这条预警对应的学生是否挂在本人带的班上。
+     *
+     * <p>`academic_warning.student_id` 是 `student_profile.id`，预警表**没有**班级/辅导员列，
+     * 所以走 档案 → `class_id` → `classes.counselor_id` 两步。
+     */
+    private <T> ApiResponse<T> denyUnlessMyWarning(Long warningId, HttpServletRequest request, String message) {
+        if (isAdmin(request)) {
+            return null;
+        }
+        Long me = callerId(request);
+        AcademicWarning warning = warningId == null ? null : warningMapper.selectById(warningId);
+        if (me == null || warning == null || warning.getStudentId() == null) {
+            return ApiResponse.error(403, message);
+        }
+        Student profile = studentService.getById(warning.getStudentId());
+        if (profile != null && isClassOfCounselor(profile.getClassId(), me)) {
+            return null;
+        }
+        return ApiResponse.error(403, message);
     }
 }
