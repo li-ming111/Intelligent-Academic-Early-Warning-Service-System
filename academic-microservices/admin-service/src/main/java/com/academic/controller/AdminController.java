@@ -12,6 +12,7 @@ import com.academic.common.entity.CollegeAdminProfile;
 import com.academic.common.entity.AcademicWarning;
 import com.academic.common.entity.Score;
 import com.academic.common.entity.ScoreRecord;
+import com.academic.common.util.ExcelUploadErrors;
 import com.academic.common.util.UpdateBodyGuard;
 import com.academic.entity.*;
 import com.academic.service.BackupService;
@@ -75,6 +76,48 @@ import java.util.stream.Collectors;
 @RequestMapping("/admin")
 @Slf4j
 public class AdminController {
+
+    /** 只用于把文件端点的失败体写成 JSON（见 {@link #writeFileEndpointError}）—— 无状态，可静态复用。 */
+    private static final com.fasterxml.jackson.databind.ObjectMapper FILE_ENDPOINT_JSON =
+            new com.fasterxml.jackson.databind.ObjectMapper();
+
+    /**
+     * 导出/下载端点的**失败回写**（W26，2026-10-05）。
+     *
+     * <p>这些端点的响应是**文件流**，前端一律用 {@code responseType:'blob'} 调。原先的 catch 只写了
+     * {@code response.getWriter().write("导出失败: " + e.getMessage())} —— **既没 setStatus、也没改
+     * Content-Type**，而此时 Content-Type 往往已经被上面那行设成 xlsx 了。结果是一条
+     * {@code HTTP 200} + {@code Content-Type: …spreadsheetml.sheet} + 一段中文纯文本：
+     * 前端把错误提示**当成文件存了下来**，用户拿到一个"下载成功"却打不开的坏 xlsx。
+     *
+     * <p>修法与 {@code teacher-service} 的 {@code TeacherController#writeJsonDenied} 同款
+     * （那里的注释写的正是这个病）：**blob 端点不能用"HTTP 200 + body code"那套**，必须回真状态码；
+     * 前端 {@code utils/download.js} 的 {@code describeDownloadError} 会把 Blob 读回文本、取
+     * {@code message} 显示出来。
+     *
+     * @param response 目标响应
+     * @param message  已经拼好人话的错误描述（如 {@code "导出失败: …"}）
+     */
+    private void writeFileEndpointError(HttpServletResponse response, String message) {
+        try {
+            if (response.isCommitted()) {
+                // 文件已经开始写进响应了（如 Files.copy 写到一半才抛）——状态码与 Content-Type 都已发出，
+                // 改不了。前端会拿到一个截断的文件，这是无法挽回的，只能留一条日志。
+                log.error("导出响应已提交，错误体写不进去: {}", message);
+                return;
+            }
+            response.reset();   // 丢掉上面可能已设的 xlsx Content-Type
+            response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
+            response.setContentType("application/json;charset=UTF-8");
+            Map<String, Object> payload = new LinkedHashMap<>();
+            payload.put("code", 500);
+            payload.put("message", message);
+            payload.put("success", false);
+            response.getWriter().write(FILE_ENDPOINT_JSON.writeValueAsString(payload));
+        } catch (Exception ignored) {
+            // 连错误体都写不出去就只能算了 —— 状态码已是 500，前端不会把它当成功文件存下来。
+        }
+    }
 
     @Autowired
     private com.academic.mapper.LoginLogMapper loginLogMapper;
@@ -599,22 +642,13 @@ public class AdminController {
         }
     }
 
-    @GetMapping("/users")
-    @SentinelResource(value = "adminApi:getUsers", fallback = "getAllUsersFallback")
-    public ApiResponse<List<User>> getAllUsers(
-            @RequestParam(defaultValue = "1") Integer page,
-            @RequestParam(defaultValue = "10") Integer size,
-            @RequestParam(required = false) Long collegeId,
-            @RequestParam(required = false) Integer role) {
-        QueryWrapper<User> wrapper = new QueryWrapper<>();
-        if (role != null) {
-            wrapper.eq("role", role);
-        }
-        int start = (page - 1) * size;
-        List<User> users = userService.list(wrapper.last("LIMIT " + start + ", " + size));
-        stripPasswords(users);
-        return ApiResponse.success(users);
-    }
+    // 2026-10-04（W15）删：`GET /admin/users`（裸路径）。
+    //   它声明了 `collegeId` 参数却**从不用** —— 方法体里只按 `role` 过滤，传学院也返回全部，
+    //   是个会骗人的过滤器。而且它已经被 `GET /admin/users/page`（W5.7，`userIdsInCollege`
+    //   真正把学院翻成 id 集合、并富集 collegeName/status）完全取代；前端 `adminAPI.getUsers`
+    //   与小程序的 `getUsers` 打的都是 `/users/page`，探针 `admin-probe.mjs` 验的也是 `/users/page`。
+    //   零调用方留着只会让下一个读签名的人以为按学院能筛。`/users/all` 仍在用
+    //   `getAllUsersFallback`，故该 fallback 保留。
 
     @GetMapping("/users/all")
     @SentinelResource(value = "adminApi:getUsersAll", fallback = "getAllUsersFallback")
@@ -2457,7 +2491,23 @@ public class AdminController {
                 return ApiResponse.error("文件大小不能超过 10MB");
             }
 
-            try (Workbook workbook = new XSSFWorkbook(file.getInputStream())) {
+            // W22：`new XSSFWorkbook(...)` 只认 OOXML，**读不了 .xls** —— 而上面的扩展名闸
+            // 明明写着"仅支持 .xlsx 或 .xls"。改用 WorkbookFactory（本仓 :5006 已在用），
+            // 让那句承诺变成真的：真 .xls 走 HSSF 也能导（实测 4096 字节的 HSSF 文件可正常读）。
+            //
+            // 解析失败的翻译**放在这一层**，不放外层 catch：外层 catch 还包着逐行落库，
+            // 那里抛的异常（比如 DB 报错）绝不能被说成"你的文件有问题"。分开以后，
+            // 外层的中性文案就只在真正的服务端故障时才会出现。
+            Workbook opened;
+            try {
+                opened = WorkbookFactory.create(file.getInputStream());
+            } catch (Exception e) {
+                log.error("Parse students excel failed: {}", file.getOriginalFilename(), e);
+                String friendly = ExcelUploadErrors.describe(e);
+                // 走到这里一定是"读不了这个文件"，认不出具体类型就按"认不出是什么文件"回。
+                return ApiResponse.error(friendly != null ? friendly : ExcelUploadErrors.UNREADABLE);
+            }
+            try (Workbook workbook = opened) {
                 Sheet sheet = workbook.getSheetAt(0);
                 if (sheet == null || sheet.getLastRowNum() < 1) {
                     return ApiResponse.error("表里没有数据行（第 1 行应当是表头，数据从第 2 行开始）");
@@ -2524,7 +2574,11 @@ public class AdminController {
             return ApiResponse.success(result);
         } catch (Exception e) {
             log.error("Import students failed", e);
-            return ApiResponse.error("导入失败: " + e.getMessage());
+            // W22：不再把 POI 的英文原文回给客户端。是"文件本身的问题"就给可操作的中文，
+            // 否则说明是落库等服务端故障 —— 那种情况回"文件损坏"是谎报原因，给中性文案。
+            String friendly = ExcelUploadErrors.describe(e);
+            return ApiResponse.error(friendly != null ? friendly
+                    : "导入失败：服务器处理这个文件时出错，请稍后重试或联系管理员");
         }
     }
 
@@ -2628,12 +2682,142 @@ public class AdminController {
         return (msg == null || msg.trim().isEmpty()) ? root.getClass().getSimpleName() : msg.trim();
     }
 
+    /**
+     * 导入成绩（管理员端）—— **上传 Excel，服务端 POI 解析**。
+     *
+     * <p><b>2026-10-04（W19）换契约</b>：改之前这里收的是
+     * {@code @RequestBody List<Map<String,Object>>}，而前端 {@code AdminDataExport.vue}
+     * 发的是一个 {@code el-upload} 的 {@code UploadFile} 对象（{@code {name,url,status,raw}}
+     * —— 那**不是**文件内容）。两边从第一天起就对不上，**这个按钮一次都没成功过**。
+     *
+     * <p>同页的「导入学生」（{@link #importStudents}）本来就是 multipart + POI，
+     * 模板端点 {@link #downloadTemplate} 也一直产出真实 xlsx ——
+     * 「上传文件、服务端解析」才是本工程本来的口径。也没有别的调用方需要兼容
+     * （前端从来发不出合法 JSON），所以直接换契约，不再留一条 JSON 入口。
+     *
+     * <p>列口径见 {@link #scoreColumns}。⚠️ 模板里的「学分」列**不落库**：
+     * {@code scores} 与 {@code score_record} 两张表都没有学分列（学分挂在
+     * {@code courses.credits} 上），这一列只是给人参考 —— 如实写在注释里，
+     * 免得日后又变成一处"模板上有、导进去静默消失"。
+     *
+     * <p>解析只负责"Excel → List&lt;Map&gt;"；真正的逐行处理（查学生、查课程、查重、
+     * 同步 scores 表）仍在 {@link #applyScoreRows} 里，**只有一份实现**。
+     */
     @PostMapping("/import/scores")
-    public ApiResponse<Map<String, Object>> importScores(@RequestBody List<Map<String, Object>> data) {
+    public ApiResponse<Map<String, Object>> importScores(@RequestParam("file") MultipartFile file) {
+        try {
+            if (file == null || file.isEmpty()) {
+                return ApiResponse.error("文件为空");
+            }
+            String fileName = file.getOriginalFilename();
+            if (fileName == null || !fileName.matches("(?i).*\\.(xlsx|xls)$")) {
+                return ApiResponse.error("仅支持 .xlsx 或 .xls 格式的 Excel 文件");
+            }
+            if (file.getSize() > MAX_IMPORT_BYTES) {
+                return ApiResponse.error("文件大小不能超过 10MB");
+            }
+
+            List<Map<String, Object>> rows = new ArrayList<>();
+            // W22：同 /import/students —— WorkbookFactory 才真的能把 .xls 读进来，
+            // 解析失败的翻译也放在这一层（理由见 /import/students 的注释）。
+            Workbook opened;
+            try {
+                opened = WorkbookFactory.create(file.getInputStream());
+            } catch (Exception e) {
+                log.error("Parse scores excel failed: {}", file.getOriginalFilename(), e);
+                String friendly = ExcelUploadErrors.describe(e);
+                return ApiResponse.error(friendly != null ? friendly : ExcelUploadErrors.UNREADABLE);
+            }
+            try (Workbook workbook = opened) {
+                Sheet sheet = workbook.getSheetAt(0);
+                if (sheet == null || sheet.getLastRowNum() < 1) {
+                    return ApiResponse.error("表里没有数据行（第 1 行应当是表头，数据从第 2 行开始）");
+                }
+                Map<String, Integer> col = scoreColumns(sheet.getRow(0));
+                if (!col.containsKey("studentId")) {
+                    return ApiResponse.error("表头里找不到「学号」列，请先下载模板：/admin/import/template/scores");
+                }
+                if (!col.containsKey("courseName")) {
+                    return ApiResponse.error("表头里找不到「课程名称」列，请先下载模板：/admin/import/template/scores");
+                }
+
+                for (int r = 1; r <= sheet.getLastRowNum(); r++) {
+                    Row row = sheet.getRow(r);
+                    if (row == null) continue;
+                    Map<String, Object> item = new LinkedHashMap<>();
+                    boolean blank = true;
+                    for (Map.Entry<String, Integer> e : col.entrySet()) {
+                        String v = cellText(row.getCell(e.getValue()));
+                        if (v != null) blank = false;
+                        item.put(e.getKey(), v);
+                    }
+                    if (blank) continue;   // 整行空 —— 不算错，跳过
+                    // 带上 Excel 里的真实行号：中间有空行时，下标会与行号错开，
+                    // 报给管理员的行号必须是他自己在 Excel 里看到的那一行。
+                    item.put("__row", r + 1);
+                    rows.add(item);
+                }
+            }
+            if (rows.isEmpty()) {
+                return ApiResponse.error("表里没有可导入的数据行");
+            }
+            return applyScoreRows(rows);
+        } catch (Exception e) {
+            log.error("Import scores failed", e);
+            // W22：文案与 /import/students 逐字一致 —— 同一族接口对同一种失败说两句话是排查时的噪音。
+            String friendly = ExcelUploadErrors.describe(e);
+            return ApiResponse.error(friendly != null ? friendly
+                    : "导入失败：服务器处理这个文件时出错，请稍后重试或联系管理员");
+        }
+    }
+
+    /**
+     * 按**表头文字**建成绩导入的列映射，与 {@link #mapColumns} 同一套"包含匹配"写法
+     * （模板给「学号(必填)」、导出的文件给「学号」，按序解析会在两个来源之间整体错位）。
+     *
+     * <p>模板表头是 {@code 学号(必填)/课程名称(必填)/成绩/学分/学期}；这里顺带认管理员
+     * 自己导出件里的列名（平时成绩/期末成绩/总评成绩/姓名/等级/绩点/备注/学年），
+     * 于是「导出 → 改分 → 导回」也能走通。
+     *
+     * <p><b>判断顺序是这里的关键</b>：「平时成绩」「期末成绩」「总评成绩」**都包含「成绩」**。
+     * 若把兜底的「成绩/分数」放在前面，模板里的那一列就会被"平时成绩"抢走 ——
+     * 总评分数静默落空，成绩导进去了却没生效。所以先判最具体的三个，最后才轮到泛化的。
+     *
+     * <p>⚠️「学分」**刻意不建映射**：两张成绩表都没有这一列，建了也没有落点；
+     * 与"静默消失"相比，宁可让它明确地不参与。
+     */
+    private static Map<String, Integer> scoreColumns(Row header) {
+        Map<String, Integer> map = new LinkedHashMap<>();
+        if (header == null || header.getLastCellNum() < 0) return map;
+        for (int c = header.getFirstCellNum(); c < header.getLastCellNum(); c++) {
+            String h = cellText(header.getCell(c));
+            if (h == null) continue;
+            String flat = h.replace(" ", "");
+            if (flat.contains("平时")) map.putIfAbsent("regularScore", c);
+            else if (flat.contains("期末")) map.putIfAbsent("finalScore", c);
+            else if (flat.contains("总评")) map.putIfAbsent("score", c);
+            else if (flat.contains("学号")) map.putIfAbsent("studentId", c);
+            else if (flat.contains("姓名")) map.putIfAbsent("studentName", c);
+            else if (flat.contains("课程")) map.putIfAbsent("courseName", c);
+            else if (flat.contains("学期")) map.putIfAbsent("semester", c);
+            else if (flat.contains("备注")) map.putIfAbsent("remark", c);
+            else if (flat.contains("等级")) map.putIfAbsent("grade", c);
+            else if (flat.contains("绩点")) map.putIfAbsent("gradePoint", c);
+            else if (flat.contains("学年") || flat.contains("年份")) map.putIfAbsent("year", c);
+            else if (flat.contains("学分")) { /* 无落点，明确不参与（见 javadoc） */ }
+            else if (flat.contains("成绩") || flat.contains("分数")) map.putIfAbsent("score", c);
+        }
+        return map;
+    }
+
+    /** 逐行处理一批成绩行（键：studentId=学号、courseName、score、semester 及可选列）。 */
+    private ApiResponse<Map<String, Object>> applyScoreRows(List<Map<String, Object>> data) {
         Map<String, Object> result = new HashMap<>();
         int successCount = 0, skipCount = 0, updateCount = 0, syncedCount = 0, syncFailCount = 0;
         List<Map<String, Object>> errors = new ArrayList<>();
         List<ScoreRecord> batchToInsert = new ArrayList<>();
+        // 待同步到 scores 权威表的行；**插入成功之后**才同步（见循环后面的说明）。
+        List<ScoreRecord> toSync = new ArrayList<>();
 
         try {
             log.info("Import scores request, total rows: {}", data.size());
@@ -2659,7 +2843,9 @@ public class AdminController {
 
             for (int i = 0; i < data.size(); i++) {
                 Map<String, Object> item = data.get(i);
-                int rowNum = i + 2;
+                // Excel 入口带了真实行号（见 importScores）；JSON 入口没有再按下标推。
+                Object excelRow = item.get("__row");
+                int rowNum = excelRow instanceof Number ? ((Number) excelRow).intValue() : i + 2;
                 String studentNo = getStr(item, "studentId");
                 String courseName = getStr(item, "courseName");
                 Object scoreVal = item.get("score");
@@ -2713,6 +2899,15 @@ public class AdminController {
                 ScoreRecord sr = existing != null ? existing : new ScoreRecord();
                 sr.setStudentId(profile.getId());
                 sr.setCourseId(course.getId());
+                // score_record.teacher_id 是 NOT NULL 且**没有默认值** —— 不补的话整批 INSERT
+                // 会以 "Field 'teacher_id' doesn't have a default value" 失败。
+                // 这不是本轮换契约才引入的：JSON 那条入口同样从不设它，所以这个端点在
+                // 两个意义上都是坏的（前端发不进来 + 就算发进来也写不进去）。W19 实测确认。
+                // 记成**这门课的任课教师**，与写进 course_id 的成绩归属一致；
+                // 已有行保留它原来的录入人，不覆盖。
+                if (sr.getTeacherId() == null) {
+                    sr.setTeacherId(course.getTeacherId());
+                }
                 // 默认值从profile补
                 if (sr.getStudentName() == null) sr.setStudentName(profile.getName());
                 if (sr.getClassName() == null) sr.setClassName(profile.getClassName());
@@ -2728,9 +2923,23 @@ public class AdminController {
                 }
 
                 // 分数等级自动算（未手动指定时）
-                if (sr.getScore() != null && sr.getScoreLevel() == null) {
+                //
+                // 等级/绩点/总评原来只算 score_level 这一个 —— 实测导入出来的行
+                // score_record.grade 是 NULL，而 scores.grade 是 "A-"：同一份成绩
+                // 在暂存表和权威表里各说各话。折算口径统一走 ScoreSyncSupport，
+                // 与 ScoreRecordService.applyDerived 是同一份实现（不另写一套）。
+                if (sr.getScore() != null) {
                     double s = sr.getScore();
-                    sr.setScoreLevel(s >= 90 ? 1 : s >= 80 ? 2 : s >= 70 ? 3 : s >= 60 ? 4 : 5);
+                    if (sr.getScoreLevel() == null) {
+                        sr.setScoreLevel(com.academic.common.util.ScoreSyncSupport.scoreToLevel(s));
+                    }
+                    if (sr.getScoreTotal() == null) sr.setScoreTotal(s);
+                    if (sr.getGrade() == null) {
+                        sr.setGrade(com.academic.common.util.ScoreSyncSupport.scoreToGrade(s));
+                    }
+                    if (sr.getGradePoint() == null) {
+                        sr.setGradePoint(com.academic.common.util.ScoreSyncSupport.scoreToGpa(s).doubleValue());
+                    }
                 }
 
                 if (existing != null) {
@@ -2743,9 +2952,19 @@ public class AdminController {
                     batchToInsert.add(sr);
                 }
                 successCount++;
+                toSync.add(sr);
+            }
 
-                // 同步到 scores 表（权威成绩源）。不写这一步，导入的成绩
-                // 在预警引擎和学生端统计里就等于不存在。
+            if (!batchToInsert.isEmpty()) scoreRecordService.saveBatch(batchToInsert);
+
+            // 同步到 scores 表（权威成绩源）。不写这一步，导入的成绩在预警引擎和
+            // 学生端统计里就等于不存在。
+            //
+            // ⚠️ **必须放在 saveBatch 之后**（W19 改）。原实现把它放在循环里、saveBatch 之前，
+            // 于是批量 INSERT 一旦整体失败（实测正是 teacher_id 那次），scores 里已经留下
+            // 一批权威成绩行、score_record 却一行都没有 —— 半截写：学生的成绩单上凭空多出
+            // 几门课，而"录入记录"里查无此行。顺序倒过来，插入失败时两表都干净。
+            for (ScoreRecord sr : toSync) {
                 try {
                     syncToScores(sr);
                     syncedCount++;
@@ -2755,8 +2974,6 @@ public class AdminController {
                     syncFailCount++;
                 }
             }
-
-            if (!batchToInsert.isEmpty()) scoreRecordService.saveBatch(batchToInsert);
 
             result.put("synced", syncedCount);
             result.put("syncFailed", syncFailCount);
@@ -2840,7 +3057,7 @@ public class AdminController {
             log.info("Download template successfully: {}", fileName);
         } catch (Exception e) {
             log.error("Download template failed: {}", e.getMessage());
-            response.getWriter().write("下载模板失败: " + e.getMessage());
+            writeFileEndpointError(response, "下载模板失败: " + e.getMessage());
         }
     }
 
@@ -2855,39 +3072,11 @@ public class AdminController {
                 exportDirFile.mkdirs();
             }
 
-            List<ScoreRecord> allScores = scoreRecordMapper.selectList(null);
-            
-            Map<Long, List<Double>> studentScores = new HashMap<>();
-            for (ScoreRecord score : allScores) {
-                Long studentId = score.getStudentId();
-                if (score.getScoreTotal() != null && score.getScoreTotal() < 60) {
-                    studentScores.computeIfAbsent(studentId, k -> new ArrayList<>()).add(score.getScoreTotal());
-                }
-            }
-
-            List<Map<String, Object>> insufficientStudents = new ArrayList<>();
-            for (Map.Entry<Long, List<Double>> entry : studentScores.entrySet()) {
-                Long studentId = entry.getKey();
-                List<Double> lowScores = entry.getValue();
-                
-                // 通过 student_profile 查找用户
-                QueryWrapper<com.academic.common.entity.Student> studentQuery = new QueryWrapper<>();
-                studentQuery.eq("id", studentId);
-                com.academic.common.entity.Student studentProfile = studentService.getOne(studentQuery);
-                
-                if (studentProfile != null) {
-                    QueryWrapper<User> userQuery = new QueryWrapper<>();
-                    userQuery.eq("id", studentProfile.getUserId());
-                    User user = userService.getOne(userQuery);
-                    
-                    Map<String, Object> studentInfo = new HashMap<>();
-                    studentInfo.put("studentId", studentProfile.getStudentId());
-                    studentInfo.put("name", studentProfile.getName());
-                    studentInfo.put("lowScoreCount", lowScores.size());
-                    studentInfo.put("lowestScore", lowScores.stream().mapToDouble(Double::doubleValue).min().orElse(0));
-                    insufficientStudents.add(studentInfo);
-                }
-            }
+            // 口径走 ScoreCaliber（权威源 scores、按课程去重、期末未录入不计）。
+            // 原实现读 score_record 整表并手写 `scoreTotal < 60`，与其余页面口径分叉 ——
+            // 同一名学生的"不及格科目数"在导出件里和页面上对不上（W26）。
+            // 顺带消掉了原来的 N+1（每行查 student_profile + users）。
+            List<Map<String, Object>> insufficientStudents = scoreStatMapper.selectInsufficientStudentsAll();
 
             Workbook workbook = new XSSFWorkbook();
             Sheet sheet = workbook.createSheet("成绩不足学生");
@@ -2902,10 +3091,12 @@ public class AdminController {
             int rowNum = 1;
             for (Map<String, Object> student : insufficientStudents) {
                 Row row = sheet.createRow(rowNum++);
-                row.createCell(0).setCellValue((String) student.get("studentId"));
-                row.createCell(1).setCellValue((String) student.get("name"));
-                row.createCell(2).setCellValue(((Number) student.get("lowScoreCount")).intValue());
-                row.createCell(3).setCellValue(((Number) student.get("lowestScore")).doubleValue());
+                row.createCell(0).setCellValue(String.valueOf(student.get("student_no")));
+                row.createCell(1).setCellValue(String.valueOf(student.get("student_name")));
+                row.createCell(2).setCellValue(((Number) student.get("failed_courses")).intValue());
+                // 只统计挂科课程里的最低分（SQL 侧 MIN(...) 忽略 NULL），不会是 null：
+                // HAVING failed_courses > 0 保证至少有一行不及格参与 MIN。
+                row.createCell(3).setCellValue(((Number) student.get("lowest_score")).doubleValue());
             }
 
             for (int i = 0; i < headers.length; i++) {
@@ -2932,7 +3123,7 @@ public class AdminController {
             log.info("Export insufficient students successfully: {}", fileName);
         } catch (Exception e) {
             log.error("Export insufficient students failed: {}", e.getMessage());
-            response.getWriter().write("导出失败: " + e.getMessage());
+            writeFileEndpointError(response, "导出失败: " + e.getMessage());
         }
     }
 
@@ -3018,7 +3209,7 @@ public class AdminController {
             log.info("Export scores successfully: {}", fileName);
         } catch (Exception e) {
             log.error("Export scores failed: {}", e.getMessage());
-            response.getWriter().write("导出失败: " + e.getMessage());
+            writeFileEndpointError(response, "导出失败: " + e.getMessage());
         }
     }
 
@@ -3718,20 +3909,36 @@ public class AdminController {
             }
             
             // 根据模板ID生成报表
-            String fileName = generateReportFile(templateId, startDate, endDate);
-            
+            GeneratedReport report = generateReportFile(templateId, startDate, endDate);
+
             Map<String, Object> result = new HashMap<>();
-            result.put("fileName", fileName);
-            result.put("downloadUrl", "/admin/export/reports/" + fileName);
-            
+            result.put("fileName", report.fileName());
+            result.put("downloadUrl", "/admin/export/reports/" + report.fileName());
+            // W23：把"这份报表实际写了几行数据"回给前端。此前数据源为空时生成的是一份
+            // **只有表头**的 xlsx（服务端只 log.warn），而前端一律弹「报表已生成」——
+            // 与"恒 0 的 total"同族：拿到了文件，却不知道里面是空的。rows 让前端能如实说。
+            result.put("rows", report.rows());
+
             return ApiResponse.success(result);
         } catch (Exception e) {
             log.error("Generate report failed: {}", e.getMessage());
             return ApiResponse.error(e.getMessage());
         }
     }
-    
-    private String generateReportFile(String templateId, String startDate, String endDate) throws Exception {
+
+    /**
+     * 一次报表生成的结果。
+     *
+     * @param fileName 生成的文件名（下载 URL 由它拼出）
+     * @param rows     真正写进 xlsx 的数据行数（不含表头）
+     * @param matched  表头是否逐字匹配上了某张内置报表。**只对自定义模板路径有意义** ——
+     *                 系统模板用的就是内置报表自己的表头，这里恒为 {@code true}。
+     *                 它把"表头没认出来"与"认出报表了但它当前没有数据行"分开，
+     *                 这两种对用户的说法完全不同。
+     */
+    private record GeneratedReport(String fileName, int rows, boolean matched) {}
+
+    private GeneratedReport generateReportFile(String templateId, String startDate, String endDate) throws Exception {
         if (!REPORT_TEMPLATE_IDS.contains(templateId)) {
             // 原来是 default 分支：表头写成"序号/数据1/数据2/数据3"、数据行空，
             // 然后照样回 success + 一个可下载的 xlsx。调用方拿到一份全是占位列的文件，
@@ -3788,7 +3995,7 @@ public class AdminController {
             log.warn("Report generated with NO data rows: {} (模板 {})", fileName, templateId);
         }
         log.info("Report generated: {} ({} rows)", fileName, data.size());
-        return fileName;
+        return new GeneratedReport(fileName, data.size(), true);
     }
 
     /**
@@ -4242,16 +4449,21 @@ public class AdminController {
                 return ApiResponse.error(400, "开始日期不能大于结束日期");
             }
 
-            String fileName;
-            if (customTemplateId != null && !customTemplateId.isEmpty()) {
-                fileName = generateReportWithCustomTemplate(customTemplateId, startDate, endDate);
-            } else {
-                fileName = generateReportFile(templateId, startDate, endDate);
-            }
+            boolean isCustom = customTemplateId != null && !customTemplateId.isEmpty();
+            GeneratedReport report = isCustom
+                    ? generateReportWithCustomTemplate(customTemplateId, startDate, endDate)
+                    : generateReportFile(templateId, startDate, endDate);
+            String fileName = report.fileName();
 
             Map<String, Object> result = new HashMap<>();
             result.put("fileName", fileName);
             result.put("downloadUrl", "/admin/export/reports/" + fileName);
+            result.put("rows", report.rows());
+            // W23：`matched` 只在自定义模板这条路上有意义（系统模板的表头就是内置报表自己的）。
+            // 系统模板路径**不放这个键** —— 不是 `false`，是"不适用"，前端据此也能分辨。
+            if (isCustom) {
+                result.put("matched", report.matched());
+            }
 
             return ApiResponse.success(result);
         } catch (Exception e) {
@@ -4840,7 +5052,7 @@ public class AdminController {
     //    管理员建号的唯一活路径是前端 AdminUsers.vue → `POST /users/add`
     //    (user-service `UserController.addUser`, 已加管理员闸)。
 
-    private String generateReportWithCustomTemplate(String templateId, String startDate, String endDate) throws Exception {
+    private GeneratedReport generateReportWithCustomTemplate(String templateId, String startDate, String endDate) throws Exception {
         ReportTemplate template = reportTemplateService.getTemplateById(Long.parseLong(templateId));
         if (template == null) {
             throw new RuntimeException("模板不存在");
@@ -4860,6 +5072,7 @@ public class AdminController {
         }
 
         int writtenRows;
+        String matchedReportId;
         try (Workbook workbook = WorkbookFactory.create(templateFile)) {
             Sheet sheet = workbook.getSheetAt(0);
 
@@ -4870,7 +5083,13 @@ public class AdminController {
             // 绝不编行。用户上传的是一份"表格样式"，本系统没有任何"任意模板 → 数据源"
             // 的绑定关系，凭空造行只会让下载下来的人以为那是查询结果。
             List<String> templateHeaders = readHeaderRow(sheet.getRow(0));
-            List<List<String>> data = matchBuiltinReportRows(templateHeaders);
+            // W23：先问"表头认出了哪张内置报表"，再取数 —— 这两步分开，是为了能把
+            // "表头没认出来"（matched=false）与"认出报表 2 了但它当前没有数据行"
+            // （matched=true, rows=0）分开回给前端。此前 `matchBuiltinReportRows` 两种情况
+            // 都只返回一个空 List，调用方无从区分，只能笼统 log 一句。
+            matchedReportId = matchBuiltinReportId(templateHeaders);
+            List<List<String>> data = matchedReportId == null
+                    ? new ArrayList<>() : getReportData(matchedReportId);
             int startRow = sheet.getLastRowNum() + 1;
             for (int i = 0; i < data.size(); i++) {
                 Row row = sheet.createRow(startRow + i);
@@ -4880,9 +5099,12 @@ public class AdminController {
                 }
             }
             writtenRows = data.size();
-            if (writtenRows == 0) {
+            if (matchedReportId == null) {
                 log.warn("Custom report template {} headers matched no built-in report, output headers only: {}",
                         templateId, templateHeaders);
+            } else if (writtenRows == 0) {
+                log.warn("Custom report template {} matched built-in report {}, which currently has no data rows",
+                        templateId, matchedReportId);
             }
 
             try (FileOutputStream fos = new FileOutputStream(filePath)) {
@@ -4890,8 +5112,9 @@ public class AdminController {
             }
         }
 
-        log.info("Report generated with custom template: {} ({} rows)", fileName, writtenRows);
-        return fileName;
+        log.info("Report generated with custom template: {} ({} rows, matched={})",
+                fileName, writtenRows, matchedReportId);
+        return new GeneratedReport(fileName, writtenRows, matchedReportId != null);
     }
 
     /** 取一行里的字符串单元格，用于自定义模板的表头匹配。null 单元格按空串处理。*/
@@ -4908,22 +5131,25 @@ public class AdminController {
     }
 
     /**
-     * 自定义模板的表头若能**逐字**匹配上某张内置报表的表头，就返回那张报表的真实数据行；
-     * 匹配不上返回空（调用方只写表头）。
+     * 自定义模板的表头若能**逐字**匹配上某张内置报表的表头，返回那张报表的 id；匹配不上返回 null。
      *
      * <p>刻意用"完全相等"而不是"列名包含"：宽松匹配会把「学号」和「学生ID」这类
      * 语义不同的列凑到一张表里，产出一份列义对不上的报表 —— 那比不给数据更糟。
+     *
+     * <p><b>W23</b>：原来这个方法叫 {@code matchBuiltinReportRows}、直接返回数据行，
+     * "没匹配上"与"匹配上了但那报表没有数据"因此都是**一个空 List**，调用方分不开。
+     * 改成只回答"是哪一张报表"，取数交给调用方 —— 它才有机会把这两种情况分别回给用户。
      */
-    private List<List<String>> matchBuiltinReportRows(List<String> templateHeaders) {
+    private String matchBuiltinReportId(List<String> templateHeaders) {
         if (templateHeaders.isEmpty()) {
-            return new ArrayList<>();
+            return null;
         }
         for (String templateId : new String[]{"1", "2", "3", "4"}) {
             if (Arrays.asList(getReportHeaders(templateId)).equals(templateHeaders)) {
-                return getReportData(templateId);
+                return templateId;
             }
         }
-        return new ArrayList<>();
+        return null;
     }
 
     /** 宽松地把请求体里的值转成 Integer；无法识别返回 null（用于申诉审核 status）。 */

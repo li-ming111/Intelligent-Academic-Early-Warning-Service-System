@@ -34,10 +34,4 @@ public class StudentServiceFallback implements StudentServiceClient {
         log.warn("student-service is unavailable, returning fallback for studentProfileId: {}", studentId);
         return ApiResponse.error("学生服务暂时不可用");
     }
-
-    @Override
-    public ApiResponse<Long> countByCollege(Long collegeId) {
-        log.warn("student-service is unavailable, returning fallback count 0 for collegeId: {}", collegeId);
-        return ApiResponse.success(0L);
-    }
 }

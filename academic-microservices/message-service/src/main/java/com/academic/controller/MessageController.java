@@ -82,6 +82,15 @@ public class MessageController {
         } else {
             messages = messageService.getAllMessages();
         }
+        // 2026-10-04（W15）：`type` 一直是"声明了却从没用过"的参数 —— 调用方传
+        // `?type=2` 拿到的仍是**全部类型**的消息，是个会骗人的过滤器。`messages` 表
+        // 有 `type` 列（`Message.type` 是 Integer），这里按类型过滤；不传时行为不变
+        // （所以对现有调用方零回归）。比较用字符串，与前端传参口径一致。
+        if (type != null && !type.isEmpty()) {
+            messages = messages.stream()
+                    .filter(m -> type.equals(String.valueOf(m.getType())))
+                    .collect(java.util.stream.Collectors.toList());
+        }
         return ApiResponse.success(messages);
     }
 

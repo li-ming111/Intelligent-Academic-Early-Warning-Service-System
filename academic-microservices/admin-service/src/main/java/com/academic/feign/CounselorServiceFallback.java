@@ -27,10 +27,4 @@ public class CounselorServiceFallback implements CounselorServiceClient {
         log.warn("counselor-service is unavailable, returning fallback for counselorId: {}", counselorId);
         return ApiResponse.error("辅导员服务暂时不可用");
     }
-
-    @Override
-    public ApiResponse<Long> countByCollege(Long collegeId) {
-        log.warn("counselor-service is unavailable, returning fallback count 0 for collegeId: {}", collegeId);
-        return ApiResponse.success(0L);
-    }
 }

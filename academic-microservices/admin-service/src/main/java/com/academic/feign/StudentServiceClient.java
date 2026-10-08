@@ -26,6 +26,6 @@ public interface StudentServiceClient {
     @GetMapping("/students/{studentId}/gpa")
     ApiResponse<StudentProfile> getStudentProfileById(@PathVariable("studentId") Long studentId);
 
-    @GetMapping("/students/count-by-college")
-    ApiResponse<Long> countByCollege(@RequestParam Long collegeId);
+    // 2026-10-04（W15）删：`countByCollege` 零调用方（AdminController 的学生数走本库
+    // studentProfileService.count()）。下游 `GET /students/count-by-college` 保留。
 }

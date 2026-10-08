@@ -22,6 +22,7 @@ public interface CounselorServiceClient {
     @GetMapping("/counselors/{counselorId}")
     ApiResponse<CounselorProfile> getCounselorById(@PathVariable("counselorId") Long counselorId);
 
-    @GetMapping("/counselors/count-by-college")
-    ApiResponse<Long> countByCollege(@RequestParam Long collegeId);
+    // 2026-10-04（W15）删：`countByCollege` 零调用方（AdminController 统计学院人数走的是
+    // 本库的 userService.count(...)，不走 Feign）。下游 `GET /counselors/count-by-college`
+    // **保留**（仍可达、只是当前无调用方；它的 catch-吞异常本轮已改如实回错误）。
 }
