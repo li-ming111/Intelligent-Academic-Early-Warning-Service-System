@@ -16,6 +16,7 @@ import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.context.request.async.AsyncRequestNotUsableException;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.springframework.web.multipart.support.MissingServletRequestPartException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import java.util.stream.Collectors;
@@ -79,6 +80,22 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ApiResponse<String>> handleMissingParameterException(MissingServletRequestParameterException e) {
         log.warn("缺少必填参数: {}", e.getParameterName());
         return ResponseEntity.badRequest().body(ApiResponse.badRequest("缺少必需参数: " + e.getParameterName()));
+    }
+
+    /**
+     * 少发一个 <b>multipart 部件</b>（最典型的就是导入接口没带上 {@code file}）→ 400（不是 500）。
+     *
+     * <p>Spring 给 multipart 部件另起了一个异常类型 {@link MissingServletRequestPartException}，
+     * 和上面那条 {@link MissingServletRequestParameterException} **互不覆盖**。只处理上面那条时，
+     * 漏发文件会一路冒到 {@code /error}，返回 <b>HTTP 500 + 「服务器内部错误」</b> ——
+     * 实测 {@code /teachers/scores/import}、{@code /teachers/students/import} 都是这个形状。
+     * 教师没选文件就点导入，看到的是"服务器内部错误"，与"你忘了选文件"差了十万八千里。
+     */
+    @ExceptionHandler(MissingServletRequestPartException.class)
+    public ResponseEntity<ApiResponse<String>> handleMissingPartException(MissingServletRequestPartException e) {
+        log.warn("缺少上传部件: {}", e.getRequestPartName());
+        return ResponseEntity.badRequest()
+                .body(ApiResponse.badRequest("缺少必需的上传文件: " + e.getRequestPartName()));
     }
 
     /**

@@ -11,7 +11,20 @@ public interface ScoreRecordMapper {
     @Select("SELECT * FROM score_record WHERE id = #{id}")
     ScoreRecord selectById(Long id);
 
-    @Select("SELECT * FROM score_record WHERE course_id = #{courseId} ORDER BY student_name")
+    /**
+     * 某门课的成绩单，附带学生**学号**（{@code studentNo}）。
+     *
+     * <p>2026-10-04（W19）：成绩单导出的第一列要显示学号，而 {@code score_record}
+     * 里只有 {@code student_id}（= {@code student_profile.id}），学号在
+     * {@code student_profile.student_id} 上 —— 顺带 JOIN 出来，省得前端再反查。
+     *
+     * <p>⚠️ 必须写成 {@code sr.*} 而不是裸 {@code *}：{@code score_record} 与
+     * {@code student_profile} 都有 {@code id/student_id/created_at/updated_at}，
+     * 不限定正表会让结果集出现重名列。
+     */
+    @Select("SELECT sr.*, sp.student_id AS studentNo FROM score_record sr "
+          + "LEFT JOIN student_profile sp ON sp.id = sr.student_id "
+          + "WHERE sr.course_id = #{courseId} ORDER BY sr.student_name")
     List<ScoreRecord> getScoresByCourseId(Long courseId);
 
     @Select("SELECT * FROM score_record WHERE course_id = #{courseId} AND teacher_id = #{teacherId} ORDER BY student_name")

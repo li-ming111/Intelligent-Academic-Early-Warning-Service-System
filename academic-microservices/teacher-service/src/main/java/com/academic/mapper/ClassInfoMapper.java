@@ -59,6 +59,18 @@ public interface ClassInfoMapper extends BaseMapper<ClassInfo> {
     @Select("SELECT id FROM student_profile WHERE student_id = #{studentId}")
     Long findProfileIdByStudentId(@Param("studentId") String studentId);
 
+    /**
+     * 学生的姓名（{@code student_profile → users.name}）。2026-10-04（W19）补，给教师端
+     * 成绩导入用：Excel 里「姓名」列是可选的，没填时用它回填 {@code score_record.student_name}
+     * —— 否则导入的行在成绩列表里没有姓名，变成一串"光有分数没有名字"的记录。
+     *
+     * <p>同样**刻意拆成单列标量**而不是返回 Map：{@code mapUnderscoreToCamelCase} 开着时
+     * Map 结果的 key 是 {@code name} 还是别的取决于版本，取错就静默当成"查不到学生"。
+     */
+    @Select("SELECT u.name FROM student_profile sp JOIN users u ON sp.user_id = u.id "
+          + "WHERE sp.student_id = #{studentId}")
+    String findStudentNameByStudentId(@Param("studentId") String studentId);
+
     /** 该学生档案当前的班级（null = 尚未归入任何班级）。 */
     @Select("SELECT class_id FROM student_profile WHERE id = #{profileId}")
     Long findClassIdOfProfile(@Param("profileId") Long profileId);

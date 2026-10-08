@@ -13,6 +13,12 @@
       <el-select v-model="selectedSemester" placeholder="全部学期" clearable @change="currentPage=1" style="width:170px">
         <el-option v-for="s in availableSemesters" :key="s.value" :label="s.label" :value="s.value" />
       </el-select>
+      <!-- 课程选择（W19 加）：既是列表筛选，也是「导入Excel」的目标课程 ——
+           成绩必须落到某一门课上，此前页面没有这个上下文，导入的 courseId
+           只能靠 scoresList[0] 猜，班级还没成绩时就是空。 -->
+      <el-select v-model="selectedCourse" placeholder="选择课程" clearable filterable @change="currentPage=1" style="width: 200px;">
+        <el-option v-for="c in courseOptions" :key="c.id" :label="c.name" :value="c.id" />
+      </el-select>
       <el-upload
         ref="uploadRef"
         :auto-upload="false"
@@ -22,6 +28,7 @@
       >
         <el-button type="primary">导入Excel</el-button>
       </el-upload>
+      <el-button @click="downloadScoresTemplate">下载模板</el-button>
       <el-button @click="exportScores">导出成绩</el-button>
       <el-button @click="analyzeScores" type="info">成绩分析</el-button>
       <el-button @click="openNotifyCounselor" type="success" :disabled="!selectedClass">通知辅导员</el-button>
@@ -72,6 +79,27 @@
             </div>
           </div>
         </div>
+      </div>
+    </div>
+
+    <!-- AI 分析（W26）：下面这几个 aiAPI 端点此前全仓零调用。
+         `analyzeClassScores` 是**纯 AI** 端点（后端直接问通义千问），没配 DASHSCOPE_KEY 时
+         后端会拿占位串冒充成功 —— 闸在 utils/ai.js，命中就换成一句实话，不当作分析结果。 -->
+    <div v-if="selectedClass" class="content-card">
+      <div class="card-title-bar">
+        <h2>AI 辅助分析</h2>
+      </div>
+      <div class="card-body-section ai-row">
+        <AiInsight
+          title="AI 班级学业分析"
+          :load="aiAnalyzeClass"
+          hint="把当前班级交给 AI 做整体分析（需要后端配置 DASHSCOPE_KEY）"
+        />
+        <AiInsight
+          title="AI 学习建议"
+          :load="aiSuggestClass"
+          hint="按当前班级里不及格/薄弱课程的统计生成建议（走规则引擎，不依赖 API Key）"
+        />
       </div>
     </div>
 
@@ -191,6 +219,16 @@
             <h4>教师评语</h4>
             <div class="comment-content">{{ studentAnalysisData.comment }}</div>
           </div>
+
+          <!-- AI 风险预测 / 建议 / 干预计划（W26）。
+               数据全部来自本页**已加载**的班级成绩（`scoresList`），不额外请求、不编造：
+               挂科数、总课程数、薄弱课程都由 `totalScore < 60` 直接数出来。
+               ⚠️ 这里**不传 gpa** —— 本页只有单科分数、没有学分绩点，硬凑一个会算错风险。 -->
+          <div v-if="studentAnalysisRow" class="ai-row">
+            <AiInsight title="AI 风险预测" :load="aiPredictRisk" hint="按本班已加载成绩统计风险（规则引擎）" />
+            <AiInsight title="AI 学习建议" :load="aiStudentSuggestion" hint="按薄弱课程生成建议（规则引擎）" />
+            <AiInsight title="AI 干预计划" :load="aiStudentPlan" hint="先风险预测，再按它给出的等级生成计划（规则引擎）" />
+          </div>
         </div>
       </div>
       <template #footer>
@@ -252,17 +290,25 @@
 import { ref, computed, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Search } from '@element-plus/icons-vue'
-import { teacherAPI } from '@/api/index'
+import { teacherAPI, aiAPI } from '@/api/index'
+import AiInsight from '@/components/AiInsight.vue'
 import { getUserId, getTeacherId } from '@/utils/userUtils'
 import { saveBlobAsFile, describeDownloadError } from '@/utils/download'
 
 const selectedClass = ref('')
 const searchName = ref('')
 const selectedSemester = ref('')
+const selectedCourse = ref('')
 const editDialogVisible = ref(false)
 const editingScore = ref({})
 const classes = ref([])
 const courseMap = ref(new Map())
+
+// 本人所授课程（loadCourseMap 已经把它们放进 courseMap，这里只是转成下拉可用的数组，
+// 不额外发请求）。
+const courseOptions = computed(() =>
+  Array.from(courseMap.value.entries()).map(([id, name]) => ({ id, name }))
+)
 
 const scoresList = ref([])
 const uploadRef = ref(null)
@@ -270,6 +316,8 @@ const uploadRef = ref(null)
 const analysisData = ref(null)
 const studentAnalysisVisible = ref(false)
 const studentAnalysisData = ref(null)
+/** 「分析」点的那条成绩行 —— AI 面板据此在学生已加载成绩里聚合，见 aiStudentBody。 */
+const studentAnalysisRow = ref(null)
 const batchDialogVisible = ref(false)
 const notifyDialogVisible = ref(false)
 const notifyTarget = ref(null)
@@ -284,6 +332,7 @@ const filteredScores = computed(() => {
   const kw = searchName.value.toLowerCase()
   if (kw) list = list.filter(s => ('' + (s.studentName || '')).toLowerCase().includes(kw) || ('' + (s.studentNo || '')).includes(String(kw)))
   if (selectedSemester.value) list = list.filter(s => String(s.semester) === String(selectedSemester.value))
+  if (selectedCourse.value) list = list.filter(s => String(s.courseId) === String(selectedCourse.value))
   return list
 })
 const pagedScores = computed(() => {
@@ -325,13 +374,15 @@ const availableSemesters = computed(() => {
 const handleSizeChange = () => { currentPage.value = 1 }
 const handleCurrentChange = () => {}
 
-const getCurrentSemester = () => {
-  const now = new Date()
-  const year = now.getFullYear()
-  const month = now.getMonth() + 1
-  if (month >= 9) return `${year}-${year + 1}-1`
-  if (month <= 2) return `${year - 1}-${year}-1`
-  return `${year - 1}-${year}-2`   // 3~8月为第二学期
+const downloadScoresTemplate = async () => {
+  try {
+    const blob = await teacherAPI.downloadScoresTemplate()
+    await saveBlobAsFile(blob, '成绩导入模板.xlsx')
+    ElMessage.success('模板已下载')
+  } catch (error) {
+    console.error('下载模板失败:', error)
+    ElMessage.error(await describeDownloadError(error))
+  }
 }
 
 onMounted(async () => {
@@ -346,20 +397,41 @@ const handleFileSelect = async (uploadFile) => {
       uploadRef.value.clearFiles()
       return
     }
+    if (!selectedCourse.value) {
+      ElMessage.error('请先选择课程（这批成绩要导入到哪门课）')
+      uploadRef.value.clearFiles()
+      return
+    }
     const file = uploadFile.raw
     const formData = new FormData()
     formData.append('file', file)
-    const defaultCourseId = scoresList.value[0]?.courseId || ''
-    formData.append('courseId', defaultCourseId)
+    // courseId 用页面上选的那门课。此前这里取 scoresList.value[0]?.courseId
+    // （"当前列表第一行是哪门课就导哪门"），班级还没成绩时是空字符串，导入必然失败。
+    formData.append('courseId', selectedCourse.value)
     formData.append('className', selectedClass.value)
-    formData.append('semester', getCurrentSemester())
-    await teacherAPI.importScores(formData)
-    ElMessage.success('成绩导入成功')
+    // 学期：选了学期筛选就按它导，没选则不发 —— 由后端按"该生已有的最大学期"兜底。
+    // 注意**不能**发 "2025-2026-1" 这种学年式字符串：scores.semester 是 int 列。
+    if (selectedSemester.value) formData.append('semester', selectedSemester.value)
+
+    const res = await teacherAPI.importScores(formData)
+
+    // 导入是逐行尽力而为的：成功的行已落库，失败的行在 errors 里。
+    // 只要跳过了哪怕一行，就不能只报"导入成功"。
+    const success = res?.success ?? 0
+    const skipped = res?.skipped ?? 0
+    const errorList = res?.errors || []
+    if (skipped === 0) {
+      ElMessage.success(`导入完成：成功 ${success} 条`)
+    } else {
+      const detail = errorList.slice(0, 5).map(e => `第${e.row}行：${e.reason}`).join('；')
+      const more = errorList.length > 5 ? ` 等共 ${errorList.length} 处` : ''
+      ElMessage.warning(`导入完成：成功 ${success} 条，跳过 ${skipped} 条。${detail}${more}`)
+    }
     uploadRef.value.clearFiles()
     await loadClassScores(selectedClass.value)
   } catch (error) {
     console.error('导入成绩失败:', error)
-    ElMessage.error(error.message || '导入成绩失败')
+    ElMessage.error(error.response?.data?.message || error.message || '导入成绩失败')
     uploadRef.value.clearFiles()
   }
 }
@@ -483,7 +555,8 @@ const exportScores = async () => {
       ElMessage.error('请先选择班级')
       return
     }
-    const defaultCourseId = scoresList.value[0]?.courseId
+    // 选了课程就导出那门课；没选才退回"列表第一行那门课"（旧行为）。
+    const defaultCourseId = selectedCourse.value || scoresList.value[0]?.courseId
     if (!defaultCourseId) {
       ElMessage.error('当前班级暂无成绩数据，无法导出')
       return
@@ -503,7 +576,7 @@ const analyzeScores = async () => {
       ElMessage.error('请先选择班级')
       return
     }
-    const defaultCourseId = scoresList.value[0]?.courseId
+    const defaultCourseId = selectedCourse.value || scoresList.value[0]?.courseId
     if (!defaultCourseId) {
       ElMessage.error('当前班级暂无成绩数据')
       return
@@ -521,6 +594,8 @@ const viewStudentAnalysis = async (row) => {
   try {
     const response = await teacherAPI.analyzeStudentScore(row.studentId, row.courseId)
     studentAnalysisData.value = response
+    // AI 面板要用这个学生在本班已加载的成绩来算，所以留一份原始行
+    studentAnalysisRow.value = row
     studentAnalysisVisible.value = true
   } catch (error) {
     console.error('学生分析失败:', error)
@@ -530,6 +605,92 @@ const viewStudentAnalysis = async (row) => {
 
 const handleSelectionChange = (selection) => {
   selectedRows.value = selection
+}
+
+// ===== AI 接线（W26）=====
+
+/** 本班已加载的成绩里，属于某个学生的那些行（按学号优先、姓名兜底）。 */
+const rowsOfStudent = (row) => {
+  if (!row) return []
+  const sameNo = scoresList.value.filter(s => s.studentNo && row.studentNo && String(s.studentNo) === String(row.studentNo))
+  if (sameNo.length) return sameNo
+  return scoresList.value.filter(s => row.studentName && s.studentName === row.studentName)
+}
+
+/**
+ * 由**本页已有数据**拼 `predictRisk` / `generateSuggestion` 的 body。
+ *
+ * 全部字段都是数出来的，没有估的：
+ *   - `failCount` / `weakSubjects` 由 `totalScore < 60` 直接筛；
+ *   - `totalCourses` = 该生在本班的成绩行数。
+ * ⚠️ **不传 `gpa`** —— 本页只有总分、没有学分绩点，凑一个 0-100 的平均分当 GPA
+ *   会让后端的 `gpa < 2.0` 那几条规则全部误判。宁可少一条规则，不编一个数字。
+ */
+const aiStudentBody = () => {
+  const row = studentAnalysisRow.value
+  if (!row) throw new Error('请先点某条成绩的「分析」')
+  const rows = rowsOfStudent(row)
+  if (!rows.length) throw new Error('本页没有这个学生的已加载成绩，无法统计')
+  const weak = rows
+    .filter(s => Number(s.totalScore) < 60)
+    .map(s => ({ courseName: s.courseName, score: Number(s.totalScore) }))
+  return {
+    studentId: row.studentId ?? row.studentNo ?? '',
+    studentName: row.studentName || '该学生',
+    totalCourses: rows.length,
+    failCount: weak.length,
+    weakSubjects: weak
+  }
+}
+
+/** classId：下拉里绑的是**班级名**，这里换回 id（换不到就如实报错，不猜）。 */
+const currentClassId = () => {
+  const cls = classes.value.find(c => c.name === selectedClass.value)
+  if (!cls || cls.id == null) throw new Error('取不到当前班级的 id，无法做班级分析')
+  return cls.id
+}
+
+const aiAnalyzeClass = () => aiAPI.analyzeClassScores(currentClassId())
+
+/** 班级级学习建议：把全班每个学生的成绩行都当成"薄弱课程"来源会太吵，
+ *  这里只把**不及格**的课汇总给后端（同一门课多人挂就合并成一条，分数取最低）。 */
+const aiSuggestClass = () => {
+  const worst = new Map()
+  for (const s of scoresList.value) {
+    const score = Number(s.totalScore)
+    if (!(score < 60)) continue
+    const key = s.courseName || ('课程' + s.courseId)
+    const prev = worst.get(key)
+    if (!prev || score < prev.score) worst.set(key, { courseName: key, score })
+  }
+  const weakSubjects = [...worst.values()]
+  if (!weakSubjects.length) throw new Error('本班当前没有不及格的课程，生成不了针对性建议')
+  return aiAPI.generateSuggestion({
+    studentId: '',
+    studentName: selectedClass.value + '（全班）',
+    totalCourses: scoresList.value.length,
+    failCount: scoresList.value.filter(s => Number(s.totalScore) < 60).length,
+    weakSubjects
+  })
+}
+
+const aiPredictRisk = () => aiAPI.predictRisk(aiStudentBody())
+const aiStudentSuggestion = () => aiAPI.generateSuggestion(aiStudentBody())
+
+/** 干预计划：**先问后端的规则引擎要 riskLevel**，再把后端自己给的那个等级
+ *  喂给 `generatePlan`。不在前端复刻那套阈值 —— 后端 `generateWarning` 只认
+ *  「高风险/中风险/低风险/正常」四个词，自己拼一个词就是又一处口径漂移。 */
+const aiStudentPlan = async () => {
+  const body = aiStudentBody()
+  const risk = await aiAPI.predictRisk(body)
+  const level = risk?.riskLevel
+  if (!level) throw new Error('风险预测没有返回 riskLevel，无法据此生成计划')
+  return aiAPI.generatePlan({
+    studentId: body.studentId,
+    studentName: body.studentName,
+    riskLevel: level,
+    riskFactors: risk.riskFactors || ['挂科 ' + body.failCount + ' 门']
+  })
 }
 
 // 打开批量操作对话框
@@ -997,4 +1158,7 @@ const deleteScore = async (row) => {
     text-align: left;
   }
 }
+
+.ai-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+@media (max-width: 900px) { .ai-row { grid-template-columns: 1fr; } }
 </style>
