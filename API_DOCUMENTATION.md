@@ -14,10 +14,13 @@
 | POST | `/auth/register/student` | 学生注册 | `{ username, password, name, ... }` |
 | POST | `/auth/register/teacher` | 教师注册 | `{ username, password, name, ... }` |
 | POST | `/auth/register/counselor` | 辅导员注册 | `{ username, password, name, ... }` |
-| POST | `/auth/register/admin` | 管理员注册 | `{ username, password, name, ... }` |
 | GET | `/auth/colleges` | 获取学院列表 | - |
 | GET | `/auth/majors` | 按学院获取专业 | `?collegeId` |
-| GET | `/auth/courses` | 获取全部课程 | - |
+
+> **注册只有上面这三条 `/auth/register/{student,teacher,counselor}`**（2026-10-08 W27 核对）。
+> 本文件此前还列着 `POST /auth/register/admin`（2026-10-01 按"零调用方"已删）与 `GET /auth/courses`
+> （2026-10-02 W1.15 已删，`auth-service` 本就没有这个映射）—— 两条都是**文档里写着、代码里没有**，已删行。
+> 教师/辅导员账号由**管理员审批**（`status=0 待审批 → 1 正常`），没有自助注册管理员的入口。
 
 ---
 
@@ -25,7 +28,6 @@
 
 | 方法 | 路径 | 说明 | 请求参数 |
 |------|------|------|----------|
-| GET | `/students/register` | 学生注册 | `{ name, studentId, ... }` |
 | GET | `/students/{id}` | 学生信息 | `@PathVariable id` |
 | GET | `/students/student-by-user/{userId}` | 根据userId查学生 | `@PathVariable userId` |
 | GET | `/students/{id}/gpa` | 获取GPA | `@PathVariable id` |
@@ -79,7 +81,6 @@
 
 | 方法 | 路径 | 说明 | 请求参数 |
 |------|------|------|----------|
-| POST | `/teachers/register` | 教师注册 | `{ name, userId, ... }` |
 | GET | `/teachers/{id}` | 教师信息 | `@PathVariable id` |
 | PUT | `/teachers/{id}` | 更新信息 | `@PathVariable id, body` |
 | DELETE | `/teachers/{id}` | 删除教师 | `@PathVariable id` |
@@ -137,7 +138,6 @@
 
 | 方法 | 路径 | 说明 | 请求参数 |
 |------|------|------|----------|
-| POST | `/counselors/register` | 辅导员注册 | body |
 | GET | `/counselors/dashboard/{userId}` | 仪表盘 | `@PathVariable userId` |
 | GET | `/counselors` | 辅导员列表 | `?collegeId` |
 | GET | `/counselors/{counselorId}` | 辅导员信息 | `@PathVariable counselorId` |
