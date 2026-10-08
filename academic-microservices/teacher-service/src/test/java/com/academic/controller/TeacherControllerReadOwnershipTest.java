@@ -154,7 +154,7 @@ class TeacherControllerReadOwnershipTest {
         assertEquals(403, controller.getTodos(String.valueOf(OTHER), as(ME)).getCode());
         assertEquals(403, controller.getAuditLogs(String.valueOf(OTHER), 1, 20, as(ME)).getCode());
         assertEquals(403, controller.getScoreLogs(String.valueOf(OTHER), 1, 20, as(ME)).getCode());
-        assertEquals(403, controller.getFeedbackList(String.valueOf(OTHER), "", 1, 20, as(ME)).getCode());
+        assertEquals(403, controller.getFeedbackList(String.valueOf(OTHER), "", as(ME)).getCode());
         assertEquals(403, controller.getUnreadCount(String.valueOf(OTHER), as(ME)).getCode());
 
         verify(teacherService, never()).getByUserId(anyLong());

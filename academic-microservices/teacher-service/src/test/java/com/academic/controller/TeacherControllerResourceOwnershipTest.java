@@ -239,8 +239,53 @@ class TeacherControllerResourceOwnershipTest {
                 "scores", List.of(Map.of("studentId", 3, "courseId", OTHERS_COURSE, "score", 88)));
 
         assertEquals(403, controller.saveScores(body, as(ME)).getCode());
-        assertEquals(403, controller.importScores(body, as(ME)).getCode());
 
+        verify(scoreRecordService, never()).saveScores(any(), any());
+    }
+
+    // ---- W19（2026-10-04）：`/scores/import` 从 JSON 换成 multipart，闸也随之换了一条 ----
+    // 它不再共用 denyUnlessScoreWriteAllowed（那份请求体里没有 teacherId/scores 了），
+    // 改为对请求参数 courseId 走 denyUnlessMyCourse。下面四条把新契约的两个方向都钉住。
+
+    @Test
+    @DisplayName("★ 向**别人**的课程导入成绩 ⇒ 403，且闸在读文件之前（传 null 文件也拦得住）")
+    void importScoresToOthersCourseRejected() {
+        when(courseService.getById(OTHERS_COURSE)).thenReturn(courseOwnedBy(OTHER));
+
+        ApiResponse<Map<String, Object>> res = controller.importScores(null, OTHERS_COURSE, null, null, as(ME));
+
+        assertEquals(403, res.getCode());
+        verify(scoreRecordService, never()).saveScores(any(), any());
+    }
+
+    @Test
+    @DisplayName("★ 无身份头导入成绩 ⇒ 403，且不写库")
+    void importScoresAnonymousDenied() {
+        assertEquals(403, controller.importScores(null, MY_COURSE, null, null, anonymous()).getCode());
+        verify(scoreRecordService, never()).saveScores(any(), any());
+    }
+
+    @Test
+    @DisplayName("本人课程 + 空文件 ⇒ 过闸但明确报错（不是 403、也不是静默成功）")
+    void importScoresOwnCourseEmptyFileRejected() {
+        when(courseService.getById(MY_COURSE)).thenReturn(courseOwnedBy(ME));
+
+        ApiResponse<Map<String, Object>> res = controller.importScores(null, MY_COURSE, null, null, as(ME));
+
+        assertNotEquals(403, res.getCode(), "自己的课程不该被闸拦住");
+        assertTrue(String.valueOf(res.getMessage()).contains("文件为空"), "实际：" + res.getMessage());
+        verify(scoreRecordService, never()).saveScores(any(), any());
+    }
+
+    @Test
+    @DisplayName("★ 学期不是数字 ⇒ 拒绝，不写库（scores.semester 是 int 列，塞 \"2025-2026-1\" 会炸）")
+    void importScoresNonNumericSemesterRejected() {
+        when(courseService.getById(MY_COURSE)).thenReturn(courseOwnedBy(ME));
+
+        ApiResponse<Map<String, Object>> res =
+                controller.importScores(null, MY_COURSE, null, "2025-2026-1", as(ME));
+
+        assertTrue(String.valueOf(res.getMessage()).contains("学期必须是数字"), "实际：" + res.getMessage());
         verify(scoreRecordService, never()).saveScores(any(), any());
     }
 
@@ -391,5 +436,101 @@ class TeacherControllerResourceOwnershipTest {
         verify(scoreRecordService, never()).getScoresByCourseId(anyLong());
         verify(scoreRecordService, never()).getScoresByClassName(anyString());
         verify(classInfoService, never()).getStudentsByClassId(anyLong());
+    }
+
+    // ================================================== W18：两条「跨学生」越权读（2026-10-04）
+
+    /**
+     * 活库真值（写在用例里，防止有人把它"顺手改成"一个恰好能过的数）：
+     * 司明的 {@code student_profile.id} = 3，落在 class 1（计科2306班，班主任 users.id=29 于凤海）。
+     * 所以：本人是 29（OTHER 常量）就能看，本人是 18（ME 常量）不能看。
+     */
+    private static final long STUDENT = 3L;
+
+    /** 司明在课程 1（高等数学，teacher_id=29）有成绩；课程 6（操作系统）是 18 的。 */
+    private static ScoreRecord studentRowInCourse(long studentId, double score) {
+        ScoreRecord r = new ScoreRecord();
+        r.setStudentId(studentId);
+        r.setScore(score);
+        r.setStudentName("司明");
+        return r;
+    }
+
+    @Test
+    @DisplayName("★ W18 学分预测：读**别人班**的学生 ⇒ 403，且统计查询一次都没发生")
+    void creditPrediction_otherClassStudent_denied() {
+        when(classInfoMapper.findClassIdOfProfile(STUDENT)).thenReturn(OTHERS_CLASS);
+        when(classInfoMapper.selectById(OTHERS_CLASS)).thenReturn(classOwnedBy(OTHER));
+
+        assertEquals(403, controller.getCreditPrediction(String.valueOf(STUDENT), as(ME)).getCode(),
+                "教师 18 读于凤海班里的司明，必须被拒");
+        verify(scoreRecordMapper, never()).selectStudentStats(anyLong());
+        verify(scoreRecordMapper, never()).selectStudentName(anyLong());
+    }
+
+    @Test
+    @DisplayName("★ W18 学分预测：读**本人班**的学生 ⇒ 放行（防过度拦截）")
+    void creditPrediction_ownClassStudent_allowed() {
+        when(classInfoMapper.findClassIdOfProfile(STUDENT)).thenReturn(MY_CLASS);
+        when(classInfoMapper.selectById(MY_CLASS)).thenReturn(classOwnedBy(ME));
+        when(scoreRecordMapper.selectStudentStats(STUDENT))
+                .thenReturn(Map.of("completedCredits", 10, "totalCourses", 3, "failedCourses", 1));
+
+        assertEquals(200, controller.getCreditPrediction(String.valueOf(STUDENT), as(ME)).getCode(),
+                "本人班里的学生必须能读");
+    }
+
+    @Test
+    @DisplayName("★ W18 学分预测：学生没有班级（class_id 为 NULL）⇒ 拒绝，不因查不到班而放行")
+    void creditPrediction_studentWithoutClass_denied() {
+        when(classInfoMapper.findClassIdOfProfile(99L)).thenReturn(null);
+
+        assertEquals(403, controller.getCreditPrediction("99", as(ME)).getCode());
+        verify(scoreRecordMapper, never()).selectStudentStats(anyLong());
+    }
+
+    @Test
+    @DisplayName("W18 学分预测：无身份 ⇒ fail-closed（连班级都不查）")
+    void creditPrediction_anonymousDenied() {
+        assertEquals(403, controller.getCreditPrediction(String.valueOf(STUDENT), anonymous()).getCode());
+        verify(classInfoMapper, never()).findClassIdOfProfile(anyLong());
+    }
+
+    @Test
+    @DisplayName("W18 学分预测：管理员（X-Role: 4）⇒ 旁路放行")
+    void creditPrediction_adminAllowed() {
+        when(scoreRecordMapper.selectStudentStats(STUDENT))
+                .thenReturn(Map.of("completedCredits", 1, "totalCourses", 1, "failedCourses", 0));
+
+        assertEquals(200, controller.getCreditPrediction(String.valueOf(STUDENT), asAdmin(1L)).getCode(),
+                "管理员代查必须放行");
+        verify(classInfoMapper, never()).findClassIdOfProfile(anyLong());
+    }
+
+    @Test
+    @DisplayName("★ W18 单课分析：course_id 是**别人**的课 ⇒ 403，且该课成绩一次都没查")
+    void analyze_othersCourse_denied() {
+        when(courseService.getById(OTHERS_COURSE)).thenReturn(courseOwnedBy(OTHER));
+
+        assertEquals(403, controller.analyzeStudentScore(STUDENT, OTHERS_COURSE, as(ME)).getCode(),
+                "教师 18 拿于凤海的课程 1 分析学生，必须被拒");
+        verify(scoreRecordService, never()).getScoresByCourseId(anyLong());
+    }
+
+    @Test
+    @DisplayName("★ W18 单课分析：course_id 是本人的课 ⇒ 放行（防过度拦截）")
+    void analyze_ownCourse_allowed() {
+        when(courseService.getById(MY_COURSE)).thenReturn(courseOwnedBy(ME));
+        when(scoreRecordService.getScoresByCourseId(MY_COURSE))
+                .thenReturn(List.of(studentRowInCourse(STUDENT, 56.5)));
+        when(scoreRecordMapper.selectFailedCourseCount(STUDENT)).thenReturn(1);
+
+        assertEquals(200, controller.analyzeStudentScore(STUDENT, MY_COURSE, as(ME)).getCode());
+    }
+
+    @Test
+    @DisplayName("W18 单课分析：无身份 ⇒ fail-closed")
+    void analyze_anonymousDenied() {
+        assertEquals(403, controller.analyzeStudentScore(STUDENT, MY_COURSE, anonymous()).getCode());
     }
 }
