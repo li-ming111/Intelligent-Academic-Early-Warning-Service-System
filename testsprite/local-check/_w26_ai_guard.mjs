@@ -1,4 +1,8 @@
 // W26：给 AI 诚实性闸打靶。
+// W28（2026-10-08）补两组：① 后端已改为如实报错，但那三条占位串仍留在 `AI_PLACEHOLDERS`
+//   里作**深度防御**（防的是"换代码前启动的旧 jar"和"以后又有人塞进度话术"）⇒ 正对照照旧；
+//   ② 后端**新的**两句"原因"会正常出现在响应体里（见 B 组末尾两条负对照）——
+//   闸把它们误判成占位串的话，会把同一响应里的真数据一起丢掉。
 //
 // ⚠️ 直接 import **真文件**（不是把逻辑抄一遍）—— 抄一遍测的是副本，不是被测代码。
 //    本仓栽过"判据比实现旧一版 ⇒ 假阴性"，也栽过"判据比预期宽/窄"，所以两侧都打。
@@ -42,6 +46,13 @@ const NEGATIVE = [
   ['含相似词但不是整句',       '本次预警分析中未发现异常，请稍后重试其他课程。'],
   ['空对象',                   {}],
   ['null / undefined',         null],
+  // ⭐ W28（2026-10-08）新增：后端现在**如实报错**时用的两句原因，会**正常出现在响应体里**
+  //    （`/ai/analyze/{studentId}` 的 `aiCommentUnavailable` 就是原样带这两句之一）。
+  //    闸若把它们误判成占位串，就会 throw ⇒ **连真正的 scoreAnalysis / riskPrediction 一起丢掉**。
+  //    所以这两句必须走负对照：「如实说明原因」和「冒充结果」长得很像，判据要停得住。
+  ['W28 未配置原因（必须放行）', { scoreAnalysis: { suggestion: '多做题' }, riskPrediction: { riskLevel: '中' },
+    aiCommentUnavailable: '通义千问 API Key 未配置（环境变量 DASHSCOPE_KEY），AI 分析不可用。请配置后再使用该功能。' }],
+  ['W28 调用失败原因（必须放行）', { aiCommentUnavailable: '调用通义千问失败（网络不通或服务端返回错误），本次拿不到分析结果。重试若仍失败，请检查 DASHSCOPE_KEY 与出网情况。' }],
 ]
 for (const [label, resp] of NEGATIVE) {
   check(label, throws(() => aiGuard(resp)), false)

@@ -36,6 +36,39 @@ public class AIController {
     private static final String AI_UNAVAILABLE =
         "没有可用的 AI 回答：通义千问未配置有效的 API Key（环境变量 DASHSCOPE_KEY），或本次调用失败。请配置后再使用该功能。";
 
+    // ⚠️ 2026-10-08（W28）：下面三条**纯 AI** 端点当时没跟上上面那次改动 ——
+    //   `analyze-warning-trend` / `analyze-warning` / `analyze-class-scores` 在模型没答时
+    //   各自塞一句「…分析中，请稍后重试」**并包成 `success:true`**。
+    //   那是一句**永远等不到**的进度话术：没配 key 时无论重试多少次都不会有结果，
+    //   用户只会以为"再等等就有了"。与 AI_UNAVAILABLE 上面记的是同一族（说法与事实不符）。
+    //   现在按**原因**分开说，并回 `error`（不再包 success）。
+    private static final String AI_UNCONFIGURED =
+        "通义千问 API Key 未配置（环境变量 DASHSCOPE_KEY），AI 分析不可用。请配置后再使用该功能。";
+    private static final String AI_CALL_FAILED =
+        "调用通义千问失败（网络不通或服务端返回错误），本次拿不到分析结果。"
+        + "重试若仍失败，请检查 DASHSCOPE_KEY 与出网情况。";
+
+    /**
+     * 纯 AI 端点没拿到结果时，**如实说没拿到**，并把"没配 key"与"调失败"分开说。
+     *
+     * <p>为什么必须分开：前者是**配置问题**（重试一万次也不会有结果），后者是**瞬时故障**
+     * （重试有意义）。合并成一句"请稍后重试"等于把配置问题伪装成瞬时故障。
+     */
+    private ApiResponse<Object> aiUnavailable(String what) {
+        String why = aiUnavailableWhy();
+        log.warn("{}不可用：{}", what, why);
+        return ApiResponse.error("没有可用的" + what + "：" + why);
+    }
+
+    /**
+     * 上一条的"原因"部分，单独抽出来 —— 因为 {@link #analyzeStudent} 拿不到评语时
+     * **不能整个响应回 error**（那边的成绩分析/风险预测是规则算出来的真数据，不该被连坐丢掉），
+     * 只能把原因作为**一个字段**如实带回去。两处必须用同一句话，否则前端看到的原因会打架。
+     */
+    private String aiUnavailableWhy() {
+        return tongYiService.isConfigured() ? AI_CALL_FAILED : AI_UNCONFIGURED;
+    }
+
     public AIController(AIService aiService, TongYiService tongYiService,
                         StudentServiceFeignClient studentServiceClient) {
         this.aiService = aiService;
@@ -264,9 +297,12 @@ public class AIController {
             String aiAnalysis = tongYiService.generalChat(
                     "请分析辅导员ID为" + counselorId + "所管理学生的预警趋势，" +
                     "给出预警分布分析和重点关注建议。300字以内。");
+            if (aiAnalysis == null || aiAnalysis.isBlank()) {
+                return aiUnavailable("预警趋势分析");
+            }
             Map<String, Object> result = new HashMap<>();
             result.put("counselorId", counselorId);
-            result.put("aiAnalysis", aiAnalysis != null ? aiAnalysis : "预警趋势分析中，请稍后重试");
+            result.put("aiAnalysis", aiAnalysis);
             return ApiResponse.success(result);
         } catch (Exception e) {
             log.error("趋势分析失败: {}", e.getMessage());
@@ -290,7 +326,17 @@ public class AIController {
             String comment = tongYiService.generalChat(
                     "请对学号为" + studentId + "的学生做综合学业评价，" +
                     "结合成绩和风险数据给出100字以内的总结和建议。");
-            result.put("aiComment", comment);
+            if (comment != null && !comment.isBlank()) {
+                result.put("aiComment", comment);
+            } else {
+                // ⚠️ 这里**不能**照 analyze-warning 那三条一样 `return aiUnavailable(...)`：
+                //   同一个响应里的 scoreAnalysis / riskPrediction 是**规则算出来的真数据**，
+                //   整个回 error 会把它们一起丢掉（"AI 没答"连坐了"成绩分析没答"）。
+                //   也不能干脆留 `aiComment: null` —— 前端只看到"没这项"，分不清
+                //   "没配 key" 和 "这个学生没评语"。所以补一个**带原因**的字段，说清是哪种。
+                result.put("aiCommentUnavailable", aiUnavailableWhy());
+                log.warn("AI 综合评语不可用：studentId={}", studentId);
+            }
             return ApiResponse.success(result);
         } catch (Exception e) {
             log.error("综合分析失败: {}", e.getMessage());
@@ -304,9 +350,12 @@ public class AIController {
             String aiAnalysis = tongYiService.generalChat(
                     "请分析预警记录ID为" + warningId + "的学业预警，" +
                     "给出该预警的严重性评估、原因分析和建议处理方案。200字以内。");
+            if (aiAnalysis == null || aiAnalysis.isBlank()) {
+                return aiUnavailable("预警分析");
+            }
             Map<String, Object> result = new HashMap<>();
             result.put("warningId", warningId);
-            result.put("aiAnalysis", aiAnalysis != null ? aiAnalysis : "预警分析中，请稍后重试");
+            result.put("aiAnalysis", aiAnalysis);
             return ApiResponse.success(result);
         } catch (Exception e) {
             log.error("预警分析失败: {}", e.getMessage());
@@ -320,9 +369,12 @@ public class AIController {
             String aiAnalysis = tongYiService.generalChat(
                     "请分析班级ID为" + classId + "的学业情况，" +
                     "从整体成绩分布、薄弱环节、需要关注的学生群体等角度给出分析。300字以内。");
+            if (aiAnalysis == null || aiAnalysis.isBlank()) {
+                return aiUnavailable("班级成绩分析");
+            }
             Map<String, Object> result = new HashMap<>();
             result.put("classId", classId);
-            result.put("aiAnalysis", aiAnalysis != null ? aiAnalysis : "班级分析中，请稍后重试");
+            result.put("aiAnalysis", aiAnalysis);
             return ApiResponse.success(result);
         } catch (Exception e) {
             log.error("班级成绩分析失败: {}", e.getMessage());

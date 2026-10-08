@@ -449,12 +449,28 @@ Gateway (8076)
 - 输出按标准模板：总评 → 分析 → 建议
 - 字数限制：个体 300 字、班级 400 字、建议 200 字
 
-**容灾机制：** 通义千问 API 不可用时，自动降级为规则引擎（`AIServiceImpl`），确保核心功能不中断。
+**容灾机制：** ⚠️ 这句话**只对"规则引擎 + AI 评语"那一类端点成立**（`analyze-score`、`predict-risk`、
+`generate-suggestion` 等由 `AIServiceImpl` 先算规则、再叠一句 AI 评语）。
+**纯 AI 端点没有规则兜底**（`analyze-warning-trend` / `analyze-warning` / `analyze-class-scores` /
+`analyze` 的评语 / `chat` / `qa`）—— 模型不答时它们没有"降级结果"可给，只能如实说没拿到，见下。
 
-> ⚠️ **2026-10-05 核对：上面这 18 个端点里，只有 `POST /ai/chat` 有界面入口。**
-> PC 端全部 `/ai/` 调用只出现在**两处** —— `AIAssistant.vue`（悬浮助手）与 `CounselorWarnings.vue`（预警解读）；
-> 其余 **14 个封装方法全仓零调用点**；小程序端**一个 AI 调用都没有**。
-> 也就是说："AI 智能分析"目前**等于"AI 对话"**，其余能力**接口在、界面没有**。见 §八。
+> ⚠️ **2026-10-05（W26）核对：上面这 18 个端点里，当时只有 `POST /ai/chat` 有界面入口。**
+> 同一天晚些已接线：`AiInsight.vue` 把 14 个此前零调用的 `aiAPI` 封装接到了
+> 8 个页面（辅导员/教师/管理端），小程序端仍是 **0 个 AI 调用**。
+
+> ⚠️ **2026-10-08（W28）修正一条"说法与事实不符"的老账。**
+> `analyze-warning-trend` / `analyze-warning` / `analyze-class-scores` 三条**纯 AI** 端点，
+> 在 `tongYiService.generalChat()` 返回 null（没配 `DASHSCOPE_KEY`，或调用失败）时，
+> 原来各自把 `aiAnalysis` 填成一句 **`"…分析中，请稍后重试"` 并包成 `success:true`**。
+> 那是一句**永远等不到**的进度话术：没配 key 时重试一万次也不会有结果，用户只会以为"再等等就有了"。
+> 与 W26 已修的 `/ai/chat`、`/ai/qa` 是同一族，当时漏了这三条。
+> **现在**：模型没答就回 `ApiResponse.error(...)`，并按**原因**分开说 ——
+> "未配置（配置问题，重试无用）" 与 "调用失败（瞬时故障，重试有意义）"。
+> `GET /ai/analyze/{studentId}` 是**特例**：它的 `scoreAnalysis`/`riskPrediction` 是规则算出的**真数据**，
+> 所以不整个回 error，只把 `aiComment` 换成带原因的 `aiCommentUnavailable` 字段。
+> 前端 `utils/ai.js` 的诚实性闸**保留**（防的是"换代码前启动的旧 jar"与"以后又有人塞进度话术"），
+> 判据见 `testsprite/local-check/_w26_ai_guard.mjs`（W28 补了两条负对照：新的"原因"句必须**放行**，
+> 否则 `/ai/analyze/{studentId}` 里的真数据会被连坐丢掉）。单测：`AIControllerAiUnavailableTest`（8 条）。
 
 ---
 

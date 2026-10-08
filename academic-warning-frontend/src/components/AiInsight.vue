@@ -96,6 +96,9 @@ async function run () {
 const LABELS = {
   aiAnalysis: 'AI 分析',
   aiComment: 'AI 综合评语',
+  // `/ai/analyze/{studentId}` 在模型没答时**不丢掉**规则算出的成绩分析/风险预测，
+  // 只把评语换成这个带原因的字段（见 AIController.analyzeStudent 里那段注释）。
+  aiCommentUnavailable: 'AI 综合评语（未生成）',
   aiRecommendations: 'AI 建议',
   aiRiskAnalysis: 'AI 风险解读',
   aiTrendAnalysis: 'AI 趋势解读',
