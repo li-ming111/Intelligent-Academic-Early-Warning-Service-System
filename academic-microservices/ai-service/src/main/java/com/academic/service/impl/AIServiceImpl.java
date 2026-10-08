@@ -33,6 +33,18 @@ public class AIServiceImpl implements AIService {
         Map<String, Object> result = new HashMap<>();
         result.put("analyzedAt", System.currentTimeMillis());
 
+        // 「没取到」与「确实没有」必须分开说（W26）。
+        // 上游 AIController.analyzeScores 去 student-service 拉成绩失败时带的是这个键，
+        // 若不先判它，就会把这句"暂无成绩数据，请先录入成绩"回给一个库里有 29 行成绩的学生。
+        Object unavailable = request.get("scoresUnavailable");
+        if (unavailable != null) {
+            result.put("totalCourses", 0);
+            result.put("averageScore", 0.0);
+            result.put("scoresAvailable", false);
+            result.put("suggestion", "读取不到成绩数据（" + unavailable + "），因此本次没有可分析的成绩");
+            return result;
+        }
+
         // 从请求中提取成绩数据
         List<Map<String, Object>> scores = (List<Map<String, Object>>) request.get("scores");
         if (scores == null || scores.isEmpty()) {

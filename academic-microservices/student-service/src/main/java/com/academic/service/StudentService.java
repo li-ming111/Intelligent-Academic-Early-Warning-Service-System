@@ -14,8 +14,8 @@ public interface StudentService {
     Object getStudentWarnings(Long studentId);
     /** 获取学生信息 */
     Object getStudentInfo(Long studentId);
-    /** 学生注册 */
-    Object registerStudent(Object request);
+    // registerStudent 已删（2026-10-08 W27）：实现体只有 `return "注册成功";`，零写库。
+    // 注册在 user-service 的 `/auth/register/student`。
     /** 获取历史GPA数据 */
     Object getHistoryBenchmark(Long studentId);
     /** 获取班级信息 */

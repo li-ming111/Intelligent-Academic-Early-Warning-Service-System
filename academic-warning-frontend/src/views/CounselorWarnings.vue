@@ -116,6 +116,12 @@
         <el-descriptions-item label="处理时间">{{ detailRow.handledAt ? formatTime(detailRow.handledAt) : '未处理' }}</el-descriptions-item>
         <el-descriptions-item label="处理意见" :span="2">{{ detailRow.handleResult || '未填写' }}</el-descriptions-item>
       </el-descriptions>
+      <!-- AI 预警分析（W26）：`aiAPI.analyzeWarning` 此前全仓零调用。
+           ⚠️ 该端点在没配 DASHSCOPE_KEY 时会用占位串冒充成功，
+           闸在 utils/ai.js 里把那种"结果"换成一句实话，页面不把它当分析。 -->
+      <div v-if="detailRow" class="detail-ai">
+        <AiInsight title="AI 预警分析" :load="aiAnalyzeWarning" hint="分析这条预警的严重性与原因" />
+      </div>
       <template #footer>
         <el-button @click="detailDialogVisible = false">关闭</el-button>
         <el-button
@@ -137,6 +143,7 @@ import { getUserId } from '@/utils/userUtils'
 import { warningStatus, warningStatusText, warningStatusTagType, isPendingWarning, WARNING_STATUS } from '@/utils/warning'
 // 2026-10-02（W4.4）：等级↔文案/颜色同样只留 utils/score.js 一份，本页不再手写。
 import { warningLevelText, warningLevelTagType } from '@/utils/score'
+import AiInsight from '@/components/AiInsight.vue'
 
 const handleDialogVisible = ref(false)
 const detailDialogVisible = ref(false)
@@ -222,6 +229,13 @@ const viewDetails = (row) => {
 
 /** 时间显示：`2026-10-01T10:00:00` → `2026-10-01 10:00:00`。取不到显示 `--`。 */
 const formatTime = (v) => (v ? String(v).replace('T', ' ').substring(0, 19) : '--')
+
+/** AI 预警分析（W26）。端点收的是**预警行 id**，不是学生 id。 */
+const aiAnalyzeWarning = () => {
+  const w = detailRow.value
+  if (!w || w.id == null) throw new Error('请先打开一条预警详情')
+  return aiAPI.analyzeWarning(w.id)
+}
 
 const generateOpinion = async () => {
   if (!handleForm.value.warningId) {
@@ -329,4 +343,6 @@ const generateOpinion = async () => {
   font-weight: bold;
   color: #333;
 }
+
+.detail-ai { margin-top: 12px; }
 </style>

@@ -103,6 +103,15 @@
             <li>如有异议，可提交成绩申诉</li>
           </ul>
         </div>
+
+        <!-- AI 预警分析（W26）：这两个 aiAPI 端点此前全仓零调用。
+             注意底下那个「生成应对建议」要先把本页的等级口径映射成后端认的词，
+             否则后端 switch 落到 default、算出"正常"报警 —— 见 aiGenerateWarning 的注释。 -->
+        <el-divider />
+        <div class="detail-ai">
+          <AiInsight title="AI 预警分析" :load="aiAnalyzeWarning" hint="分析这条预警的严重性与原因" />
+          <AiInsight title="AI 生成应对建议" :load="aiGenerateWarning" hint="按这条预警的等级与说明生成建议" />
+        </div>
       </div>
     </el-dialog>
 
@@ -135,8 +144,9 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
-import { studentAPI } from '@/api/index'
+import { studentAPI, aiAPI } from '@/api/index'
 import { getUserId } from '@/utils/userUtils'
+import AiInsight from '@/components/AiInsight.vue'
 import { warningLevelText, warningLevelTagType } from '@/utils/score'
 import { warningStatusText, warningStatusTagType } from '@/utils/warning'
 
@@ -251,6 +261,37 @@ async function submitAppeal() {
     await loadAppeals()
   } catch (e) { ElMessage.error('提交失败') }
 }
+
+// ===== AI 预警分析（W26）=====
+// 打 `/ai/analyze-warning/{warningId}`，要的是**预警行 id**（不是学生 id）。
+function aiAnalyzeWarning () {
+  const w = selectedWarning.value
+  if (!w || w.id == null) throw new Error('请先打开一条预警详情')
+  return aiAPI.analyzeWarning(w.id)
+}
+
+/** 本页显示的等级措辞 → 后端 `generateWarning` 认的词。只映射这三种。 */
+const RISK_LEVEL_MAP = { 严重: '高风险', 中度: '中风险', 轻度: '低风险' }
+
+function aiGenerateWarning () {
+  const w = selectedWarning.value
+  if (!w) throw new Error('请先打开一条预警详情')
+  // ⚠️ 后端 `AIServiceImpl.generateWarning:372-389` 的 switch **只认
+  //    「高风险 / 中风险 / 低风险」这三个中文词**，其余一律落到 default
+  //    ⇒ warningLevelName="正常"、warningLevel=0。而本页 `translateLevel()` 给出的是
+  //    「严重 / 中度 / 轻度」—— 直接透传的话，一条严重预警会算出一句"正常"。
+  //    所以这里必须显式映射；认不出来的等级宁可报错，也不让它落到 default 编一个"正常"。
+  const riskLevel = RISK_LEVEL_MAP[w.warningLevel]
+  if (!riskLevel) {
+    throw new Error(`这条预警的等级「${w.warningLevel}」不在已知映射里，无法生成建议`)
+  }
+  return aiAPI.generateWarning({
+    studentName: localStorage.getItem('name') || '该学生',
+    riskLevel,
+    // 风险因素用**这条预警自己的说明**，不编造
+    riskFactors: [w.description].filter(Boolean)
+  })
+}
 </script>
 
 <style scoped>
@@ -329,6 +370,7 @@ async function submitAppeal() {
 .detail-suggest h4 { display: flex; align-items: center; gap: 6px; font-size: 14px; color: #92400e; margin: 0 0 10px; }
 .detail-suggest ul { margin: 0; padding-left: 20px; }
 .detail-suggest li { font-size: 13px; color: #78716c; margin-bottom: 4px; }
+.detail-ai { display: flex; flex-direction: column; gap: 10px; }
 
 @media (max-width: 768px) {
   .stats-row { grid-template-columns: repeat(2, 1fr); }

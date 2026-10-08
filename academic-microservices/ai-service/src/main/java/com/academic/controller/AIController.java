@@ -212,22 +212,49 @@ public class AIController {
         }
     }
 
+    /**
+     * 单生成绩分析。**成绩由本服务自己去 student-service 取**（前端不用传）。
+     *
+     * <p>2026-10-05（W26）修两处，两处都会让这个端点"看起来有结果、其实没数据"：
+     *
+     * <ol>
+     *   <li><b>没解包</b>：Feign 声明是 {@code ApiResponse<Object>}，旧代码把**整个信封**塞进
+     *       {@code request.put("scores", scores)}，而 {@code AIServiceImpl.analyzeScore} 直接
+     *       {@code (List<Map>) request.get("scores")} ⇒ ClassCastException。因下面第 2 条
+     *       让这行永远走不到，这个 bug 一直是**潜伏**的（一旦身份头通了就会立刻炸）。</li>
+     *   <li><b>取不到被说成"没有"</b>：旧代码在 Feign 抛异常时只 log.warn 就往下走，
+     *       于是 {@code analyzeScore} 看到 {@code scores == null}，回一句
+     *       "暂无成绩数据，请先录入成绩" —— 而该生库里有 29 行成绩。这就是本仓最忌讳的
+     *       "把'没拿到'渲染成'确实没有'"。现在改为显式传 {@code scoresUnavailable}，
+     *       由 {@code AIServiceImpl} 如实说明"读不到"。实测见
+     *       {@code testsprite/local-check/_w26_ai_scores_probe.mjs}。</li>
+     * </ol>
+     */
     @GetMapping("/analyze-scores/{studentId}")
     public ApiResponse<Object> analyzeScores(@PathVariable String studentId) {
         try {
             Map<String, Object> request = new HashMap<>();
             request.put("studentId", studentId);
-            // 尝试从 student-service 获取真实成绩数据
             try {
-                Object scores = studentServiceClient.getStudentScores(studentId);
-                request.put("scores", scores);
+                ApiResponse<Object> resp = studentServiceClient.getStudentScores(studentId);
+                if (resp != null && resp.getCode() == 200 && resp.getData() != null) {
+                    // ⭐ 必须取 getData()：塞整个信封进去会在 analyzeScore 里强转炸掉
+                    request.put("scores", resp.getData());
+                } else {
+                    String why = resp == null
+                            ? "成绩服务无响应"
+                            : ("成绩服务返回 code=" + resp.getCode() + "：" + resp.getMessage());
+                    log.warn("读取学生成绩失败: studentId={}, {}", studentId, why);
+                    request.put("scoresUnavailable", why);
+                }
             } catch (Exception ex) {
-                log.warn("无法获取学生成绩数据: {}", ex.getMessage());
+                log.warn("无法获取学生成绩数据: studentId={}, {}", studentId, ex.getMessage());
+                request.put("scoresUnavailable", "调用成绩服务失败：" + ex.getMessage());
             }
             return ApiResponse.success(aiService.analyzeScore(request));
         } catch (Exception e) {
-            log.error("成绩分析失败: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            log.error("成绩分析失败: {}", e.getMessage(), e);
+            return ApiResponse.error("分析失败: " + e.getMessage());
         }
     }
 

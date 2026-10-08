@@ -445,24 +445,40 @@ const approveUser = async (row) => {
 }
 
 const toggleStatus = async (row) => {
+  const userId = row.id
+  if (!userId) {
+    ElMessage.error('用户ID不存在')
+    return
+  }
+  // W26：加二次确认。停用账号是**影响真实登录**的操作，此前点一下就执行、没有任何提示。
+  const label = row.name || row.username || userId
+  const action = row.status === 1 ? '禁用' : row.status === 0 ? '启用' : '解锁'
   try {
-    const userId = row.id
-    if (!userId) {
-      ElMessage.error('用户ID不存在')
-      return
-    }
+    await ElMessageBox.confirm(
+      row.status === 1
+        ? `禁用后「${label}」将无法登录，确认禁用吗？`
+        : `确认${action}「${label}」？`,
+      `确认${action}账号`,
+      { type: 'warning', confirmButtonText: action, cancelButtonText: '取消' }
+    )
+  } catch (e) {
+    return // 用户取消
+  }
+  try {
     await adminAPI.toggleUserStatus(userId)
-    // 0→1 启用, 1→0 禁用, 2→1 解锁
-    if (row.status === 0 || row.status === 2) {
-      row.status = 1
-      ElMessage.success('用户已启用')
+    // ⚠️ 原来这里是就地改 `row.status`（0→1 启用 / 1→0 禁用 / 2→1 解锁）—— 界面自己猜结果。
+    //    后端是**严格取反**（status==1→0，否则→1），到底落在哪个值以库为准；
+    //    而且当前页可能带筛选/分页，就地改会让视图与库不一致 ⇒ 重新拉一遍。
+    await loadUsers()
+    const fresh = (userList.value || []).find(u => u.id === userId)
+    if (fresh) {
+      ElMessage.success(fresh.status === 1 ? '用户已启用' : '用户已禁用')
     } else {
-      row.status = 0
-      ElMessage.success('用户已禁用')
+      ElMessage.success('状态已更新')
     }
   } catch (error) {
     console.error('状态更新失败:', error)
-    ElMessage.error('操作失败')
+    ElMessage.error('操作失败：' + (error?.message || '网络错误'))
   }
 }
 

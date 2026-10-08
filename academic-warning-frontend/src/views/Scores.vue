@@ -104,6 +104,17 @@
       </el-table>
     </div>
 
+    <!-- AI 成绩分析（W26）：这两个 aiAPI 端点此前全仓零调用。
+         ⚠️ `analyzeScores` 后端有个已知的解包 bug（AIController:221-223 没解 `ApiResponse`，
+         强转 List 抛 ClassCastException ⇒ 稳定回"分析失败…"）。**不假装它成功** ——
+         失败时 AiInsight 会如实把后端那句话显示出来，不编造分析结论。 -->
+    <div class="table-card" style="margin-top: 16px;">
+      <div class="ai-row">
+        <AiInsight title="AI 成绩分析" :load="aiAnalyzeScores" hint="按你的成绩做分析" />
+        <AiInsight title="AI 趋势分析" :load="aiAnalyzeBehavior" hint="按各学期成绩看趋势" />
+      </div>
+    </div>
+
     <!-- 课程详情弹窗 -->
     <el-dialog v-model="detailVisible" title="成绩详情" width="420px" :close-on-click-modal="true">
       <div class="detail-card" v-if="detailRow">
@@ -178,8 +189,9 @@
 import { ref, computed, onMounted, watch, nextTick } from 'vue'
 import * as echarts from 'echarts'
 import { ElMessage } from 'element-plus'
-import { studentAPI } from '@/api/index'
+import { studentAPI, aiAPI } from '@/api/index'
 import { getUserId } from '@/utils/userUtils'
+import AiInsight from '@/components/AiInsight.vue'
 import { saveBlobAsFile, describeDownloadError } from '@/utils/download'
 // 成绩判定统一走这里。不要在页面里直接写 `scoreTotal < 60` ——
 // JS 中 `null < 60` 为 true，会把"期末未录入"渲染成挂科。
@@ -559,6 +571,44 @@ async function exportScores() {
     ElMessage.error(await describeDownloadError(e))
   }
 }
+
+// ===== AI 成绩分析（W26）=====
+const currentUid = () => {
+  const id = getUserId()
+  if (!id) throw new Error('请先登录')
+  return id
+}
+// 打 `/ai/analyze-scores/{studentId}`，后端内部转调 `/students/scores/{id}` ⇒ 传 users.id
+const aiAnalyzeScores = () => aiAPI.analyzeScores(currentUid())
+
+async function aiAnalyzeBehavior() {
+  // 后端要的是**按学期聚合**的 {semester, averageScore, gpa, courseCount}
+  // （见 AIServiceImpl.analyzeBehavior:232-239 —— 只读这四个 key，趋势比的是
+  //   first 与 last 的 averageScore）。GPA 用与 calcStats() **同一个口径**
+  // （学分加权、只算 gradePoint 非空的行），免得 AI 拿到一个跟页面上那个数对不上的 GPA。
+  const semesterScores = availableSemesters.value.slice().sort().map(sem => {
+    const rows = scoresList.value.filter(s => (s.semester || '') === sem)
+    const scored = rows
+      .map(s => toNumber(s.scoreTotal ?? s.totalScore ?? s.score))
+      .filter(v => v !== null)
+    const avg = scored.length ? scored.reduce((a, v) => a + v, 0) / scored.length : 0
+    let gpaSum = 0, creditSum = 0
+    rows.forEach(c => {
+      const gp = toNumber(c.gradePoint)
+      const cr = toNumber(c.credits)
+      if (gp === null || cr === null) return
+      gpaSum += gp * cr
+      creditSum += cr
+    })
+    return {
+      semester: sem,
+      averageScore: Number(avg.toFixed(2)),
+      gpa: Number((creditSum > 0 ? gpaSum / creditSum : 0).toFixed(2)),
+      courseCount: rows.length
+    }
+  })
+  return aiAPI.analyzeBehavior({ studentId: currentUid(), semesterScores })
+}
 </script>
 
 <style scoped>
@@ -591,6 +641,9 @@ async function exportScores() {
 
 /* 表格 */
 .table-card { background: #fff; border-radius: 12px; padding: 16px; box-shadow: 0 1px 3px rgba(0,0,0,.06); }
+/* AI 成绩分析（W26）：两块并排；窄屏叠起来。 */
+.ai-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+@media (max-width: 900px) { .ai-row { grid-template-columns: 1fr; } }
 .table-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; font-size: 15px; font-weight: 600; color: #18181b; }
 /* 表头文字和图标在一行 */
 :deep(.el-table th .cell) { display: flex; align-items: center; justify-content: center; white-space: nowrap; }

@@ -23,6 +23,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * 预警自动扫描定时任务。
@@ -59,6 +60,26 @@ public class WarningScheduledTask {
     /** {@code warning_release_records.release_reason}：成绩恢复导致系统自动解除。 */
     static final String RELEASE_REASON_AUTO = "auto_recovered";
 
+    /**
+     * 「正在扫描」标志。定时任务与手动触发共用 {@link #runScan(boolean)}，此前**没有任何互斥** ——
+     * 同一条路径可以被 02:00 的定时任务和一次手动触发同时跑。
+     *
+     * <p>串行重复本来由判重键（学生 + 挂科门数）挡住，但**并发**挡不住：两次扫描会读到同一份成绩
+     * 快照，各自认为"这个人还没预警"，于是各插一条。加一个按钮之后（管理端可手动触发）这个竞态从
+     * "理论上会" 变成 "点两下就会"。
+     */
+    private final AtomicBoolean scanning = new AtomicBoolean(false);
+
+    /**
+     * 一轮扫描的结果。
+     *
+     * @param generated 本次**新生成**的预警条数
+     * @param released  本次**自动解除**的预警条数（此前只写日志，界面上看不到）
+     * @param skipped   是否因为已有一轮扫描在进行而被跳过（此时 generated/released 都是 0）
+     */
+    public record ScanResult(int generated, int released, boolean skipped) {
+    }
+
     private final ScoreReadMapper scoreReadMapper;
     private final AcademicWarningMapper academicWarningMapper;
     private final WarningRuleMapper warningRuleMapper;
@@ -82,8 +103,9 @@ public class WarningScheduledTask {
     public void scanAndGenerateWarnings() {
         log.info("========== 自动预警扫描开始 ==========");
         try {
-            int generated = runScan(true);
-            log.info("========== 自动预警扫描完成，共生成 {} 条预警 ==========", generated);
+            ScanResult result = runScan(true);
+            log.info("========== 自动预警扫描完成，共生成 {} 条预警，自动解除 {} 条 ==========",
+                    result.generated(), result.released());
         } catch (Exception e) {
             log.error("自动预警扫描异常: {}", e.getMessage(), e);
         }
@@ -93,9 +115,9 @@ public class WarningScheduledTask {
     @Scheduled(fixedRate = 1800000)
     public void incrementalScan() {
         try {
-            int generated = runScan(false);
-            if (generated > 0) {
-                log.info("增量预警扫描发现 {} 名新预警学生", generated);
+            ScanResult result = runScan(false);
+            if (result.generated() > 0) {
+                log.info("增量预警扫描发现 {} 名新预警学生", result.generated());
             }
         } catch (Exception e) {
             log.error("增量扫描异常: {}", e.getMessage(), e);
@@ -105,23 +127,57 @@ public class WarningScheduledTask {
     /**
      * 手动全量扫描一次，供管理端触发接口与演示使用（否则只能等到凌晨 2 点）。
      *
-     * @return 本次新生成的预警条数（不含自动解除的条数，解除数走日志）
+     * @return 本次新生成的预警条数（不含自动解除的条数）—— 只关心条数的调用方用它
      */
     public int triggerNow() {
+        return runScan(true).generated();
+    }
+
+    /**
+     * 手动全量扫描一次，并把一轮扫描的**全部**产出告诉调用方。
+     *
+     * <p>与 {@link #triggerNow()} 走同一条互斥路径。加这个入口是因为 {@code triggerNow()} 只回
+     * 「新生成」条数，而一轮扫描其实还做**自动解除**（{@link #releaseRecoveredWarnings}）——
+     * 界面若只显示"新生成 0 条"，会把"解除了 3 条"这件事藏起来（W26）。
+     *
+     * @return 含 generated / released / skipped 三项的结果，供接口原样回给前端
+     */
+    public ScanResult triggerNowDetailed() {
         return runScan(true);
     }
 
     /**
      * 扫描并生成预警，同时解除已恢复的预警。
      *
+     * <p>**互斥入口**：定时任务与手动触发都走这里，同一时刻只允许一轮。已经在跑时本次直接跳过
+     * （返回 {@link ScanResult#skipped()} = true），而不是排队 —— 排队会让连点按钮的人以为
+     * "点了 5 次所以要多扫 5 遍"，跳过才是他要的语义。
+     *
      * @param verbose 是否输出完整诊断日志。全量扫描传 {@code true}；
      *                每 30 分钟一次的增量扫描传 {@code false}，避免规则诊断日志刷屏
      */
-    private int runScan(boolean verbose) {
+    private ScanResult runScan(boolean verbose) {
+        if (!scanning.compareAndSet(false, true)) {
+            log.warn("已有一轮预警扫描在进行中，本次触发被跳过（不做排队）");
+            return new ScanResult(0, 0, true);
+        }
+        try {
+            return doScan(verbose);
+        } finally {
+            scanning.set(false);
+        }
+    }
+
+    /**
+     * 一轮扫描的实际逻辑。**只能经 {@link #runScan(boolean)} 调用** —— 互斥在那里。
+     *
+     * @return 本次新生成条数 + 自动解除条数
+     */
+    private ScanResult doScan(boolean verbose) {
         List<FailCountRule> rules = loadRules(verbose);
         if (rules.isEmpty()) {
             log.warn("没有可用的挂科数预警规则，本次扫描不生成预警");
-            return 0;
+            return new ScanResult(0, 0, false);
         }
 
         // ==================== 判重口径 ====================
@@ -202,7 +258,7 @@ public class WarningScheduledTask {
         if (released > 0) {
             log.info("本轮扫描自动解除 {} 条已恢复的预警", released);
         }
-        return generated;
+        return new ScanResult(generated, released, false);
     }
 
     /**

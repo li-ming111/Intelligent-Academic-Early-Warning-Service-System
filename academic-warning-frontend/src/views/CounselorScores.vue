@@ -31,6 +31,20 @@
       </div>
     </el-card>
 
+    <!-- AI 班级学业分析（W26）：`aiAPI.analyzeClassScores` 此前全仓零调用。
+         端点是**纯 AI**（后端直接问通义千问），没配 DASHSCOPE_KEY 时会拿占位串
+         冒充成功 —— 闸在 utils/ai.js，命中就换成一句实话，不当作分析结果渲染。 -->
+    <el-card v-if="selectedClass" style="margin-bottom: 20px;">
+      <template #header>
+        <div class="card-header">AI 班级学业分析</div>
+      </template>
+      <AiInsight
+        title="AI 班级分析"
+        :load="aiAnalyzeClass"
+        hint="把当前选中的班级交给 AI 做整体学业分析（需要后端配置 DASHSCOPE_KEY）"
+      />
+    </el-card>
+
     <el-row :gutter="20" style="margin-bottom: 20px;">
       <el-col :xs="24" :sm="12" :md="6">
         <el-card shadow="hover">
@@ -109,7 +123,8 @@
 import { ref, onMounted, onUnmounted } from 'vue'
 import * as echarts from 'echarts'
 import { ElMessage } from 'element-plus'
-import { counselorAPI } from '@/api/index'
+import { counselorAPI, aiAPI } from '@/api/index'
+import AiInsight from '@/components/AiInsight.vue'
 import { getUserId } from '@/utils/userUtils'
 import { toNumber } from '@/utils/score'
 
@@ -313,6 +328,12 @@ const analyzeScores = async () => {
       ElMessage.success('分析完成，共 ' + allScores.value.length + ' 条成绩记录')
     }
   } finally { loading.value = false }
+}
+
+/** AI 班级学业分析（W26）。`selectedClass` 在这个页面绑的就是**班级 id**（`:value="cls.id"`）。 */
+const aiAnalyzeClass = () => {
+  if (!selectedClass.value) throw new Error('请先选择班级')
+  return aiAPI.analyzeClassScores(selectedClass.value)
 }
 
 const refreshData = async () => {

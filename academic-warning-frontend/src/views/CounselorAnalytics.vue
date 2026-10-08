@@ -70,13 +70,28 @@
       <div class="cap-head"><span class="cap-title">近6个月预警趋势</span></div>
       <div ref="trendChart" style="height:320px"></div>
     </div>
+
+    <!-- AI 预警趋势分析（W26）：`aiAPI.analyzeWarningTrend` 此前全仓零调用。
+         端点是**纯 AI**（后端直接问通义千问），没配 DASHSCOPE_KEY 时会拿占位串
+         冒充成功 —— 闸在 utils/ai.js，命中就换成一句实话，不当作分析结果渲染。 -->
+    <div class="ca-panel" style="margin: 0 24px 24px;">
+      <div class="cap-head"><span class="cap-title">AI 预警趋势分析</span></div>
+      <div style="padding: 0 16px 16px;">
+        <AiInsight
+          title="AI 趋势解读"
+          :load="aiWarningTrend"
+          hint="把本人管辖范围内的预警趋势交给 AI 解读（需要后端配置 DASHSCOPE_KEY）"
+        />
+      </div>
+    </div>
   </div>
 </template>
 
 <script setup>
 import { ref, reactive, onMounted, onUnmounted, computed } from 'vue'
 import * as echarts from 'echarts'
-import { counselorAPI } from '@/api/index'
+import { counselorAPI, aiAPI } from '@/api/index'
+import AiInsight from '@/components/AiInsight.vue'
 import { getUserId } from '@/utils/userUtils'
 import { buildWarningTrend, warningLevelColor, warningLevelText } from '@/utils/score'
 
@@ -86,6 +101,13 @@ const stats = reactive({ creditInsufficientRate:0, totalStudents:0, warningHandl
 
 let wc=null, ec=null, tc=null
 const getCid = () => localStorage.getItem('counselorId') || getUserId()
+
+/** AI 预警趋势分析（W26）。端点收的是**辅导员 id** —— 与页面其余取数同一个口径。 */
+const aiWarningTrend = () => {
+  const cid = getCid()
+  if (!cid) throw new Error('取不到当前辅导员 id，无法做趋势分析')
+  return aiAPI.analyzeWarningTrend(cid)
+}
 
 onMounted(async () => { await loadData() })
 onUnmounted(() => { wc?.dispose(); ec?.dispose(); tc?.dispose() })

@@ -21,13 +21,8 @@ public interface CounselorService extends IService<CounselorProfile> {
      */
     CounselorProfile getByCounselorId(String counselorId);
 
-    /**
-     * 注册辅导员
-     * @param counselorProfile 辅导员信息
-     * @return 是否注册成功
-     */
-    boolean register(CounselorProfile counselorProfile);
-
+    // register 已删（2026-10-08 W27）：只插 counselor_profiles 档案行，不建账号、不设口令，
+    // 且 user_id 无外键约束 ⇒ 能插出孤儿档案。零调用方，注册在 `/auth/register/counselor`。
     /**
      * 更新辅导员信息
      * @param counselorProfile 辅导员信息

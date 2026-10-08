@@ -313,7 +313,7 @@
 <script setup>
 import { ref, onMounted, computed } from 'vue'
 import { adminAPI } from '@/api/index'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Refresh, Edit, Delete, WarningFilled } from '@element-plus/icons-vue'
 
 // 数据
@@ -422,7 +422,15 @@ const loadUsers = async () => {
     users.value = list.map(u => ({
       ...u,
       role: u.role || 1,
-      enabled: u.status !== 1 ? 1 : 0
+      // 2026-10-05（W26）**修的是方向**：原来写的是 `u.status !== 1 ? 1 : 0`，
+      // 于是 `enabled` 表达的是「**不**活跃」，而下面模板把它当「活跃」用 ——
+      //   · status=1（真活跃）→ enabled=0 → tag 显示「禁用」、按钮显示「启用」
+      //     ⇒ 点「启用」把 status 翻成 0，**把正在用的人锁在门外**；
+      //   · status=0（真停用）→ enabled=1 → tag 显示「启用」、按钮显示「禁用」
+      //     ⇒ 点「禁用」反而把 status 翻成 1，**把人放进来**。
+      // 后端 `POST /admin/users/{id}/toggle-status` 是**严格取反**（status==1→0，否则→1），
+      // 所以 `enabled=1` 必须等价于 `status==1`。方向反了整整一个来回。
+      enabled: u.status === 1 ? 1 : 0
     }))
     totalUsers.value = Number(response?.total) || list.length
   } catch (error) {
@@ -455,14 +463,29 @@ const updateUserRole = async (user) => {
   }
 }
 
-// 切换用户状态
+// 切换用户状态（W26：加二次确认 + 改成重新拉取）
 const toggleUserStatus = async (user) => {
+  const label = user.name || user.username || user.id
+  const willDisable = user.enabled === 1   // 已修方向：enabled=1 ⟺ status=1 ⟺ 活跃
+  try {
+    await ElMessageBox.confirm(
+      willDisable
+        ? `禁用后「${label}」将无法登录，确认禁用吗？`
+        : `确认启用「${label}」？`,
+      willDisable ? '确认禁用账号' : '确认启用账号',
+      { type: 'warning', confirmButtonText: willDisable ? '禁用' : '启用', cancelButtonText: '取消' }
+    )
+  } catch (e) {
+    return // 用户取消
+  }
   try {
     await adminAPI.toggleUserStatus(user.id)
-    user.enabled = user.enabled === 1 ? 0 : 1
-    ElMessage.success(user.enabled === 1 ? '用户已启用' : '用户已禁用')
+    // ⚠️ 原来这里是就地翻 `user.enabled` —— 界面自己猜了一个结果。后端是**严格取反**
+    //    （status 1⇄0，连 status=2 锁定也会被翻成 1），到底变成什么以库为准 ⇒ 重新拉一遍。
+    await loadUsers()
+    ElMessage.success(willDisable ? '用户已禁用' : '用户已启用')
   } catch (error) {
-    ElMessage.error('更新用户状态失败')
+    ElMessage.error('更新用户状态失败：' + (error?.message || '网络错误'))
   }
 }
 

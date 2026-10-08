@@ -186,6 +186,42 @@ public interface ScoreStatMapper {
     List<Map<String, Object>> selectCourseStatsAll();
 
     /**
+     * 挂科学生清单（**全库**，供管理员导出用）。列：{@code profile_id}（{@code student_profile.id}）/
+     * {@code student_no}（学号）/ {@code student_name} / {@code failed_courses} /
+     * {@code lowest_score}。只含至少挂一门的，按挂科门数降序。
+     *
+     * <p><b>为什么单独加这一条</b>：{@code AdminController#exportInsufficientStudents} 原先读的是
+     * {@code score_record}（教师录入**暂存表**）整表，再在 Java 里逐行数
+     * {@code scoreTotal < 60} —— 三个问题：
+     * <ol>
+     *   <li>数据源不是 {@code scores}，与预警引擎、学生端、学院端统计**分叉**，
+     *       同一名学生的"不及格科目数"在导出件里和页面上对不上（{@link ScoreCaliber} 明令禁止）；</li>
+     *   <li>没有按课程去重：同一门课重修两次都挂，会被数成 <b>2 门</b>；</li>
+     *   <li>{@code 60} 是手写的，没有走 {@link ScoreCaliber#PASS_LINE}。</li>
+     * </ol>
+     * 这里改为聚合查询，口径全部交给 {@link ScoreCaliber#LATEST_VALID_SCORE}
+     * （每门课取最新一次且期末已录入的成绩）。
+     *
+     * <p>{@code lowest_score} 只统计<b>挂科那些课</b>里的最低分 —— 与表头"最低分"的语义一致，
+     * 不能被该生的高分课拉高。{@code MIN(CASE WHEN … THEN … END)} 的 {@code ELSE} 默认 NULL，
+     * 而 {@code MIN} 忽略 NULL，正好是这个语义（不能写成 {@code ELSE 0}，那会恒为 0）。
+     *
+     * <p>{@code HAVING failed_courses > 0}：{@code failed_courses} 是 SELECT 里的别名，
+     * MySQL 允许在 HAVING 里引用别名。这样"零挂科"的学生不会出现在导出件里。
+     */
+    @Select("SELECT sp.id AS profile_id, sp.student_id AS student_no, sp.name AS student_name, "
+          + "       SUM(CASE WHEN v.score_total < " + ScoreCaliber.PASS_LINE
+          + "                THEN 1 ELSE 0 END) AS failed_courses, "
+          + "       MIN(CASE WHEN v.score_total < " + ScoreCaliber.PASS_LINE
+          + "                THEN v.score_total END) AS lowest_score "
+          + "  FROM " + ScoreCaliber.LATEST_VALID_SCORE + " v "
+          + "  JOIN student_profile sp ON sp.id = v.student_id "
+          + " GROUP BY sp.id, sp.student_id, sp.name "
+          + "HAVING failed_courses > 0 "
+          + " ORDER BY failed_courses DESC, sp.student_id")
+    List<Map<String, Object>> selectInsufficientStudentsAll();
+
+    /**
      * 班级成绩对比。列：{@code class_id} / {@code class_name} / {@code student_count} /
      * {@code record_count} / {@code avg_score} / {@code pass_count}。
      *

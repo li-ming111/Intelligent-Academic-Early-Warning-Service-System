@@ -14,13 +14,8 @@ public interface TeacherService extends IService<TeacherProfile> {
      */
     TeacherProfile getByUserId(Long userId);
 
-    /**
-     * 注册教师
-     * @param teacherProfile 教师信息
-     * @return 是否注册成功
-     */
-    boolean register(TeacherProfile teacherProfile);
-
+    // register 已删（2026-10-08 W27）：它只插 teacher_profile 档案行，不建账号、不设口令，
+    // 且零调用方。注册在 user-service 的 `/auth/register/teacher`。
     /**
      * 更新教师信息
      * @param teacherProfile 教师信息

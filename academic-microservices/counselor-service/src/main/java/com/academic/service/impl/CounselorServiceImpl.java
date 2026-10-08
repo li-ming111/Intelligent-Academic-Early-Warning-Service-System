@@ -45,21 +45,9 @@ public class CounselorServiceImpl extends ServiceImpl<CounselorProfileMapper, Co
         return baseMapper.selectOne(wrapper);
     }
 
-    @Override
-    public boolean register(CounselorProfile counselorProfile) {
-        // 检查辅导员ID是否已存在
-        CounselorProfile existingCounselor = getByCounselorId(counselorProfile.getCounselorId());
-        if (existingCounselor != null) {
-            return false;
-        }
-
-        // 设置创建时间和更新时间
-        counselorProfile.setCreatedAt(LocalDateTime.now());
-        counselorProfile.setUpdatedAt(LocalDateTime.now());
-        counselorProfile.setStatus(1);
-
-        return save(counselorProfile);
-    }
+    // register 已删（2026-10-08 W27）：原来只 `save(counselorProfile)`，不建 users 账号、
+    // 不设口令；user_id 无外键 ⇒ 能插出指向不存在用户的孤儿档案。零调用方，
+    // 真实注册在 user-service `/auth/register/counselor`。
 
     @Override
     public boolean updateProfile(CounselorProfile counselorProfile) {
