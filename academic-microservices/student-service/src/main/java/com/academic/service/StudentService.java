@@ -153,8 +153,9 @@ public interface StudentService {
     Object getStudentSettings(Long studentId);
     /** 保存学生设置（部分更新；未识别的 key 会明确报错而不是静默丢弃） */
     Object updateStudentSettings(Long userId, java.util.Map<String, Object> body);
-    /** 获取安全日志 */
-    Object getSecurityLogs(Long studentId, int page, int pageSize);
+    // 2026-10-08（W29）删掉 `getSecurityLogs(studentId, page, pageSize)`：
+    // 它的唯一实现是写死的 `total=0, logs=[]`（零查询），端点零调用方，
+    // 且「登录历史」已有真路径 `GET /users/{uid}/login-logs`。详见 StudentController 里那段注释。
     /** 获取学生消息 */
     Object getStudentMessages(Long studentId);
     /** 获取未读消息数量 */

@@ -95,7 +95,7 @@ public class StudentServiceFallback implements StudentService {
     @Override public Object getProgressReport(Long studentId) { return ApiResponse.error("获取进度报告服务暂时不可用"); }
     @Override public Object getStudentSettings(Long studentId) { return ApiResponse.error("获取学生设置服务暂时不可用"); }
     @Override public Object updateStudentSettings(Long userId, java.util.Map<String, Object> body) { return ApiResponse.error("保存学生设置服务暂时不可用"); }
-    @Override public Object getSecurityLogs(Long studentId, int page, int pageSize) { return ApiResponse.error("获取安全日志服务暂时不可用"); }
+    // 2026-10-08（W29）删掉 getSecurityLogs 的降级实现：接口方法已随端点一并删除。
     @Override public Object getStudentMessages(Long studentId) { return ApiResponse.error("获取学生消息服务暂时不可用"); }
     @Override public Object getUnreadMessageCount(Long studentId) { return ApiResponse.error("获取未读消息数量服务暂时不可用"); }
     @Override public byte[] exportScoresWorkbook(Long userId) { return null; }

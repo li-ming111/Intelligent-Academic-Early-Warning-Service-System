@@ -2075,17 +2075,12 @@ public class StudentServiceImpl implements StudentService {
         return value == null ? null : value.toString();
     }
 
-    @Override
-    public Object getSecurityLogs(Long studentId, int page, int pageSize) {
-        log.info("获取安全日志: studentId={}, page={}, pageSize={}", studentId, page, pageSize);
-        Map<String, Object> result = new HashMap<>();
-        result.put("studentId", studentId);
-        result.put("page", page);
-        result.put("pageSize", pageSize);
-        result.put("total", 0);
-        result.put("logs", Collections.emptyList());
-        return result;
-    }
+    // 2026-10-08（W29）删除 getSecurityLogs(studentId, page, pageSize)。
+    // 原实现把 page/pageSize 原样回显、total 写死 0、logs 写死空列表 —— **一次查询都没有**，
+    // 分页参数收下了却没有任何可翻的页。`security_logs` 表存在但全仓没有写入方
+    // （AdminController 里已明写这一点），而学生真正看的「登录历史」走
+    // `GET /users/{uid}/login-logs`（读有真写入方的 `login_logs`）。
+    // 端点零调用方 ⇒ 按「零调用方 = 删」处理，不补实现。详见 StudentController 里的注释。
 
     // ==================== 消息 ====================
     @Override

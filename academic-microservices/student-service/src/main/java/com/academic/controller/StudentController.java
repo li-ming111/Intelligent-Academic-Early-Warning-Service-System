@@ -1141,21 +1141,23 @@ public class StudentController {
         }
     }
 
-    @GetMapping("/settings/{studentId}/security-logs")
-    public ApiResponse<Object> getSecurityLogs(@PathVariable String studentId, @RequestParam int page, @RequestParam int pageSize,
-                                               HttpServletRequest request) {
-        ApiResponse<Object> deny = denyUnlessSelf(Long.parseLong(studentId), request, "只能查看本人的登录历史");
-        if (deny != null) {
-            return deny;
-        }
-        try {
-            log.info("Get security logs: {}, page: {}, pageSize: {}", studentId, page, pageSize);
-            return ApiResponse.success(studentService.getSecurityLogs(Long.parseLong(studentId), page, pageSize));
-        } catch (Exception e) {
-            log.error("Get security logs failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
-        }
-    }
+    // 2026-10-08（W29）删除 `GET /settings/{studentId}/security-logs`。
+    //
+    // 它声称按 {page,pageSize} 分页返回本人的「安全日志」，而 service 体是**写死的**
+    // `total=0, logs=[]` —— 一个查询都没有；这是它和本仓另外两条"恒空"端点
+    // （`/counselors/classes/activities`、`/counselors/notifications/templates`）的区别：
+    // 那两条是"库里根本没有这张表、结构上给不出数据"，回空是**结果上的事实**；这一条
+    // `security_logs` 表**是存在的**（`init_schema.sql:306` 建表、admin 端有实体与计数），
+    // 只是**全仓至今没有任何写入方**（AdminController 里明写「`security_logs` 至今 0 行且
+    // 全仓无写入方，接上去只会再造一个恒空」，所以它在"系统动态"里也刻意没用）。
+    //
+    // 处置依据是**两条已经拍过板的规矩**：①「零调用方 = 删」（同 W27 三条 `/register`）；
+    // ②学生真正会看的「登录历史」**已经有真路径**——`GET /users/{uid}/login-logs`
+    // （user-service，读有真写入方的 `login_logs`），PC 设置页「安全日志」页签用的就是它
+    // （`Settings.vue` → `studentAPI.getLoginLogs`）。
+    // ⇒ 这里是"零调用方 + 恒空 + 能力已被另一条真路径覆盖"的重复端点，**删掉，不给它补实现**
+    //   （"让承诺成真"要新造一个写入方，那是另立一个功能，不是修接口）。
+    // 前端 PC 的 `studentAPI.getSecurityLogs` 封装同轮删除；小程序本就没有这条封装。
 
     // ==================== 消息 ====================
     @GetMapping("/messages/{studentId}")

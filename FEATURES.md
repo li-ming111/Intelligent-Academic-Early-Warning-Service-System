@@ -612,15 +612,21 @@ WebSocket 实时推送 → 学生/辅导员收到通知
 | 导出挂科学生 | ✅ `GET /admin/export/insufficient-students` | ✅ | ❌ `exportInsufficientStudents` 零调用 |
 | 注册（**第二套实现**） | ❌ **2026-10-08 已删**（W27，见 §8.5） | ❌ 3 条封装同删 | 原为 ❌ 零调用；UI 一直走 `user-service` 的 `/auth/register/{student,teacher,counselor}`。⚠️ 其中 `/students/register` 曾是**假成功**、另两条是**半截写**，三条一并删除 |
 
-两个前端的封装方法合计 **513 条**（PC `api/index.js` **297** / 小程序 `services/api.js` **216**），
-其中**零调用点 82 条**（PC 60 / 小程序 22）。再按「同一端点还有没有别的入口」分：
+两个前端的封装方法合计 **508 条**（PC `api/index.js` **292** / 小程序 `services/api.js` **216**），
+其中**零调用点 61 条**（PC 39 / 小程序 22）。再按「同一端点还有没有别的入口」分：
 
-- **真缺口 47 条**（PC 40 / 小程序 7）—— 端点既没有被调用的封装指向、也没有页面用字面路径直连；
-- **第二个入口 35 条** —— 同端点另有被调用的封装（或页面直连了字面路径），功能不缺，只是这条封装没人用。
+- **真缺口 28 条**（PC 21 / 小程序 7）—— 端点既没有被调用的封装指向、也没有页面用字面路径直连；
+- **第二个入口 33 条** —— 同端点另有被调用的封装（或页面直连了字面路径），功能不缺，只是这条封装没人用。
 
-按命名空间（零调用 / 其中真缺口）：PC `aiAPI` 14/14、`counselorAPI` 13/8、`studentAPI` 18/11、
-`teacherAPI` 9/6、`adminAPI` 3/1、`authAPI` 2/0、`collegeAdminAPI` 1/0；
+按命名空间（零调用 / 其中真缺口）：PC `counselorAPI` 12/7、`studentAPI` 16/9、`teacherAPI` 8/5、
+`authAPI` 2/0、`collegeAdminAPI` 1/0（`aiAPI` 已在 2026-10-05 W26 接线，不再是零调用）；
 小程序 `admin` 5/1、`teacher` 5/3、`counselor` 5/3、`collegeAdmin` 3/0、`student` 3/0、顶层 `apiClient` 1/0。
+
+> 📌 **数字会随轮次变动，看的时候要带日期。** 本节首写（2026-10-05）时是「513 / 零调用 82 / 真缺口 47 / 第二入口 35」，
+> 之后几轮各动过一点：W26 把 14 条 `aiAPI` 死封装接到 8 个页面上、W19 给了 `predictRisk` 调用点
+> ⇒ 零调用 82 → 61；W27 删了 3 条 `/register` 假封装、W29 删了 1 条恒空的 `getSecurityLogs`
+> ⇒ PC 封装 297 → 292。**上面这一版是 2026-10-08（W29）实测**，命令：
+> `python testsprite/local-check/_w25_dead2.py`（自带打靶，含正负对照与"字面路径直连"这第二只眼睛）。
 
 > ⚠️ 判据边界：**"零调用"是扫出来的事实；47 条说的是"这条端点没有任何入口"，不等于 47 个功能缺失。**
 > 上表各行是**逐条核过确属缺口**的。最容易误判成缺口的另一类：**同一功能有两套实现、UI 只走其中一套**
@@ -684,6 +690,39 @@ public Object registerStudent(Object request) {
 ⇒ 可以插进**指向不存在用户的**档案行。两条都不设口令、也不经 `userService.register`，与 UI 真正走的 `/auth/register/*` **是两套实现**。
 **2026-10-08（W27）同样按「零调用方 = 删」处置**：两条端点 + 它们的 `*Service.register` + PC 封装全删；
 修后实测各回 **HTTP 405**（`GET /{id}` 通配映射还在，故不是 404）。详见《答辩准备-启动与演示手册》§6.60。
+
+### 8.6 那 28 条「真缺口」逐条核实：**接口是否诚实**（2026-10-08 W29）
+
+§8.1 只说"这些端点没有界面入口"。**"没入口"不等于"没实现"，更不等于"实现是真的"** ——
+被问到「还有未实现的功能吗」时，这两件事必须分开答。所以把 28 条逐一读了控制器/服务实现，判据只有一条：
+**它到底查不查库、算不算数。**
+
+**结论：23 条 REAL / 2 条恒空但已诚实 / 3 条 PARTIAL（参数说了谎）。没有一条是"没实现"。**
+
+| 判定 | 条数 | 端点 |
+|---|---|---|
+| ✅ **REAL**（真查库/真计算/真写） | 23 | `counselors/class-management/applications`、`counselors/classes/{id}/warnings`、`counselors/students/{id}`、`counselors/notifications/weekly-count`、`counselors/class-management/applications/{id}/review`、`students/appeals/{id}/pending`、`students/evaluations/{id}/detail`、`students/settings/{id}`（GET/PUT）、`students/subscription/{id}/**`（`subscribe-level`/`unsubscribe-level`/`set-channel` 三条）、`teachers/scores/anomalies`、`teachers/courses/{id}/distribution`、`teachers/courses/{id}/students`、`teachers/students/{id}`、`admin/students`、`counselors/assistance-plans/{id}/status`(PATCH)、`counselors/students/{id}`(PUT)，及小程序侧同端点的重复封装 |
+| ⚪ **恒空，但已诚实** | 2 | `counselors/classes/activities`、`counselors/notifications/templates` —— 两条**原来都是编造的假数据**（前者两条写死活动、其中一条日期是 `LocalDate.now().plusDays(3)`，每次看都"三天后有个座谈会"；后者硬编码 3 条模板），后来已改成**如实回空列表 + 注释说明库里没有这张表**。回空在这里是**结果上的事实**，不是掩饰 |
+| ⚠️ **PARTIAL：参数说了谎** | 3 | `students/benchmark/class/{id}/comparison`、`students/benchmark/major/{id}/comparison` —— `semester` 参数**收下了却从不使用**，返回的其实是全课程 GPA（W15「签名说了谎」一族）；`teachers/scores/warnings` —— W24 已处置，现在只统计不写库，且 message 里明说这一点 |
+
+**W29 处置掉的一条**：`GET /students/settings/{id}/security-logs` 原本**不属于上面任何一类** ——
+它声称按 `{page,pageSize}` 分页返回本人「安全日志」，而 service 体是**写死的** `total=0, logs=[]`，
+**一次查询都没有**；`security_logs` 表**是存在的**（`init_schema.sql:306` 建表 + admin 端有实体与计数），
+只是**全仓至今没有写入方**（`AdminController` 里已明写「`security_logs` 至今 0 行且全仓无写入方，
+接上去只会再造一个恒空」）。它比上面两条"恒空"更差一层：那两条是"库里没有这张表"，
+这一条是"有表、有实体、有人计数，唯独没有写入方，于是学生侧这个读取口**永远回空**"。
+而学生真正会看的「登录历史」**早就有真路径** —— `GET /users/{uid}/login-logs`（读 `login_logs`，
+有真写入方），PC 设置页「安全日志」页签用的就是它。
+⇒ **零调用方 + 恒空 + 能力已被另一条真路径覆盖** ⇒ 按「零调用方 = 删」**删掉端点、接口声明、
+实现、Fallback 降级实现与 PC 封装**（小程序本就没有这条封装），**不给它补实现**
+（"让承诺成真"要新造一个写入方，那是另立功能，不是修接口）。
+判据：全仓 `grep` 后**残留命中只剩我新写的注释**；调用方**两只眼睛**都核过（封装调用点 0 / `.vue` 字面路径直连 0）；
+`/students/settings/{studentId}/` 下只剩 `privacy-level` 一条映射、**无通配同族** ⇒ 修后该路径应为 **404**
+（此为**静态判定**，本轮**未起服务实测** —— 与 W27 那次不同，那时路径下有 `GET /{id}` 通配故须实测 405/404 之别）。
+单测：全量 reactor **584 例 / 0 失败**。详见《答辩准备-启动与演示手册》§6.62。
+
+> 💡 另外三处 PARTIAL 的 `semester` 参数**本轮刻意不动**：它们零调用 ⇒ 目前没有任何界面会传这个参数，
+> 修法（实现按学期，或删掉参数让签名不说谎）需要先定"这个能力到底要不要"，属于产品决定，不在"接口诚实性"范围内。
 
 ---
 

@@ -265,9 +265,11 @@ export const studentAPI = {
   updatePrivacy: (userId, privacyLevel) => {
     return apiClient.post(`/students/settings/${userId}/privacy-level`, null, { params: { privacyLevel } })
   },
-  getSecurityLogs: (userId, page = 1, pageSize = 10) => {
-    return apiClient.get(`/students/settings/${userId}/security-logs`, { params: { page, pageSize } })
-  },
+  // 2026-10-08（W29）删掉 `getSecurityLogs`（→ `GET /students/settings/{uid}/security-logs`）：
+  //   后端那个端点**一次查询都没有**（total 写死 0、logs 写死空列表），且已同轮删除；
+  //   `security_logs` 表全仓没有写入方。真正的「登录历史」是下面这个 `getLoginLogs`
+  //   （→ `GET /users/{uid}/login-logs`，读有真写入方的 `login_logs`），
+  //   设置页「安全日志」页签用的就是它。这条封装**全仓零调用方**。
   getAppeals: (studentId) => {
     return apiClient.get(`/students/appeals/${studentId}/list`)
   },
