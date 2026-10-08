@@ -194,6 +194,50 @@
           </div>
         </div>
 
+        <!-- AI 学业分析（W26）：下面 5 个 aiAPI 端点此前**全仓零调用** —— 后端一直有，界面上没有入口。
+             ⚠️ 这些结果由 AiInsight 统一渲染；AI 没配 key 时后端会回占位串，
+                已被 utils/ai.js 的诚实性闸拦成一条人话错误，**不会**把等待提示伪装成分析结论。 -->
+        <div class="panel">
+          <div class="panel-head">
+            <div class="ph-title">
+              <svg viewBox="0 0 24 24" fill="none" stroke="#0ea5e9" stroke-width="2" width="18" height="18"><path d="M12 2v4M12 18v4M4.9 4.9l2.8 2.8M16.3 16.3l2.8 2.8M2 12h4M18 12h4M4.9 19.1l2.8-2.8M16.3 7.7l2.8-2.8"/></svg>
+              <span>AI 学业分析</span>
+            </div>
+          </div>
+          <div class="panel-body ai-stack">
+            <AiInsight title="学习推荐" :load="aiRecommendations" hint="基于你的成绩给出学习建议" />
+            <AiInsight title="预警相关建议" :load="aiWarningSuggestions" hint="结合你的预警记录给建议" />
+            <AiInsight title="风险自评" :load="aiAssessRisk" hint="按规则引擎评估当前学业风险" />
+            <AiInsight title="风险预测" :load="aiPredictWarnings" hint="预测可能触发的预警" />
+            <AiInsight title="综合分析" :load="aiAnalyze" hint="成绩 + 风险的综合评价" />
+          </div>
+        </div>
+
+        <!-- 老师推荐选课（W14） -->
+        <div class="panel">
+          <div class="panel-head">
+            <div class="ph-title">
+              <svg viewBox="0 0 24 24" fill="none" stroke="#7c3aed" stroke-width="2" width="18" height="18"><path d="M4 19.5V6a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v13.5"/><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/></svg>
+              <span>老师推荐选课</span>
+            </div>
+          </div>
+          <div class="panel-body">
+            <template v-if="recommendations.length">
+              <div v-for="(r,i) in recommendations" :key="r.id" class="rec-item" :style="{ animationDelay: i*0.1+'s' }">
+                <div class="rec-title">
+                  <span class="rec-course">{{ r.courseName || '课程' }}</span>
+                  <span v-if="r.teacherName" class="rec-teacher">{{ r.teacherName }} 老师推荐</span>
+                </div>
+                <div class="rec-text">{{ r.reason }}</div>
+              </div>
+            </template>
+            <div v-else class="panel-empty">
+              <svg viewBox="0 0 24 24" fill="none" stroke="#ccc" stroke-width="1.5" width="40" height="40"><path d="M4 19.5V6a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v13.5"/><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/></svg>
+              <p>暂无老师推荐</p>
+            </div>
+          </div>
+        </div>
+
         <!-- 快捷入口 -->
         <div class="panel">
           <div class="panel-head">
@@ -253,9 +297,10 @@
 
 <script setup>
 import { ref, onMounted } from 'vue'
-import { studentAPI } from '@/api/index'
+import { studentAPI, aiAPI } from '@/api/index'
 import { getUserId } from '@/utils/userUtils'
 import { ElMessage } from 'element-plus'
+import AiInsight from '@/components/AiInsight.vue'
 
 // 优先显示真实姓名（登录时存于 'name'）；缺失或为纯数字（学号/userId）时回退，
 // 避免把学号当姓名显示——与 StudentLayout.vue 的防护保持一致
@@ -268,6 +313,9 @@ const warnings = ref([])
 const assistancePlans = ref([])
 const courses = ref([])
 const suggestions = ref([])
+// 老师推荐选课（W14）：此前教师在「推荐选课」里点一下就完了 —— 后端不落库、
+// 学生侧也没有任何出口。现在这条推荐真落 course_recommendation 表，这里读出来。
+const recommendations = ref([])
 
 const colors = ['#7c3aed','#2563eb','#16a34a','#f59e0b','#ef4444','#8b5cf6','#0891b2','#ea580c','#db2777','#4f46e5']
 const randomGradient = (id) => {
@@ -289,7 +337,8 @@ onMounted(() => loadAll())
 async function loadAll() {
   const uid = getUserId(); if (!uid) { ElMessage.error('请先登录'); return }
   const [d,w,a,sc,sg,cl] = await Promise.allSettled([
-    loadDashboard(uid), loadWarnings(uid), loadAssistance(uid), loadScores(uid), loadSuggestions(uid), loadClass(uid)
+    loadDashboard(uid), loadWarnings(uid), loadAssistance(uid), loadScores(uid), loadSuggestions(uid), loadClass(uid),
+    loadRecommendations(uid)
   ])
 }
 
@@ -329,6 +378,9 @@ async function loadScores(uid) {
 async function loadSuggestions(uid) {
   try { const r = await studentAPI.getSuggestions(uid); if (Array.isArray(r)) suggestions.value = r.slice(0,3) } catch(e){}
 }
+async function loadRecommendations(uid) {
+  try { const r = await studentAPI.getCourseRecommendations(uid); if (Array.isArray(r)) recommendations.value = r.slice(0,3) } catch(e){}
+}
 async function loadClass(uid) {
   try {
     const r = await studentAPI.getClassInfo(uid)
@@ -337,6 +389,21 @@ async function loadClass(uid) {
     if (r?.classIdentifier) classInfo.value = r
   } catch(e){}
 }
+
+// ===== AI 学业分析（W26）=====
+// 这 5 个 aiAPI 端点此前全仓零调用。参数口径：这几条都打 `/ai/**`，其中
+// getRecommendations / getWarningSuggestions / assessRisk / predictWarnings / analyze
+// 内部转调 student-service 的 `/students/scores/{id}`，所以传的是 **users.id**（与 studentAPI 同源）。
+const currentUid = () => {
+  const id = getUserId()
+  if (!id) throw new Error('请先登录')
+  return id
+}
+const aiRecommendations = () => aiAPI.getRecommendations(currentUid())
+const aiWarningSuggestions = () => aiAPI.getWarningSuggestions(currentUid())
+const aiAssessRisk = () => aiAPI.assessRisk(currentUid())
+const aiPredictWarnings = () => aiAPI.predictWarnings(currentUid())
+const aiAnalyze = () => aiAPI.analyze(currentUid())
 </script>
 
 <style scoped>
@@ -468,6 +535,14 @@ async function loadClass(uid) {
 .si-title { font-size:13px; font-weight:500; color:#18181b; margin-bottom:2px; }
 .si-text { font-size:12px; color:#6b7280; line-height:1.4; }
 
+/* 老师推荐选课（W14）—— 与「学业建议」同形，只换配色 */
+.rec-item { padding: 12px 0; border-bottom: 1px solid #f3f4f6; animation: fadeUp .4s ease both; }
+.rec-item:last-child { border-bottom: none; }
+.rec-title { display:flex; align-items:baseline; gap:8px; margin-bottom:2px; flex-wrap:wrap; }
+.rec-course { font-size:13px; font-weight:500; color:#18181b; }
+.rec-teacher { font-size:11px; color:#7c3aed; background:#f5f3ff; border-radius:3px; padding:1px 6px; }
+.rec-text { font-size:12px; color:#6b7280; line-height:1.4; }
+
 /* ===== 快捷 ===== */
 .shortcut-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; padding: 14px 22px; }
 .sc-item { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 16px 8px; border-radius: 12px; text-decoration: none; transition: all .2s; }
@@ -481,6 +556,9 @@ async function loadClass(uid) {
 .sc-green { background: #ecfdf5; color: #16a34a; }
 .sc-teal { background: #f0fdfa; color: #14b8a6; }
 .sc-item span { font-size: 12px; color: #52525b; font-weight: 500; }
+
+/* ===== AI 学业分析（W26）===== */
+.ai-stack { display: flex; flex-direction: column; gap: 10px; }
 
 /* ===== 响应式 ===== */
 @media (max-width: 1200px) { .hero-right { grid-template-columns: 1fr 1fr; } }

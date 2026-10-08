@@ -23,6 +23,13 @@ public class StudentController {
 
     private final StudentService studentService;
 
+    /**
+     * 老师推荐选课的读出口（W14）。走 mapper 直连而不是塞进 {@code StudentService}：
+     * 它只查这一张新表，且 {@code teacher} 侧的同名 Mapper 也是这么写的。
+     */
+    @org.springframework.beans.factory.annotation.Autowired
+    private com.academic.mapper.CourseRecommendationMapper courseRecommendationMapper;
+
     public StudentController(StudentService studentService) {
         this.studentService = studentService;
     }
@@ -340,6 +347,34 @@ public class StudentController {
             return ApiResponse.success(studentService.getClassInfo(Long.parseLong(studentId)));
         } catch (Exception e) {
             log.error("Get class info failed: {}", e.getMessage());
+            return ApiResponse.error(e.getMessage());
+        }
+    }
+
+    // ==================== 老师推荐选课（W14） ====================
+    /**
+     * 我（学生）能看到的「老师推荐选课」。
+     *
+     * <p>修之前这条路**只到教师端点就断了**：后端是个不落库的回声桩，学生侧没有任何
+     * 地方能看到它。W14 建了 {@code course_recommendation} 表（迁移
+     * {@code db_backups/migration_w14_course_recommendation.sql}），这里就是它的出口。
+     *
+     * <p>路径参数 {@code userId} 是 {@code users.id}（与 {@code /students/**} 其余端点同一套）。
+     * 可见性规则写在 {@link com.academic.mapper.CourseRecommendationMapper} 的 SQL 里：
+     * 点名给某个班的 ⇒ 该班可见；{@code target_class_id IS NULL} 的 ⇒ 只有**推荐人自己带的班**可见。
+     */
+    @GetMapping("/recommendations/{userId}")
+    public ApiResponse<Object> getCourseRecommendations(@PathVariable String userId,
+                                                        HttpServletRequest request) {
+        ApiResponse<Object> deny = denyUnlessSelf(Long.parseLong(userId), request, "只能查看本人的选课推荐");
+        if (deny != null) {
+            return deny;
+        }
+        try {
+            log.info("Get course recommendations for user: {}", userId);
+            return ApiResponse.success(courseRecommendationMapper.listForStudent(Long.parseLong(userId)));
+        } catch (Exception e) {
+            log.error("Get course recommendations failed: {}", e.getMessage());
             return ApiResponse.error(e.getMessage());
         }
     }
@@ -1038,10 +1073,11 @@ public class StudentController {
         return getEvaluationsByStudent(studentId, request);
     }
 
-    @PostMapping("/evaluations/{studentId}")
-    public ApiResponse<Object> submitEvaluationLegacy(@PathVariable String studentId, @RequestBody Object request) {
-        return submitEvaluation(request);
-    }
+    // 2026-10-04（W15）删：`POST /students/evaluations/{studentId}`（submitEvaluationLegacy）。
+    //   路径里那个 `studentId` **从头到尾没被读过** —— 方法体只有一句
+    //   `return submitEvaluation(request);`，身份/归属全由 body 决定，路径参数纯装饰。
+    //   唯一调用方（PC `api/index.js`）打的是 `POST /students/evaluations/submit`；
+    //   小程序与测试都没有引用它。留着它只会在读签名时误导"这个 id 有意义"。
 
     // ==================== 设置 (P0新增) ====================
     @GetMapping("/settings/{studentId}")
@@ -1184,19 +1220,21 @@ public class StudentController {
         }
     }
 
-    // ==================== 注册 ====================
-    @PostMapping("/register")
-    public ApiResponse<Object> registerStudent(@RequestBody Object request) {
-        try {
-            log.info("Student register request");
-            return ApiResponse.success(studentService.registerStudent(request));
-        } catch (Exception e) {
-            log.error("Student register failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
-        }
-    }
+    // ==================== 注册（已删，2026-10-08 W27） ====================
+    // 这里原来有一条 `POST /students/register`，service 体只有一句 `return "注册成功";` ——
+    // **一行都不写库**，却回 `success:true`。与 W24 的 `/teachers/scores/warnings` 同一族
+    // （说法与事实不符）。真实的注册路径是 user-service 的 `POST /api/auth/register/student`
+    // （PC `Register.vue` / 小程序都在走），**不为一条零调用方的假端点补实现**，直接删。
 
     // ==================== 学院统计 ====================
+    /**
+     * 按学院统计学生数。
+     *
+     * <p><b>W14 修的一条静默错</b>：原来 {@code catch} 里回的是
+     * {@code ApiResponse.success(0L)} —— 查库炸了和"这个学院一个学生都没有"
+     * 在响应上**长得一模一样**，调用方（如学院看板）会把一次故障显示成一个可信的 0。
+     * 这正是本仓反复记过的「恒 0 的 total」那一族。现在如实回错误。
+     */
     @GetMapping("/count-by-college")
     public ApiResponse<Long> countByCollege(@RequestParam Long collegeId) {
         try {
@@ -1204,10 +1242,16 @@ public class StudentController {
             return ApiResponse.success(studentService.countByCollege(collegeId));
         } catch (Exception e) {
             log.error("Count students by college failed: {}", e.getMessage());
-            return ApiResponse.success(0L);
+            return ApiResponse.error(e.getMessage());
         }
     }
 
+    /**
+     * 按学院取学生列表（{@code collegeId} 缺省 = 全部）。
+     *
+     * <p><b>W14 修的同一条静默错</b>：原来 {@code catch} 回 {@code success(List.of())}，
+     * 于是"学生服务炸了"与"这个学院没有学生"回同一个 200 + 空数组。
+     */
     @GetMapping("/list")
     public ApiResponse<List<Object>> getStudentsByCollege(@RequestParam(required = false) Long collegeId) {
         try {
@@ -1215,7 +1259,7 @@ public class StudentController {
             return ApiResponse.success(studentService.getStudentsByCollege(collegeId));
         } catch (Exception e) {
             log.error("Get students by college failed: {}", e.getMessage());
-            return ApiResponse.success(List.of());
+            return ApiResponse.error(e.getMessage());
         }
     }
 }

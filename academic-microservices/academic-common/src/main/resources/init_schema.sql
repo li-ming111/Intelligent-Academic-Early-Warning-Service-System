@@ -401,6 +401,27 @@ CREATE TABLE IF NOT EXISTS `course_plans` (
     CONSTRAINT `fk_course_plans_course_id` FOREIGN KEY (`course_id`) REFERENCES `courses` (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- 教师「推荐选课」（W14, 2026-10-04）。此前 `POST /teachers/courses/recommend` 是
+-- **纯回声桩**：把入参原样吐回来、一行都不落库，却回「学生将收到通知」；而前端
+-- `TeacherCourses.vue` 连 teacherId 都不发 ⇒ 后端 `data.get("teacherId").toString()` 先 NPE。
+-- 这张表让"推荐"第一次真的存在：谁（teacher_id）把哪门课（course_id）以什么理由
+-- （reason）推荐给谁（target_class_id，NULL = 该教师名下全部班级）。
+CREATE TABLE IF NOT EXISTS `course_recommendation` (
+    `id` bigint NOT NULL AUTO_INCREMENT,
+    `teacher_id` bigint NOT NULL COMMENT '教师的 users.id（与 courses.teacher_id / classes.teacher_id 同一套）',
+    `course_id` bigint NOT NULL,
+    `target_class_id` bigint DEFAULT NULL COMMENT 'NULL = 该教师名下所有班级',
+    `reason` varchar(500) NOT NULL,
+    `status` int NOT NULL DEFAULT '1' COMMENT '1=有效, 0=已撤回',
+    `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+    `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    KEY `idx_course_rec_teacher` (`teacher_id`),
+    KEY `idx_course_rec_course` (`course_id`),
+    KEY `idx_course_rec_class` (`target_class_id`),
+    CONSTRAINT `fk_course_recommendation_course_id` FOREIGN KEY (`course_id`) REFERENCES `courses` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS `enrollments` (
     `id` bigint NOT NULL AUTO_INCREMENT,
     `student_id` bigint NOT NULL,

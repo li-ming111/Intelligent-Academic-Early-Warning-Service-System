@@ -776,13 +776,24 @@ class ApiClient {
     /** 辅导员档案 1 行。字段很宽，带 `counselorId`（业务编号 C53）、`classCount`、`studentCount`。 */
     getCounselors: () => this._get('/admin/counselors'),
     /**
-     * ⚠️ **实测恒为空数组**，别用它取"全部学生"。
-     * 它内部调的是 `selectByCollegeId(collegeId)`，SQL 写死
-     * `WHERE college_id = #{collegeId}`，管理员不传学院时 collegeId=null，
-     * 于是条件成了 `college_id = NULL` —— 恒不成立，返回空。
-     * 而且它外面那层 catch 是 `return ApiResponse.success(List.of())`，
-     * 就算真报错也会伪装成"成功且没有学生"。
-     * 要全部学生请用 `getUsers(1, n, undefined, 1)`（role=1，实测 24 个）。
+     * 全部学生（`student_profile` 行）。
+     *
+     * <p><b>W16 修正</b>：这里一度写着"实测恒为空数组，别用它"。两个原因都在当年成立、
+     * 现在都不成立了 —— ① 内层 SQL 是 `WHERE college_id = #{collegeId}`，不传学院时
+     * `college_id = NULL` 恒不成立 ⇒ 恒空；现在 `StudentServiceImpl.getStudentsByCollege`
+     * 把 `collegeId == null` 显式当"不筛学院"（与辅导员侧 `/admin/counselors` 同语义），
+     * 返回全部 24 行。② 外层 catch 当年是 `return ApiResponse.success(List.of())`
+     * （把"服务出错"伪装成"成功且没有学生"），W14 已改成如实回错误码。
+     *
+     * <p>⚠️ 本绑定**当前零调用方**（xcx 管理员页走的是 `getUsers`）：用之前先确认
+     * 它还是不是你想要的那份数据 —— 它是 `student_profile` 形状，
+     * 与 `getUsers(1, n, undefined, 1)`（`users` 形状，role=1）不是同一份。
+     *
+     * <p>⚠️ 且有**已知的静默丢字段**：admin-service 那层把这批行反序列化成
+     * `com.academic.common.entity.Student`（`ApiResponse&lt;List&lt;Student&gt;&gt;`），
+     * 而下游发的是 `StudentProfile` —— 两个实体字段不同，`gender` 与 `enrollmentYear`
+     * 在这层被丢掉（其余 `id/userId/studentId/name/collegeId/majorId/classId/className`
+     * 都在）。**未修**：要全字段得把 Feign/控制器那三处签名一起改成 `StudentProfile`。
      */
     getStudents: () => this._get('/admin/students'),
 

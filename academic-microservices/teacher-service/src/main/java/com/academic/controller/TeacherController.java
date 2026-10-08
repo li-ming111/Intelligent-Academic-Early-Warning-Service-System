@@ -3,9 +3,11 @@ package com.academic.controller;
 import com.academic.common.constant.ScoreCaliber;
 import com.academic.common.constant.WarningStatus;
 import com.academic.common.dto.ApiResponse;
+import com.academic.common.util.ExcelUploadErrors;
 import com.academic.common.util.ScoreSyncSupport;
 import com.academic.common.entity.TeacherProfile;
 import com.academic.common.entity.Course;
+import com.academic.common.entity.CourseRecommendation;
 import com.academic.common.entity.TeacherCourse;
 import com.academic.entity.ClassInfo;
 import com.academic.common.entity.ScoreRecord;
@@ -29,12 +31,14 @@ import org.apache.poi.ss.usermodel.CellType;
 import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Sheet;
 import org.apache.poi.ss.usermodel.Workbook;
+import org.apache.poi.ss.usermodel.WorkbookFactory;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.ByteArrayOutputStream;
+import java.io.IOException;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -97,23 +101,16 @@ public class TeacherController {
     @Autowired
     private com.academic.mapper.CollegeMapper collegeMapper;
 
-    /**
-     * 教师注册
-     */
-    @PostMapping("/register")
-    public ApiResponse<TeacherProfile> register(@RequestBody TeacherProfile teacherProfile) {
-        try {
-            boolean success = teacherService.register(teacherProfile);
-            if (success) {
-                return ApiResponse.success(teacherProfile);
-            } else {
-                return ApiResponse.badRequest("注册失败");
-            }
-        } catch (Exception e) {
-            return ApiResponse.serverError("注册失败: " + e.getMessage());
-        }
-    }
+    // 教师「推荐选课」落库 + 回看（W14）。此前那条端点一行都不写。
+    @Autowired
+    private com.academic.mapper.CourseRecommendationMapper courseRecommendationMapper;
 
+    // ==================== 注册（已删，2026-10-08 W27） ====================
+    // 这里原来有一条 `POST /teachers/register`：它只往 `teacher_profile` 插一行档案，
+    // **不建账号、不设口令、不经 `userService.register`** —— 而 `teacher_profile.user_id`
+    // 是 NOT NULL 且有外键指向 `users.id`，所以对真实用户只会插出**第二份档案**，对陌生 id 直接失败。
+    // 全仓零调用方（PC/小程序两边封装都不是调用方），真实的注册路径是
+    // `POST /api/auth/register/teacher`（`TeacherRegister.vue` 走的就是它），直接删。
     /**
      * 获取教师信息
      */
@@ -562,7 +559,9 @@ public class TeacherController {
         try {
             List<ScoreRecord> scores = scoreRecordService.exportScores(course_id);
 
-            String[] headers = {"姓名", "班级", "平时成绩", "期末成绩", "总评成绩", "等级", "绩点", "学期", "备注"};
+            // 第一列是「学号」（W19 加）：导出件要能当模板用 —— 改完分数直接导回来。
+            // 学号从 student_profile 顺带查出来（见 ScoreRecordMapper.getScoresByCourseId）。
+            String[] headers = {"学号", "姓名", "班级", "平时成绩", "期末成绩", "总评成绩", "等级", "绩点", "学期", "备注"};
             byte[] content;
             try (Workbook workbook = new XSSFWorkbook();
                  ByteArrayOutputStream out = new ByteArrayOutputStream()) {
@@ -574,15 +573,16 @@ public class TeacherController {
                 int rowNum = 1;
                 for (ScoreRecord s : scores) {
                     Row row = sheet.createRow(rowNum++);
-                    row.createCell(0).setCellValue(s.getStudentName() == null ? "" : s.getStudentName());
-                    row.createCell(1).setCellValue(s.getClassName() == null ? "" : s.getClassName());
-                    setNumber(row.createCell(2), s.getRegularScore());
-                    setNumber(row.createCell(3), s.getFinalScore());
-                    setNumber(row.createCell(4), s.getScoreTotal());
-                    row.createCell(5).setCellValue(s.getGrade() == null ? "" : s.getGrade());
-                    setNumber(row.createCell(6), s.getGradePoint());
-                    row.createCell(7).setCellValue(s.getSemester() == null ? "" : s.getSemester());
-                    row.createCell(8).setCellValue(s.getRemark() == null ? "" : s.getRemark());
+                    row.createCell(0).setCellValue(s.getStudentNo() == null ? "" : s.getStudentNo());
+                    row.createCell(1).setCellValue(s.getStudentName() == null ? "" : s.getStudentName());
+                    row.createCell(2).setCellValue(s.getClassName() == null ? "" : s.getClassName());
+                    setNumber(row.createCell(3), s.getRegularScore());
+                    setNumber(row.createCell(4), s.getFinalScore());
+                    setNumber(row.createCell(5), s.getScoreTotal());
+                    row.createCell(6).setCellValue(s.getGrade() == null ? "" : s.getGrade());
+                    setNumber(row.createCell(7), s.getGradePoint());
+                    row.createCell(8).setCellValue(s.getSemester() == null ? "" : s.getSemester());
+                    row.createCell(9).setCellValue(s.getRemark() == null ? "" : s.getRemark());
                 }
                 for (int i = 0; i < headers.length; i++) {
                     sheet.autoSizeColumn(i);
@@ -594,12 +594,7 @@ public class TeacherController {
             String fileName = "scores_course" + course_id + "_"
                     + java.time.LocalDateTime.now().format(java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"))
                     + ".xlsx";
-            response.setContentType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
-            response.setHeader("Content-Disposition",
-                    "attachment; filename=" + URLEncoder.encode(fileName, StandardCharsets.UTF_8));
-            response.setContentLength(content.length);
-            response.getOutputStream().write(content);
-            response.getOutputStream().flush();
+            writeXlsx(response, content, fileName);
             log.info("Export scores ok: course_id={}, rows={}", course_id, scores.size());
         } catch (Exception e) {
             log.error("Export scores failed: {}", e.getMessage(), e);
@@ -627,24 +622,235 @@ public class TeacherController {
         }
     }
 
+    /** 把一段 xlsx 字节当附件写回（导出成绩单与下载模板共用）。 */
+    private static void writeXlsx(HttpServletResponse response, byte[] content, String fileName) throws IOException {
+        response.setContentType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+        response.setHeader("Content-Disposition",
+                "attachment; filename=" + URLEncoder.encode(fileName, StandardCharsets.UTF_8));
+        response.setContentLength(content.length);
+        response.getOutputStream().write(content);
+        response.getOutputStream().flush();
+    }
+
     /**
-     * 导入成绩
+     * 导入成绩 —— **上传 Excel，服务端 POI 解析**。
+     *
+     * <p><b>2026-10-04（W19）换契约</b>：改之前这里收 {@code @RequestBody Map}
+     * （{@code scores} 列表 + {@code teacherId}），而前端 {@code TeacherScores.vue} 发的是
+     * {@code FormData}（{@code file/courseId/className/semester}）—— 两边从来对不上，
+     * **这个按钮一次都没成功过**。本服务里 {@code /students/import} 本来就是 multipart + POI，
+     * 模板与导出也都是真 xlsx，所以直接换成 multipart（前端那侧一并改成"先选课程再导"）。
+     *
+     * <p>归属闸落在**课程**上：{@code courseId} 是这次导入的目标课程，必须是本人所授
+     * （管理员旁路）。闸放在读文件**之前** —— 拒绝一个不属于自己的课程，不需要先把文件解析完。
+     *
+     * <p>学号 → {@code student_profile.id} 的换算在这里做（{@code saveScores} 要的是**档案 id**，
+     * 不是学号字符串）。
+     *
+     * <p><b>列口径</b>（与 {@link #downloadScoresTemplate} 产出的模板一致，也与本端点真正
+     * 能落库的字段一致）：{@code 学号(必填) | 姓名 | 总评成绩(必填) | 学期 | 备注}。
+     * 刻意**没有「平时成绩/期末成绩」**：{@code ScoreRecordService.saveScores} 不读这两个 key，
+     * {@code insertScore} 的 INSERT 列里也没有它们，放上模板只会变成"填了却静默消失"。
+     * 导出文件里那两列同样被忽略；但"导出→改分→导回"改的是**已存在的行**，
+     * {@code saveScores} 走 existing 分支时不碰这两列（从库里原样保留），所以不会丢。
+     *
+     * <p><b>semester 必须是数字</b>：{@code scores.semester} 是 int 列，而
+     * {@code score_record.semester} 是 varchar —— 塞进 {@code "2025-2026-1"} 这类字符串，
+     * 写 {@code scores} 那一步会在 MySQL 严格模式下报错。所以这里先卡格式，不留给数据库去炸。
      */
     @PostMapping("/scores/import")
-    public ApiResponse<Object> importScores(@RequestBody Map<String, Object> data, HttpServletRequest request) {
-        // 与 `/scores` 是同一段实现的第二个入口（同一份请求体形状），闸也必须成对。
-        ApiResponse<Object> deny = denyUnlessScoreWriteAllowed(data, request, "只能向本人所授课程导入成绩");
+    public ApiResponse<Map<String, Object>> importScores(@RequestParam("file") MultipartFile file,
+                                                        @RequestParam("courseId") Long courseId,
+                                                        @RequestParam(value = "className", required = false) String className,
+                                                        @RequestParam(value = "semester", required = false) String semester,
+                                                        HttpServletRequest request) {
+        ApiResponse<Object> deny = denyUnlessMyCourse(courseId, request, "只能向本人所授课程导入成绩");
         if (deny != null) {
-            return deny;
+            return ApiResponse.error(403, deny.getMessage());
         }
+
+        Map<String, Object> result = new HashMap<>();
+        List<Map<String, Object>> errors = new ArrayList<>();
+        int acceptedCount = 0, skipCount = 0;
+        result.put("fileName", file == null ? null : file.getOriginalFilename());
+
         try {
-            List<Map<String, Object>> scores = (List<Map<String, Object>>) data.get("scores");
-            Long teacherId = Long.parseLong(data.get("teacherId").toString());
-            scoreRecordService.saveScores(scores, teacherId);
-            return ApiResponse.success("成绩导入成功");
+            if (semester != null && !semester.trim().isEmpty()) {
+                int sem;
+                try {
+                    sem = Integer.parseInt(semester.trim());
+                } catch (NumberFormatException e) {
+                    return ApiResponse.error("学期必须是数字（如 5），收到的是：" + semester);
+                }
+                if (sem < 1 || sem > 20) {
+                    return ApiResponse.error("学期超出合理范围（1~20），收到的是：" + semester);
+                }
+            }
+            if (file == null || file.isEmpty()) {
+                return ApiResponse.error("文件为空");
+            }
+            String fileName = file.getOriginalFilename();
+            if (fileName == null || !fileName.matches("(?i).*\\.(xlsx|xls)$")) {
+                return ApiResponse.error("仅支持 .xlsx 或 .xls 格式的 Excel 文件");
+            }
+            if (file.getSize() > MAX_IMPORT_BYTES) {
+                return ApiResponse.error("文件大小不能超过 10MB");
+            }
+
+            List<Map<String, Object>> rows = new ArrayList<>();
+            // W22：`new XSSFWorkbook(...)` 读不了 .xls，而上面的扩展名闸写着"仅支持 .xlsx 或 .xls"。
+            // WorkbookFactory 让那句承诺变成真的（真 .xls 走 HSSF）。
+            //
+            // 解析失败的翻译**放在这一层**，不放外层 catch：外层 catch 还包着 saveScores 落库，
+            // 那里抛的异常绝不能被说成"你的文件有问题"。
+            Workbook opened;
+            try {
+                opened = WorkbookFactory.create(file.getInputStream());
+            } catch (Exception e) {
+                log.error("Parse scores excel failed: {}", file.getOriginalFilename(), e);
+                String friendly = ExcelUploadErrors.describe(e);
+                // 走到这里一定是"读不了这个文件"，认不出具体类型就按"认不出是什么文件"回。
+                return ApiResponse.error(friendly != null ? friendly : ExcelUploadErrors.UNREADABLE);
+            }
+            try (Workbook workbook = opened) {
+                Sheet sheet = workbook.getSheetAt(0);
+                if (sheet == null || sheet.getLastRowNum() < 1) {
+                    return ApiResponse.error("表里没有数据行（第 1 行应当是表头，数据从第 2 行开始）");
+                }
+                Row header = sheet.getRow(0);
+                Integer sidCol = findColumn(header, "学号");
+                if (sidCol == null) {
+                    return ApiResponse.error("表头里找不到「学号」列，请先下载模板：/teachers/scores/template");
+                }
+                Integer scoreCol = findScoreColumn(header);
+                if (scoreCol == null) {
+                    return ApiResponse.error("表头里找不到「成绩」列，请先下载模板：/teachers/scores/template");
+                }
+                Integer nameCol = findColumn(header, "姓名");
+                Integer semCol = findColumn(header, "学期");
+                Integer remarkCol = findColumn(header, "备注");
+
+                for (int r = 1; r <= sheet.getLastRowNum(); r++) {
+                    Row row = sheet.getRow(r);
+                    if (row == null) continue;
+                    int rowNum = r + 1;   // 报给老师看的行号 = 他在 Excel 里看到的行号
+                    String studentId = cellText(row.getCell(sidCol));
+                    String rawScore = cellText(row.getCell(scoreCol));
+                    if (studentId == null && rawScore == null) continue;   // 整行空
+
+                    if (studentId == null) {
+                        errors.add(rowError(rowNum, "学号为空")); skipCount++; continue;
+                    }
+                    if (rawScore == null) {
+                        errors.add(rowError(rowNum, "成绩为空")); skipCount++; continue;
+                    }
+                    double score;
+                    try {
+                        score = Double.parseDouble(rawScore);
+                    } catch (NumberFormatException e) {
+                        errors.add(rowError(rowNum, "成绩不是数字：" + rawScore)); skipCount++; continue;
+                    }
+
+                    Long profileId = classInfoMapper.findProfileIdByStudentId(studentId);
+                    if (profileId == null) {
+                        errors.add(rowError(rowNum, "学号不存在：" + studentId)); skipCount++; continue;
+                    }
+
+                    // 姓名：Excel 里填了就用填的；没填就从档案回填 —— 否则导入的行在成绩
+                    // 列表里只有分数没有姓名，正是本仓一直在清的那种"半截数据"。
+                    String studentName = nameCol == null ? null : cellText(row.getCell(nameCol));
+                    if (studentName == null) {
+                        studentName = classInfoMapper.findStudentNameByStudentId(studentId);
+                    }
+
+                    Map<String, Object> rowData = new HashMap<>();
+                    rowData.put("studentId", profileId);
+                    rowData.put("courseId", courseId);
+                    rowData.put("score", score);
+                    rowData.put("studentName", studentName);
+                    rowData.put("className", className);
+                    // 每行可以覆盖学期；整表没给就用请求参数里那个。
+                    rowData.put("semester", semCol == null ? semester : cellText(row.getCell(semCol)));
+                    rowData.put("remark", remarkCol == null ? null : cellText(row.getCell(remarkCol)));
+                    rows.add(rowData);
+                    acceptedCount++;
+                }
+            }
+
+            // saveScores 是 @Transactional 的：要么这批全落库，要么一行都不落。
+            // 所以只有它正常返回，上面的 acceptedCount 才等于真正写进去的行数。
+            if (!rows.isEmpty()) {
+                scoreRecordService.saveScores(rows, getUserIdFromGateway(request));
+            }
+
+            result.put("total", acceptedCount + skipCount);
+            result.put("success", acceptedCount);
+            result.put("skipped", skipCount);
+            result.put("errors", errors);
+            log.info("Import scores ok: courseId={}, total={}, success={}, skip={}",
+                    courseId, acceptedCount + skipCount, acceptedCount, skipCount);
+            return ApiResponse.success(result);
         } catch (Exception e) {
-            return ApiResponse.error(e.getMessage());
+            log.error("Import scores failed", e);
+            // W22：不再把 POI 的英文原文回给客户端。是"文件本身的问题"就给可操作的中文，
+            // 否则说明是落库等服务端故障 —— 那种情况回"文件损坏"是谎报原因，给中性文案。
+            String friendly = ExcelUploadErrors.describe(e);
+            return ApiResponse.error(friendly != null ? friendly
+                    : "导入失败：服务器处理这个文件时出错，请稍后重试或联系管理员");
         }
+    }
+
+    /**
+     * 教师端成绩导入模板（真 xlsx）。列口径与 {@link #importScores} **逐字一致** ——
+     * 模板就是这份契约唯一的人话说明，两边一旦不一致，教师照着模板填也会全军覆没。
+     */
+    @GetMapping("/scores/template")
+    public void downloadScoresTemplate(HttpServletResponse response) throws IOException {
+        String[] headers = {"学号(必填)", "姓名", "总评成绩(必填)", "学期", "备注"};
+        byte[] content;
+        try (Workbook workbook = new XSSFWorkbook();
+             ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+            Sheet sheet = workbook.createSheet("成绩导入模板");
+            Row headerRow = sheet.createRow(0);
+            for (int i = 0; i < headers.length; i++) {
+                headerRow.createCell(i).setCellValue(headers[i]);
+            }
+            Row example = sheet.createRow(1);
+            example.createCell(0).setCellValue("2023020616");
+            example.createCell(1).setCellValue("司明");
+            example.createCell(2).setCellValue(85.5);
+            example.createCell(3).setCellValue("5");
+            example.createCell(4).setCellValue("");
+            for (int i = 0; i < headers.length; i++) {
+                sheet.autoSizeColumn(i);
+            }
+            workbook.write(out);
+            content = out.toByteArray();
+        }
+        writeXlsx(response, content, "成绩导入模板.xlsx");
+        log.info("Download scores template ok");
+    }
+
+    /**
+     * 挑「总评成绩」那一列。
+     *
+     * <p>不能直接用 {@code findColumn(header,"成绩")} —— 它回的是**第一个**含「成绩」的列，
+     * 而导出件里「平时成绩」「期末成绩」都排在「总评成绩」前面，那样会把一门课的
+     * 总评读成平时分。这里让最具体的「总评」直接胜出，并**显式排除**本端点不落的
+     * 平时/期末两列；都没有时才退到泛化的「成绩/分数」。
+     */
+    private static Integer findScoreColumn(Row header) {
+        if (header == null || header.getLastCellNum() < 0) return null;
+        Integer fallback = null;
+        for (int c = header.getFirstCellNum(); c < header.getLastCellNum(); c++) {
+            String h = cellText(header.getCell(c));
+            if (h == null) continue;
+            String flat = h.replace(" ", "");
+            if (flat.contains("总评")) return c;
+            if (flat.contains("平时") || flat.contains("期末")) continue;
+            if (fallback == null && (flat.contains("成绩") || flat.contains("分数"))) fallback = c;
+        }
+        return fallback;
     }
 
     /**
@@ -823,24 +1029,84 @@ public class TeacherController {
     }
 
     /**
-     * 推荐课程
+     * 推荐课程（W14，2026-10-04 真实现）。
+     *
+     * <p><b>修之前是纯回声桩</b>：把入参原样吐回来、**一行都不落库**，却回一句
+     * 「课程推荐成功，学生将收到通知」；而前端 {@code TeacherCourses.vue} 连
+     * {@code teacherId} 都不发 ⇒ `data.get("teacherId").toString()` 先 NPE。
+     * 库里也没有任何推荐表。
+     *
+     * <p><b>现在</b>：身份取 {@code X-User-Id}（不再由请求体声明 —— 谁发的就记谁），
+     * 校验"这门课是不是我教的"，落一行 {@code course_recommendation}，
+     * 并把**真正会看到它的人数**回给前端 —— 提示语从此有据可依。
+     *
+     * <p>⚠️ 这里没有复用 {@link #denyUnlessMyCourse}：那条对"课程不存在"也回 403，
+     * 而本端点需要把"不存在"(404) 与"不是你的"(403) 分开。
      */
     @PostMapping("/courses/recommend")
-    public ApiResponse<Object> recommendCourse(@RequestBody Map<String, Object> data) {
-        try {
-            Long teacherId = Long.parseLong(data.get("teacherId").toString());
-            Long courseId = Long.parseLong(data.get("courseId").toString());
-            String reason = (String) data.getOrDefault("reason", "");
-            Map<String, Object> result = new HashMap<>();
-            result.put("teacherId", teacherId);
-            result.put("courseId", courseId);
-            result.put("reason", reason);
-            result.put("status", "已推荐");
-            result.put("message", "课程推荐成功，学生将收到通知");
-            return ApiResponse.success(result);
-        } catch (Exception e) {
-            return ApiResponse.error(e.getMessage());
+    public ApiResponse<Object> recommendCourse(@RequestBody(required = false) Map<String, Object> data,
+                                               HttpServletRequest request) {
+        Long me = getUserIdFromGateway(request);
+        if (me == null) {
+            return forbidden("请先登录");
         }
+        Long courseId = parseLongOrNull(data == null ? null : data.get("courseId"));
+        if (courseId == null) {
+            return ApiResponse.badRequest("缺少 courseId");
+        }
+        String reason = firstNonBlank(data.get("reason"));
+        if (reason == null) {
+            return ApiResponse.badRequest("请填写推荐理由");
+        }
+        Course course = courseService.getById(courseId);
+        if (course == null) {
+            return ApiResponse.notFound("课程不存在");
+        }
+        if (!isAdmin(request)
+                && (course.getTeacherId() == null || !course.getTeacherId().equals(me))) {
+            return forbidden("只能推荐本人所授课程");
+        }
+        Long targetClassId = parseLongOrNull(data.get("targetClassId"));
+        if (targetClassId != null) {
+            ApiResponse<Object> deny = denyUnlessMyClass(targetClassId, request, "只能把课程推荐给本人所带的班级");
+            if (deny != null) {
+                return deny;
+            }
+        }
+
+        CourseRecommendation rec = new CourseRecommendation();
+        rec.setTeacherId(me);
+        rec.setCourseId(courseId);
+        rec.setTargetClassId(targetClassId);
+        // reason 列是 varchar(500)；严格模式下超长会直接抛 DataTooLong（变成"推荐失败"而其实只是话太长）。
+        rec.setReason(truncate(reason, 500));
+        rec.setStatus(1);
+        courseRecommendationMapper.insert(rec);
+
+        Map<String, Object> result = new java.util.LinkedHashMap<>();
+        result.put("id", rec.getId());
+        result.put("courseId", courseId);
+        result.put("courseName", course.getName());
+        result.put("targetClassId", targetClassId);
+        result.put("reason", rec.getReason());
+        result.put("recipients", courseRecommendationMapper.countRecipients(me, targetClassId));
+        result.put("status", "已推荐");
+        return ApiResponse.success(result);
+    }
+
+    /**
+     * 我发出过的推荐选课（教师端回看）。
+     *
+     * <p>与 {@code GET /courses/{courseId}/recommendations}（那条是**教学建议**，硬编码两句话）
+     * 是两回事：分段数不同，不冲突。
+     */
+    @GetMapping("/courses/recommendations")
+    public ApiResponse<Object> listMyRecommendations(HttpServletRequest request) {
+        Long me = getUserIdFromGateway(request);
+        if (me == null) {
+            return forbidden("请先登录");
+        }
+        return ApiResponse.success(courseRecommendationMapper.listByTeacher(me));
     }
 
     /**
@@ -1063,7 +1329,18 @@ public class TeacherController {
             }
             result.put("className", clazz.getName());
 
-            try (Workbook workbook = new XSSFWorkbook(file.getInputStream())) {
+            // W22：`new XSSFWorkbook(...)` 读不了 .xls，而上面的扩展名闸写着"仅支持 .xlsx 或 .xls"。
+            // WorkbookFactory 让那句承诺变成真的（真 .xls 走 HSSF）。
+            // 解析失败的翻译放在这一层，理由同 /scores/import。
+            Workbook opened;
+            try {
+                opened = WorkbookFactory.create(file.getInputStream());
+            } catch (Exception e) {
+                log.error("Parse class students excel failed: {}", file.getOriginalFilename(), e);
+                String friendly = ExcelUploadErrors.describe(e);
+                return ApiResponse.error(friendly != null ? friendly : ExcelUploadErrors.UNREADABLE);
+            }
+            try (Workbook workbook = opened) {
                 Sheet sheet = workbook.getSheetAt(0);
                 if (sheet == null || sheet.getLastRowNum() < 1) {
                     return ApiResponse.error("表里没有数据行（第 1 行应当是表头，数据从第 2 行开始）");
@@ -1119,7 +1396,10 @@ public class TeacherController {
             return ApiResponse.success(result);
         } catch (Exception e) {
             log.error("Import students failed", e);
-            return ApiResponse.error("导入失败: " + e.getMessage());
+            // W22：文案与 /scores/import 逐字一致。
+            String friendly = ExcelUploadErrors.describe(e);
+            return ApiResponse.error(friendly != null ? friendly
+                    : "导入失败：服务器处理这个文件时出错，请稍后重试或联系管理员");
         }
     }
 
@@ -1187,17 +1467,35 @@ public class TeacherController {
     }
 
     /**
-     * 触发预警
+     * 成绩预检：本课程有多少名学生低于及格线。
+     *
+     * <p><b>W24（2026-10-05）：这个端点从前在说谎。</b>它回的是
+     * {@code "已为" + N + "名学生生成预警"}，而方法体里<b>一行都没落库</b> ——
+     * 只把成绩流了一遍、数了数低于 {@link ScoreCaliber#PASS_LINE} 的人数就返回。
+     * 同一个响应里那个 {@code warningsTriggered} 键名也在重复这个说法。
+     * 换句话说：**谁调它，谁就会得到一句"预警已生成"的假确认**（HTTP 200 + success）。
+     *
+     * <p>路径与 {@code teacherAPI.triggerWarnings} 这个名字都还叫"触发预警"，
+     * 但**真正的预警生成不在这个服务里**：{@code warning-service} 的
+     * {@code POST /warnings/scan}（{@code WarningScheduledTask.triggerNow()}）与每日 02:00
+     * 的定时任务才是出口，且带"先解除后生成 + 按学生/挂科门数判重"的完整规则。
+     * 这里**刻意不去**转调它：本端点是**按课程**的，而那个扫描是**全库**的，
+     * 从一门课的按钮触发全库重扫，语义上就是错的；况且扫描会连带发通知。
+     *
+     * <p>所以本轮的修法是**把说法改成事实**（而不是"让承诺成真"）：
+     * 响应里不再有 {@code warningsTriggered}，改成一个不冒充动作的
+     * {@code studentsBelowPassLine}，{@code message} 也明说"只做统计、不生成预警记录"。
+     * 该键可安全移除 —— PC 与小程序**两边的封装都不是调用方**（全仓零调用点）。
      */
     @PostMapping("/scores/warnings")
-    public ApiResponse<Object> triggerWarnings(@RequestParam Long course_id, HttpServletRequest request) {
+    public ApiResponse<Object> inspectScoresForWarnings(@RequestParam Long course_id, HttpServletRequest request) {
         ApiResponse<Object> deny = denyUnlessMyCourse(course_id, request, "只能对本人所授课程触发预警");
         if (deny != null) {
             return deny;
         }
         try {
             List<ScoreRecord> scores = latestPerStudent(scoreRecordService.getScoresByCourseId(course_id));
-            long warningCount = scores.stream()
+            long belowPassLine = scores.stream()
                 .map(ScoreRecord::getScore)
                 .filter(Objects::nonNull)              // 未录入的不算 0 分
                 .filter(score -> score < ScoreCaliber.PASS_LINE)
@@ -1205,8 +1503,11 @@ public class TeacherController {
             Map<String, Object> result = new HashMap<>();
             result.put("courseId", course_id);
             result.put("totalStudents", scores.size());
-            result.put("warningsTriggered", warningCount);
-            result.put("message", "已为" + warningCount + "名学生生成预警");
+            result.put("passLine", ScoreCaliber.PASS_LINE);
+            // 不叫 warningsTriggered：这个名字断言"预警被触发了"，而事实是只数了个数。
+            result.put("studentsBelowPassLine", belowPassLine);
+            result.put("message", "本课程有 " + belowPassLine + " 名学生成绩低于 "
+                    + ScoreCaliber.PASS_LINE + " 分；本接口只做统计，不生成预警记录");
             return ApiResponse.success(result);
         } catch (Exception e) {
             return ApiResponse.error(e.getMessage());
@@ -1217,11 +1518,22 @@ public class TeacherController {
      * 获取学分预测
      */
     @GetMapping("/students/{studentId}/credit-prediction")
-    public ApiResponse<Object> getCreditPrediction(@PathVariable String studentId) {
+    public ApiResponse<Object> getCreditPrediction(@PathVariable String studentId, HttpServletRequest request) {
+        // W18（2026-10-04）：路径参数是 student_profile.id（与 scores.student_id 同一套），
+        // **由客户端给**。此前无闸，且本类 isSelf 的注释还把它辩护成"按设计就是教师看本班学生，
+        // 属合法的跨用户读，不能拦" —— 但那里没有一行代码验证过这个 studentId 真的在本人班上。
+        // 于是任意教师换个数字就能读到任意学生的姓名 / 已修学分 / 挂科门数。
+        Long sid;
         try {
-            // 路径参数是 student_profile.id（与 scores.student_id 同一套），不是 users.id、也不是学号。
-            Long sid = Long.parseLong(studentId);
-
+            sid = Long.parseLong(studentId);
+        } catch (NumberFormatException e) {
+            return ApiResponse.badRequest("学生 id 非法: " + studentId);
+        }
+        ApiResponse<Object> deny = denyUnlessMyStudent(sid, request, "只能查看本人所带班级的学生");
+        if (deny != null) {
+            return deny;
+        }
+        try {
             // 学分口径唯一来源：ScoreCaliber.ONE_STUDENT_STATS。
             // 学生端的"已修学分"用的是同一段 SQL，所以教师这里看到的数字
             // 和学生自己首页上的必然一致 —— 早先这里是 `成绩条数 × 3.0`，
@@ -1266,7 +1578,17 @@ public class TeacherController {
      * 预测只能是编的。前端原来那一格改成了"该生在本课程的名次"。
      */
     @GetMapping("/scores/student/analyze")
-    public ApiResponse<Object> analyzeStudentScore(@RequestParam Long student_id, @RequestParam Long course_id) {
+    public ApiResponse<Object> analyzeStudentScore(@RequestParam Long student_id, @RequestParam Long course_id,
+                                                   HttpServletRequest request) {
+        // W18（2026-10-04）：course_id 与 student_id 都由客户端给，此前一条闸都没有 ——
+        // 任意教师换个 course_id 就能读到别的教师课程里任意学生的成绩、名次、班级平均。
+        // 闸口放在**课程**上：这门课必须是本人所授（判据与 W12 的课程族完全一致）。
+        // 不额外要求"该生在我班上"：只授课、不是班主任的教师（活库 18/19/22/28）本就该
+        // 看得到自己所授课程里的学生 —— 那是本人课程的数据，多一道班级校验反而是误伤。
+        ApiResponse<Object> deny = denyUnlessMyCourse(course_id, request, "只能查看本人所授课程的成绩");
+        if (deny != null) {
+            return deny;
+        }
         try {
             // 一人一行：司明在高等数学下有 3 个批次，取最新的那次（第 5 学期 56.5），
             // 否则"当前成绩"会随行序随机命中第 3 学期的 87 分 —— 同一个接口两次调用
@@ -1536,7 +1858,15 @@ public class TeacherController {
     }
 
     /**
-     * 获取课程推荐
+     * 获取课程推荐（教学建议）。
+     *
+     * <p><b>W15</b>：{@code limit} 原来声明了却从不生效 —— 无论传什么，返回的条数只由数据决定。
+     * 现在它真的是"最多回几条"的上限。
+     *
+     * <p><b>W21</b>：两条建议现在**都**由数据触发 —— 「加强基础」看不及格人数、「增加实践」
+     * 看优秀（≥{@link ScoreCaliber#EXCELLENT_LINE}）人数。此前第二条是**无条件**拼上去的，
+     * 与课程数据无关，全班 90+ 或课程与编程毫无关系时也照样建议"增加编程实践"。
+     * 因此本端点在"既无不及格、也无优秀"时**返回空数组**，属预期行为。
      */
     @GetMapping("/courses/{courseId}/recommendations")
     public ApiResponse<Object> getCourseRecommendations(@PathVariable Long courseId, @RequestParam(required = false, defaultValue = "5") Integer limit,
@@ -1552,11 +1882,14 @@ public class TeacherController {
             if (scores.isEmpty()) {
                 return ApiResponse.success(recommendations);
             }
-            // 统计低分学生，给出推荐
+            // 统计低分/优秀学生，**各**给一条由数据触发的推荐（W21）
             int lowScoreCount = 0;
+            int excellentCount = 0;
             for (ScoreRecord s : scores) {
                 // 未录入不等于不及格：跳过，不当作 0 分
-                if (s.getScore() != null && s.getScore() < ScoreCaliber.PASS_LINE) lowScoreCount++;
+                if (s.getScore() == null) continue;
+                if (s.getScore() < ScoreCaliber.PASS_LINE) lowScoreCount++;
+                else if (s.getScore() >= ScoreCaliber.EXCELLENT_LINE) excellentCount++;
             }
             if (lowScoreCount > 0) {
                 Map<String, Object> rec = new HashMap<>();
@@ -1566,12 +1899,21 @@ public class TeacherController {
                 rec.put("priority", "high");
                 recommendations.add(rec);
             }
-            Map<String, Object> rec2 = new HashMap<>();
-            rec2.put("id", 2L);
-            rec2.put("title", "增加实践环节");
-            rec2.put("description", "建议增加编程实践和小组项目，提升学生动手能力");
-            rec2.put("priority", "medium");
-            recommendations.add(rec2);
+            // W21：这条原来是**无条件**拼上去的 —— 与课程数据无关，哪怕全班都在 90 分以上
+            // （甚至这门课是《中国传统文化》）也照样建议"增加编程实践"，与"恒 0 的 total"同族。
+            // 现改为**由数据触发**，并把真实人数写进文案：没有优秀学生的课不该收到"加实践"的建议。
+            if (excellentCount > 0) {
+                Map<String, Object> rec2 = new HashMap<>();
+                rec2.put("id", 2L);
+                rec2.put("title", "增加实践环节");
+                rec2.put("description", "该课程有" + excellentCount + "名学生成绩优秀，建议增加实践环节与拓展内容，进一步提升动手能力");
+                rec2.put("priority", "medium");
+                recommendations.add(rec2);
+            }
+            // W15：让 `limit` 真的生效（此前它只是个摆设）。
+            if (limit != null && limit > 0 && recommendations.size() > limit) {
+                recommendations = new ArrayList<>(recommendations.subList(0, limit));
+            }
             return ApiResponse.success(recommendations);
         } catch (Exception e) {
             return ApiResponse.error(e.getMessage());
@@ -1613,10 +1955,15 @@ public class TeacherController {
     }
 
     /**
-     * 获取反馈列表
+     * 获取反馈列表。
+     *
+     * <p><b>W15</b>：原来签名上有 {@code page} / {@code size} 两个参数，但方法体从头到尾
+     * 没引用过它们 —— 调用方以为按页取，实际拿到的永远是**全量**。两个参数都已删掉：
+     * 小程序（唯一的真实调用方 {@code teacherAPI.getFeedbackList(userId)}）本来就不传，
+     * PC 的 {@code getFeedbackList}/{@code getFeedback} 两个绑定零调用方。签名现在与行为一致。
      */
     @GetMapping("/feedbacks/{teacherId}/list")
-    public ApiResponse<Object> getFeedbackList(@PathVariable String teacherId, @RequestParam(required = false, defaultValue = "") String category, @RequestParam(required = false, defaultValue = "1") Integer page, @RequestParam(required = false, defaultValue = "20") Integer size,
+    public ApiResponse<Object> getFeedbackList(@PathVariable String teacherId, @RequestParam(required = false, defaultValue = "") String category,
                                                HttpServletRequest request) {
         // W11 读侧归属闸：users.id 空间。
         if (!isSelf(Long.parseLong(teacherId), request)) {
@@ -2204,7 +2551,12 @@ public class TeacherController {
     // 回复走 `POST /feedbacks/{feedbackId}/reply`。
 
     /**
-     * 按学院统计教师数量
+     * 按学院统计教师数量。
+     *
+     * <p><b>W15 修的一条静默错</b>：原来 {@code catch} 里回的是 {@code ApiResponse.success(0L)} ——
+     * 查库炸了与"这个学院一个教师都没有"在响应上长得一模一样（而且连日志都没打），
+     * 调用方会把一次故障显示成一个可信的 0。与 W14 修的 {@code StudentController.countByCollege}
+     * 同族，现在如实回错误并记日志。
      */
     @GetMapping("/count-by-college")
     public ApiResponse<Long> countByCollege(@RequestParam Long collegeId) {
@@ -2212,7 +2564,8 @@ public class TeacherController {
             long count = teacherService.countByCollege(collegeId);
             return ApiResponse.success(count);
         } catch (Exception e) {
-            return ApiResponse.success(0L);
+            log.error("统计教师数量失败: {}", e.getMessage());
+            return ApiResponse.error(e.getMessage());
         }
     }
 
@@ -2304,8 +2657,11 @@ public class TeacherController {
      * <p>管理员（网关注入的 {@code X-Role: 4}）旁路 —— 与写侧 {@code deleteScore}/{@code updateScore} 同形。
      * 身份头缺失/非法一律<b>拒绝</b>（fail-closed）。
      *
-     * <p>⚠️ <b>不适用于</b> {@code /students/{studentId}/credit-prediction} —— 那条路径里是
-     * {@code student_profile.id}，且<b>按设计</b>就是教师看本班学生，属合法的跨用户读，不能拦。
+     * <p>⚠️ {@code /students/{studentId}/credit-prediction} **不属于**本方法管 —— 它的路径参数是
+     * {@code student_profile.id}，与上面这套 users.id 不同源。它自己的闸是
+     * {@link #denyUnlessMyStudent}（W18，2026-10-04）。此前这里写着"按设计就是教师看本班学生，
+     * 属合法的跨用户读，不能拦" —— 那句话把**假设**当成了保证：没有任何代码验证过客户端给的
+     * {@code studentId} 真在本人班上，于是它当时是个实打实的越权读（任意教师读任意学生学分）。
      */
     private boolean isSelf(Long teacherId, HttpServletRequest request) {
         if (isAdmin(request)) {
@@ -2407,11 +2763,50 @@ public class TeacherController {
     }
 
     /**
+     * 资源归属闸：**学生**（{@code student_profile.id}）。W18，2026-10-04。
+     *
+     * <p>用于 {@code GET /students/{studentId}/credit-prediction} —— 那条路径参数是
+     * {@code student_profile.id}，**由客户端给**，此前一道校验都没有。控制器的注释还把它
+     * 辩护成「按设计就是教师看本班学生，属合法的跨用户读，不能拦」；但"本班"是**假设**，
+     * 那里没有一行代码验证过调用方给的 {@code studentId} 真的在本人班上。任意教师换个数字
+     * 就能读到任意学生的姓名、已修学分、挂科门数（实测见手册 W18）。
+     *
+     * <p>判据：{@code student_profile.id → class_id → classes.teacher_id}，与
+     * {@link #denyUnlessMyClass} 同源（{@code classes.teacher_id} 是 users.id）。
+     * 学生没有班级（{@code class_id} 为 NULL）时**拒绝** —— 归属无从谈起，
+     * 不能因为"查不到班"就当成"不是别人的"而放行。
+     *
+     * <p>⚠️ 已知边界：口径是「**班主任**所带班级的学生」。只授课、不是班主任的教师
+     * （活库里 18/19/22/28 都给 class 1 的学生录过成绩）**取不到**这些学生的学分预测。
+     * 这是有意收窄到"看本班学生"这一条 —— 前端能走到这条端点的只有小程序名册，
+     * 而名册的班级列表来自 {@code /class-management/my-classes}（同样按 {@code classes.teacher_id}
+     * 限死），所以**没有**任何现存流程因此被误伤。
+     */
+    private ApiResponse<Object> denyUnlessMyStudent(Long profileId, HttpServletRequest request, String message) {
+        if (isAdmin(request)) {
+            return null;
+        }
+        Long me = getUserIdFromGateway(request);
+        if (me == null) {
+            return forbidden(message);
+        }
+        Long classId = classInfoMapper.findClassIdOfProfile(profileId);
+        if (classId == null) {
+            return forbidden(message);
+        }
+        ClassInfo clazz = classInfoMapper.selectById(classId);
+        if (clazz != null && clazz.getTeacherId() != null && clazz.getTeacherId().equals(me)) {
+            return null;
+        }
+        return forbidden(message);
+    }
+
+    /**
      * 这批成绩是不是**本人录的**。
      *
-     * <p>用于 {@code POST /scores} / {@code /scores/import} / {@code /scores/batch-delete}
-     * 这三条按 id 列表下手的路径 —— 逐条比 {@code score_record.teacher_id}，有一条不是本人
-     * 录的就整批拒绝（不做"部分成功"：一半写进去一半没写，调用方无法知道到底发生了什么）。
+     * <p>用于 {@code /scores/batch-delete} 这类**按 id 列表下手**的路径 —— 逐条比
+     * {@code score_record.teacher_id}，有一条不是本人录的就整批拒绝（不做"部分成功"：
+     * 一半写进去一半没写，调用方无法知道到底发生了什么）。
      * id 在库里查不到时**不算通过**（不存在 ≠ 属于本人）。
      */
     private boolean allScoresAreMine(List<Long> scoreIds, HttpServletRequest request) {
@@ -2435,9 +2830,13 @@ public class TeacherController {
     }
 
     /**
-     * 资源归属闸：**成绩写入面**（{@code POST /scores} 与 {@code /scores/import} 共用）。
+     * 资源归属闸：**按 JSON 请求体写入的成绩面**（{@code POST /scores}）。
      *
-     * <p>这两个端点的请求体里有两样由客户端说了算的东西：{@code teacherId}（记成"谁录的"）
+     * <p><b>2026-10-04（W19）</b>：{@code /scores/import} 换成了 multipart（见该方法的
+     * javadoc），它不再走这条闸，改由 {@link #denyUnlessMyCourse} 对请求参数里的
+     * {@code courseId} 单独把关。这条现在只服务于 {@code POST /scores}。
+     *
+     * <p>这个端点的请求体里有两样由客户端说了算的东西：{@code teacherId}（记成"谁录的"）
      * 与每一行的 {@code courseId}（写进哪门课）。此前两样都照单全收 —— 换个
      * {@code teacherId} 就能以别人的名义录分，换个 {@code courseId} 就能往别人的课里录分。
      *

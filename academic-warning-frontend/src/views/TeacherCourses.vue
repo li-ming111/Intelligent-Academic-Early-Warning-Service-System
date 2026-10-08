@@ -138,6 +138,15 @@
         <el-form-item label="推荐课程"><el-tag type="primary" effect="plain" size="large">{{ recForm.courseName }}</el-tag></el-form-item>
         <el-form-item label="推荐理由"><el-input v-model="recForm.reason" type="textarea" rows="3" placeholder="说明推荐理由..." /></el-form-item>
       </el-form>
+      <!-- W14：回看「我发过的推荐」。后端现在真落库，所以这块有内容可显示。 -->
+      <div v-if="myRecs.length" class="myrec-wrap">
+        <div class="myrec-head">我发过的推荐（{{ myRecs.length }}）</div>
+        <div v-for="r in myRecs.slice(0, 5)" :key="r.id" class="myrec-item">
+          <span class="myrec-course">{{ r.courseName }}</span>
+          <span class="myrec-scope">{{ r.targetClassName || '全部班级' }}</span>
+          <span class="myrec-reason">{{ r.reason }}</span>
+        </div>
+      </div>
       <template #footer><el-button @click="recVisible = false">取消</el-button><el-button type="primary" @click="submitRec">发送</el-button></template>
     </el-dialog>
   </div>
@@ -165,6 +174,7 @@ const rosterClasses = ref([])
 const rosterActiveClass = ref('')
 const rosterAllStudents = ref([])
 const recForm = reactive({ courseId: null, courseName: '', reason: '' })
+const myRecs = ref([])
 const addForm = reactive({ selectedCourseId: null, name: '', code: '', credits: 2, type: '选修课', description: '', classId: '' })
 const stats = reactive({ total: 0, students: 0, pass: 0, avgRating: '--' })
 
@@ -319,10 +329,26 @@ function openRoster(c) {
   rosterActiveClass.value = rosterClasses.value[0]?.name || ''
   rosterVisible.value = true
 }
-function recommend(c) { recForm.courseId = c.courseId; recForm.courseName = c.courseName; recForm.reason = ''; recVisible.value = true }
+function recommend(c) { recForm.courseId = c.courseId; recForm.courseName = c.courseName; recForm.reason = ''; recVisible.value = true; loadMyRecs() }
+// W14：回看我发过的推荐。失败时保持空列表（不编造），对话框照常可用。
+async function loadMyRecs() {
+  try {
+    const res = await teacherAPI.getMyRecommendations()
+    myRecs.value = Array.isArray(res) ? res : []
+  } catch (e) { myRecs.value = [] }
+}
+// W14：后端不再是回声桩，它真落库并回一个 `recipients`（真正会看到这条推荐的学生数）。
+// 所以提示语从「推荐已发送」（一句无从验证的话）换成带条数的实话；`recipients` 缺失时
+// 退化成原来的话，而不是显示 "undefined"。
 async function submitRec() {
   if (!recForm.reason) { ElMessage.error('请输入推荐理由'); return }
-  try { await teacherAPI.recommendCourse({ courseId: recForm.courseId, reason: recForm.reason }); ElMessage.success('推荐已发送'); recVisible.value = false } catch (e) { ElMessage.error('发送失败') }
+  try {
+    const res = await teacherAPI.recommendCourse({ courseId: recForm.courseId, reason: recForm.reason })
+    const n = res && typeof res.recipients === 'number' ? res.recipients : null
+    ElMessage.success(n === null ? '推荐已发送' : `推荐已发送，${n} 名学生可见`)
+    recVisible.value = false
+    await loadMyRecs()
+  } catch (e) { ElMessage.error(e?.message || '发送失败') }
 }
 </script>
 
@@ -375,4 +401,13 @@ async function submitRec() {
 
 .roster-wrap { }
 .roster-summary { padding: 10px 0 0; font-size: 13px; color: #64748b; text-align: center; }
+
+/* W14：我发过的推荐 */
+.myrec-wrap { border-top: 1px solid #eef2f7; padding-top: 10px; margin-top: 4px; }
+.myrec-head { font-size: 12px; color: #94a3b8; margin-bottom: 6px; }
+.myrec-item { display: flex; gap: 8px; align-items: baseline; font-size: 12px; padding: 4px 0; border-bottom: 1px dashed #f1f5f9; }
+.myrec-item:last-child { border-bottom: none; }
+.myrec-course { color: #1d4ed8; font-weight: 600; flex-shrink: 0; }
+.myrec-scope { color: #94a3b8; flex-shrink: 0; }
+.myrec-reason { color: #64748b; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 </style>

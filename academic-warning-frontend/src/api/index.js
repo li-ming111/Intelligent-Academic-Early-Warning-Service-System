@@ -1,4 +1,6 @@
 import apiClient from './client'
+// W26：AI 结果的诚实性闸（后端没配 key 时它会用占位串冒充分析结果，见 utils/ai.js 顶部那段）。
+import { aiGuard } from '@/utils/ai'
 
 export const authAPI = {
   // 2026-10-02（W1.12）：登录要带服务端签发的验证码。
@@ -36,9 +38,9 @@ export const authAPI = {
 }
 
 export const studentAPI = {
-  register: (data) => {
-    return apiClient.post('/students/register', data)
-  },
+  // `register` 已删（2026-10-08 W27）：它打 `POST /students/register`，那个端点 service 体
+  // 只有一句 `return "注册成功";` —— 一行都不写库却回 success:true。后端端点已一并删除。
+  // 全仓零调用方（小程序侧本来就没有这个封装），真实注册走 `authAPI.registerStudent`。
   request: (url, method = 'GET', params = {}) => {
     if (method.toUpperCase() === 'GET') {
       return apiClient.get(url, { params })
@@ -91,6 +93,11 @@ export const studentAPI = {
   },
   getAssistancePlans: (userId) => {
     return apiClient.get(`/students/assistance/${userId}`)
+  },
+  // 老师推荐选课（W14）。此前这条路**只到教师端点就断了**：后端不落库、学生侧没有出口。
+  // 参数是 users.id（与 /students/** 其余端点同一套）。
+  getCourseRecommendations: (userId) => {
+    return apiClient.get(`/students/recommendations/${userId}`)
   },
   getSuggestions: (userId) => {
     return apiClient.get(`/students/suggestions/${userId}`)
@@ -294,9 +301,9 @@ export const studentAPI = {
 }
 
 export const teacherAPI = {
-  register: (data) => {
-    return apiClient.post(`/teachers/register`, data)
-  },
+  // `register` 已删（2026-10-08 W27）：它打 `POST /teachers/register`，那个端点只插
+  // teacher_profile 档案行（不建账号、不设口令），且零调用方。后端端点已一并删除。
+  // 真实注册走 `authAPI.registerTeacher`（`TeacherRegister.vue`）。
   // ---- 账号级自助设置 ----
   // 说明：邮箱/电话在 users 表（teacher_profile 只有 8 列，压根没有这两列），
   // 密码走 /auth/change-password；通知偏好与办公信息统一存 user_settings（键 users.id）。
@@ -347,8 +354,19 @@ export const teacherAPI = {
   exportScores: (courseId) => {
     return apiClient.get(`/teachers/export/scores`, { params: { course_id: courseId }, responseType: 'blob' })
   },
-  importScores: (data) => {
-    return apiClient.post(`/teachers/scores/import`, data)
+  // 导入成绩：multipart（file + courseId + className + semester），Excel 由服务端 POI 解析。
+  // 与同文件的 importStudents 同款 —— 后端换契约前这里发的是 {"message":"成绩导入成功"} 的
+  // JSON 请求体，两边对不上，按钮一次都没成功过。
+  importScores: (formData) => {
+    return apiClient.post(`/teachers/scores/import`, formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data'
+      }
+    })
+  },
+  // 成绩导入模板（真 xlsx）。教师端此前没有任何模板端点，列名只能靠猜。
+  downloadScoresTemplate: () => {
+    return apiClient.get(`/teachers/scores/template`, { responseType: 'blob' })
   },
   getFeedbacks: (teacherId, category) => {
     return apiClient.get(`/teachers/feedbacks`, { params: { teacherId: teacherId, category } })
@@ -382,6 +400,10 @@ export const teacherAPI = {
   recommendCourse: (data) => {
     return apiClient.post(`/teachers/courses/recommend`, data)
   },
+  // W14：回看「我发过的推荐」。此前只发不存，也就没有什么可回看的。
+  getMyRecommendations: () => {
+    return apiClient.get(`/teachers/courses/recommendations`)
+  },
   getWarnings: (teacherId, status) => {
     return apiClient.get(`/teachers/warnings/${teacherId}`, { params: { status } })
   },
@@ -409,21 +431,24 @@ export const teacherAPI = {
   getCreditPrediction: (studentId) => {
     return apiClient.get(`/teachers/students/${studentId}/credit-prediction`)
   },
-  getCourseRecommendations: (courseId, limit = 5) => {
-    return apiClient.get(`/teachers/courses/${courseId}/recommendations`, { params: { limit } })
-  },
+  // 2026-10-04（W14）删：`getCourseRecommendations(courseId, limit)` →
+  //   GET /teachers/courses/{courseId}/recommendations 是「前端过滤」那族的又一条 ——
+  //   后端那个端点回的是**写死的教学建议数组**（不是任何教师发过的推荐），
+  //   且全仓零调用方。留一条没人调、名字还骗人的绑定不如删掉。
   // ============= 审计日志API =============
   getScoreLogs: (teacherId, page = 1, size = 20) => {
     return apiClient.get(`/teachers/scores/audit/${teacherId}`, { params: { page, size } })
   },
   // ============= 反馈管理API =============
-  getFeedbackList: (teacherId, category, page = 1, size = 20) => {
-    return apiClient.get(`/teachers/feedbacks/${teacherId}/list`, { params: { category, page, size } })
+  // 2026-10-04（W15）：去掉了 `page`/`size` —— 后端 `GET /teachers/feedbacks/{id}/list`
+  // 从来不用这两个参数（返回的是全量），签名原样照抄只会让人以为按页取。
+  getFeedbackList: (teacherId, category) => {
+    return apiClient.get(`/teachers/feedbacks/${teacherId}/list`, { params: { category } })
   },
   replyToFeedback: (feedbackId, data) => {
     return apiClient.post(`/teachers/feedbacks/${feedbackId}/reply`, data)
   },
-  // 兼容性别名
+  // 兼容性别名（与上面等价，保留以不动既有引用）
   getFeedback: (teacherId, category) => {
     return apiClient.get(`/teachers/feedbacks/${teacherId}/list`, { params: { category } })
   },
@@ -434,7 +459,10 @@ export const teacherAPI = {
   detectAnomalies: (courseId) => {
     return apiClient.get(`/teachers/scores/anomalies`, { params: { course_id: courseId } })
   },
-  triggerWarnings: (courseId) => {
+  // W24（2026-10-05）：原名叫 `triggerWarnings`，而它打的那个端点**不触发任何东西** ——
+  // 只是数一数本课程有多少名学生低于及格线。跟着端点一起改成不冒充动作的名字
+  // （这条封装目前**零调用点**，PC 与小程序都没有页面用它，改名不会影响任何调用方）。
+  inspectCourseScoresForWarnings: (courseId) => {
     return apiClient.post(`/teachers/scores/warnings`, null, { params: { course_id: courseId } })
   },
   analyzeStudentScore: (studentId, courseId) => {
@@ -492,9 +520,9 @@ export const teacherAPI = {
 }
 
 export const counselorAPI = {
-  register: (data) => {
-    return apiClient.post(`/counselors/register`, data)
-  },
+  // `register` 已删（2026-10-08 W27）：它打 `POST /counselors/register`，那个端点只插
+  // counselor_profiles 档案行（user_id 无外键 ⇒ 能插孤儿档案），且零调用方。
+  // 后端端点已一并删除。真实注册走 `authAPI.registerCounselor`（`CounselorRegister.vue`）。
   // ---- 账号级自助设置 ----
   // 与 teacherAPI 同一套：姓名/邮箱/电话读 users 表（counselor_profiles 里的
   // office_location/duty_phone 是历史遗留的空列，不再往里写），
@@ -522,10 +550,6 @@ export const counselorAPI = {
   },
   getStudents: (counselorId) => {
     return apiClient.get(`/counselors/students`, { params: { counselor_id: counselorId } })
-  },
-  searchStudents: (searchName, classId) => {
-    // 前端过滤，后端不提供此接口
-    return Promise.resolve([])
   },
   getStudentDetail: (studentId) => {
     return apiClient.get(`/counselors/students/${studentId}`)
@@ -678,63 +702,78 @@ export const counselorAPI = {
   }
 }
 
+/**
+ * 把 `aiAPI` 的每个响应都过一遍诚实性闸（W26）。
+ *
+ * <p>`/ai/**` 里有三个纯 AI 端点在 `DASHSCOPE_KEY` 没配时**用占位串冒充分析结果、还包成
+ * success**（见 `utils/ai.js`）。这一层统一拦：命中占位串就 reject，页面**原有的 catch**
+ * 会如实报错 —— 不必在 8 个宿主页各写一遍"这是占位串"的分支。
+ *
+ * <p>规则引擎类端点（`predictRisk` / `generateSuggestion` / `generateWarning` /
+ * `analyzeBehavior` / `generatePlan`）**不会**被误伤：它们返回的是真结果，从不含这些串。
+ */
+const aiCall = (promise) => promise.then(aiGuard)
+
 export const aiAPI = {
   getResponse: (userId, message) => {
-    return apiClient.post(`/ai/chat`, { userId, message })
+    return aiCall(apiClient.post(`/ai/chat`, { userId, message }))
   },
-  getSuggestions: (userId) => {
-    return apiClient.get(`/ai/suggestions/${userId}`)
-  },
+  // 2026-10-04（W20）：删掉 `getSuggestions = (userId) => GET /ai/suggestions/${userId}`。
+  //   `AIController` 里**从来没有**这个映射（真实的是 `GET /ai/student/{studentId}/suggestions`
+  //   与 `GET /ai/warning-suggestions/{studentId}`）⇒ 谁调谁 404；且它**全仓零调用方**
+  //   （页面用的 `studentAPI.getSuggestions` 是另一条，打 `/students/suggestions/{userId}`）。
+  //   新脚本 `check-api-contract.mjs` 把这类"封装的 URL 在后端没有对应映射"扫了一遍，
+  //   它就是全仓唯一残留 —— 按「零调用方 + 打向不存在的端点 = 删」处理，不留名字骗人。
   // 成绩分析
   analyzeScores: (studentId) => {
-    return apiClient.get(`/ai/analyze-scores/${studentId}`)
+    return aiCall(apiClient.get(`/ai/analyze-scores/${studentId}`))
   },
   // 行为/趋势分析
   analyzeBehavior: (data) => {
-    return apiClient.post(`/ai/analyze-behavior`, data)
+    return aiCall(apiClient.post(`/ai/analyze-behavior`, data))
   },
   // 风险预测
   predictRisk: (data) => {
-    return apiClient.post(`/ai/predict-risk`, data)
+    return aiCall(apiClient.post(`/ai/predict-risk`, data))
   },
   assessRisk: (studentId) => {
-    return apiClient.get(`/ai/assess-risk/${studentId}`)
+    return aiCall(apiClient.get(`/ai/assess-risk/${studentId}`))
   },
   // 生成预警建议
   generateWarning: (data) => {
-    return apiClient.post(`/ai/generate-warning`, data)
+    return aiCall(apiClient.post(`/ai/generate-warning`, data))
   },
   predictWarnings: (studentId) => {
-    return apiClient.get(`/ai/predict-warnings/${studentId}`)
+    return aiCall(apiClient.get(`/ai/predict-warnings/${studentId}`))
   },
   // 预警分析
   analyzeWarningTrend: (counselorId) => {
-    return apiClient.get(`/ai/analyze-warning-trend/${counselorId}`)
+    return aiCall(apiClient.get(`/ai/analyze-warning-trend/${counselorId}`))
   },
   analyzeWarning: (warningId) => {
-    return apiClient.get(`/ai/analyze-warning/${warningId}`)
+    return aiCall(apiClient.get(`/ai/analyze-warning/${warningId}`))
   },
   // 班级成绩分析
   analyzeClassScores: (classId) => {
-    return apiClient.get(`/ai/analyze-class-scores/${classId}`)
+    return aiCall(apiClient.get(`/ai/analyze-class-scores/${classId}`))
   },
   // 生成学习建议/计划
   generateSuggestion: (data) => {
-    return apiClient.post(`/ai/generate-suggestion`, data)
+    return aiCall(apiClient.post(`/ai/generate-suggestion`, data))
   },
   generatePlan: (data) => {
-    return apiClient.post(`/ai/generate-plan`, data)
+    return aiCall(apiClient.post(`/ai/generate-plan`, data))
   },
   // 综合分析
   analyze: (studentId) => {
-    return apiClient.get(`/ai/analyze/${studentId}`)
+    return aiCall(apiClient.get(`/ai/analyze/${studentId}`))
   },
   // 推荐
   getRecommendations: (studentId) => {
-    return apiClient.get(`/ai/recommendations/${studentId}`)
+    return aiCall(apiClient.get(`/ai/recommendations/${studentId}`))
   },
   getWarningSuggestions: (studentId) => {
-    return apiClient.get(`/ai/warning-suggestions/${studentId}`)
+    return aiCall(apiClient.get(`/ai/warning-suggestions/${studentId}`))
   }
 }
 
@@ -811,12 +850,10 @@ export const adminAPI = {
     console.log('API请求参数:', params)
     return apiClient.get(`/admin/users/page`, { params })
   },
-  disableUser: (userId) => {
-    return apiClient.post(`/admin/users/${userId}/toggle-status`)
-  },
-  enableUser: (userId) => {
-    return apiClient.post(`/admin/users/${userId}/toggle-status`)
-  },
+  // 2026-10-05（W26）：删掉 `disableUser` / `enableUser` 两条别名。
+  // 它们的实现体与下面的 `toggleUserStatus` 逐字节相同（同一个 URL、同一个「取反」端点），
+  // 名字却在承诺「定向禁用 / 定向启用」—— 后端根本没有这种端点。全仓（含小程序）零调用。
+  // 要启停账号一律用 `toggleUserStatus`。
   getRules: () => {
     return apiClient.get(`/admin/rules`)
   },
@@ -961,6 +998,24 @@ export const adminAPI = {
     return apiClient.get(`/admin/export/scores`, { params: { course_id: courseId }, responseType: 'blob' })
   },
   // ============= 预警管理API =============
+  /**
+   * 手动触发一次**全库**预警重扫（W26 新增）。
+   *
+   * <p>⚠️ 注意这条**不落在 admin-service**：`/api/warnings/**` 在网关里路由到 warning-service
+   * （`gateway-service/application.yml` 的 `warning-service` 路由 + `StripPrefix=1`）。
+   * 放在 `adminAPI` 命名空间下只是因为**它的唯一入口是管理端页面**，不是因为服务归属。
+   *
+   * <p>它**不是刷新**：会写 `academic_warning` / `warning_release_records` / `notifications`，
+   * 并给每名新预警学生与其辅导员各发一条通知。后端只放行辅导员(3)/管理员(4)/学院管理员(5)。
+   *
+   * <p>单独给 120s 超时：一轮扫描每条新预警要 1 查 + 1 插 + 通知插（可能还有 MQ），
+   * 数据量大时**会撞 client.js 那个 30s 全局超时**。
+   *
+   * @returns {Promise<{generatedCount:number, releasedCount:number, skipped:boolean, message?:string}>}
+   */
+  scanWarnings: () => {
+    return apiClient.post(`/warnings/scan`, {}, { timeout: 120000 })
+  },
   getAllWarnings: () => {
     return apiClient.get(`/admin/warnings`)
   },
@@ -988,6 +1043,12 @@ export const adminAPI = {
   },
   generateReport: (data) => {
     return apiClient.post(`/admin/reports/generate`, data)
+  },
+  // W23：用**自定义模板**生成报表。后端按模板表头逐字匹配四张内置报表取真实数据；
+  // 认不出表头时只输出表头（响应里 matched=false）。此前这个端点零调用方，
+  // 而页面上却写着"自定义模板可以在生成报表时使用"。
+  generateReportWithCustomTemplate: (data) => {
+    return apiClient.post(`/admin/reports/generate-with-template`, data)
   },
   // ============= 自定义模板API =============
   getCustomReportTemplates: () => {
