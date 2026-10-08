@@ -36,6 +36,13 @@ public final class ScoreCaliber {
      */
     public static final int ATTENTION_LINE = 70;
 
+    /**
+     * "优秀"线。即 {@link #SCORE_LEVEL_CASE} 里 90 分以上对应的那一档（优）。
+     * 单独提出来供 Java 侧复用 —— 例如课程教学建议要按"有多少学生考到优秀"来给，
+     * 而不是无条件给一条（见 {@code TeacherController#getCourseRecommendations}）。
+     */
+    public static final int EXCELLENT_LINE = 90;
+
     /** 期末成绩未录入时的展示文案。 */
     public static final String PENDING_TEXT = "待录入";
 
