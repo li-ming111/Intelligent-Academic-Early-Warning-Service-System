@@ -66,6 +66,27 @@
                 </el-button>
               </el-card>
             </el-col>
+
+            <!-- W26 新增：挂科学生清单。后端一直是有的（GET /admin/export/insufficient-students），
+                 封装 adminAPI.exportInsufficientStudents 也早就写好了，只是**没有任何页面调用**。 -->
+            <el-col :xs="24" :sm="12" :md="6">
+              <el-card class="export-card" shadow="hover">
+                <template #header>
+                  <div class="card-header">挂科学生</div>
+                </template>
+                <p style="text-align: center; color: #666; margin-bottom: 15px;">
+                  导出有不及格科目的学生清单
+                </p>
+                <el-button
+                  type="primary"
+                  @click="exportInsufficientStudents"
+                  :loading="exportingInsufficient"
+                  style="width: 100%;"
+                >
+                  导出Excel
+                </el-button>
+              </el-card>
+            </el-col>
           </el-row>
 
           <!-- 导出历史 -->
@@ -213,13 +234,28 @@
 
             <el-form :model="reportForm" label-width="120px" style="max-width: 600px;">
               <el-form-item label="报表模板">
-                <el-select v-model="reportForm.template_id" placeholder="选择报表模板">
-                  <el-option
-                    v-for="template in reportTemplates"
-                    :key="template.id"
-                    :label="template.name"
-                    :value="template.id"
-                  ></el-option>
+                <!-- 2026-10-04（W23）：下拉此前**只列系统模板**，而同一张卡片上的「上传说明」
+                     白纸黑字写着"自定义模板可以在生成报表时使用" —— 诺言在与实现不符。
+                     现在按来源分成两组，选中自定义模板时走 /admin/reports/generate-with-template
+                     （那条路径本来就会按模板表头去匹配内置报表取真实数据，此前零调用方）。
+                     value 前缀 system:/custom: 用来区分 —— 两边的 id 有可能同号。 -->
+                <el-select v-model="templateChoice" placeholder="选择报表模板" style="width: 100%;">
+                  <el-option-group v-if="reportTemplates.length > 0" label="系统模板">
+                    <el-option
+                      v-for="template in reportTemplates"
+                      :key="'sys-' + template.id"
+                      :label="template.name"
+                      :value="'system:' + template.id"
+                    ></el-option>
+                  </el-option-group>
+                  <el-option-group v-if="customTemplates.length > 0" label="自定义模板">
+                    <el-option
+                      v-for="template in customTemplates"
+                      :key="'cus-' + template.id"
+                      :label="template.name + '（自定义）'"
+                      :value="'custom:' + template.id"
+                    ></el-option>
+                  </el-option-group>
                 </el-select>
               </el-form-item>
 
@@ -244,9 +280,14 @@
               <div class="card-header">上传自定义模板</div>
             </template>
 
+            <!-- W23：这里原来写着一个 `:action="'/api/admin/export/reports/templates/upload'"`
+                 —— 路径里多一段 `export`，**是错的**（第二十四轮已在 uploadTemplate() 里
+                 订正过：真实地址是 /admin/reports/templates/upload，带 export 那条回 404）。
+                 它之所以没暴露，是因为 :auto-upload="false"，真正上传走的是 uploadTemplate()
+                 里的 apiClient.post。既然不由 el-upload 发请求，就不该留一个错的地址在这儿
+                 —— 谁把 auto-upload 改成 true，就会立刻 404。 -->
             <el-upload
               ref="uploadTemplate"
-              :action="'/api/admin/export/reports/templates/upload'"
               :headers="{ Authorization: 'Bearer ' + token }"
               :auto-upload="false"
               accept=".xlsx,.xls"
@@ -278,7 +319,8 @@
               <ul style="margin: 5px 0; padding-left: 20px; color: #666; font-size: 12px;">
                 <li>支持Excel格式（.xlsx、.xls）</li>
                 <li>模板第一行将作为表头</li>
-                <li>自定义模板可以在生成报表时使用</li>
+                <li>上传后在「报表模板」下拉的<b>自定义模板</b>分组里选它来生成报表</li>
+                <li>表头与某张内置报表的列名<b>逐字一致</b>时，报表里会填入该报表的真实数据；认不出来时生成的报表只含表头，不会编造数据</li>
               </ul>
             </div>
           </el-card>
@@ -433,10 +475,14 @@ import { adminAPI } from '@/api/index'
 import apiClient from '@/api/client'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Download, Delete, WarningFilled } from '@element-plus/icons-vue'
+// W26：文件端点失败时的正确姿势 —— 见 utils/download.js 顶部那段注释（blob 响应的两种"静默成功"）。
+import { saveBlobAsFile, describeDownloadError } from '@/utils/download'
 
 // 数据
 const token = localStorage.getItem('token')
 const exportHistory = ref([])
+/** 「导出挂科学生」按钮的加载态（W26）。 */
+const exportingInsufficient = ref(false)
 const reportTemplates = ref([])
 const customTemplates = ref([])
 const backupList = ref([])
@@ -480,10 +526,13 @@ const scoreFile = ref(null)
 const templateFile = ref(null)
 
 const reportForm = ref({
-  template_id: '',
   start_date: null,
   end_date: null
 })
+
+// W23：报表模板选择。值形如 'system:1' / 'custom:5' —— 前缀用来区分来源，
+// 因为系统模板 id 是 "1".."4"，而自定义模板 id 来自 report_template 表，两边可能同号。
+const templateChoice = ref('')
 
 const templateForm = ref({
   name: '',
@@ -548,6 +597,27 @@ const handleExportHistorySizeChange = (val) => {
 const handleExportHistoryPageChange = (val) => {
   exportHistoryPage.value = val
   loadExportHistory()
+}
+
+// 导出挂科学生（W26 新增的入口；后端与封装本来就有，此前全仓零调用）
+//
+// ⚠️ 这里刻意用 utils/download.js 的 saveBlobAsFile，而不是本页那个 downloadFileFromBlob：
+//    后者不看 blob.type，后端若回 2xx + JSON/纯文本，它会把错误提示**当成 .xlsx 存下来**
+//    （用户看到"下载成功"、打开却打不开）。saveBlobAsFile 会按 type 拒绝并把 message 读出来。
+//    —— 后端那一侧也一并修了（AdminController#writeFileEndpointError），两头都堵。
+const exportInsufficientStudents = async () => {
+  exportingInsufficient.value = true
+  try {
+    const blob = await adminAPI.exportInsufficientStudents()
+    await saveBlobAsFile(blob, `挂科学生_${new Date().getTime()}.xlsx`)
+    ElMessage.success('挂科学生清单已导出')
+    await loadExportHistory()
+  } catch (error) {
+    console.error('导出挂科学生失败:', error)
+    ElMessage.error(await describeDownloadError(error))
+  } finally {
+    exportingInsufficient.value = false
+  }
 }
 
 // 导出学生数据
@@ -745,18 +815,36 @@ const importStudents = async () => {
 }
 
 // 导入成绩数据
+// 后端 /admin/import/scores 收的是 multipart（`file` 字段），Excel 由服务端用 POI 解析，
+// 模板来自 /admin/import/template/scores。原来这里把 el-upload 的 UploadFile 对象
+// 直接当 body 发出去，后端要的是 JSON 列表 —— 这个按钮从来没有成功过一次。
 const importScores = async () => {
-  if (!scoreFile.value) {
+  const raw = scoreFile.value?.raw
+  if (!raw) {
     ElMessage.error('请选择文件')
     return
   }
 
   try {
-    await adminAPI.importScores(scoreFile.value)
-    ElMessage.success('成绩数据导入成功')
+    const formData = new FormData()
+    formData.append('file', raw)
+    const res = await adminAPI.importScores(formData)
+
+    // 与「导入学生」同款：逐行尽力而为，跳过了行就必须说出来，
+    // 不能无条件报"导入成功"（那正是本仓一贯要避免的"报告与事实不符"）。
+    const success = res?.success ?? 0
+    const skipped = res?.skipped ?? 0
+    const errorList = res?.errors || []
+    if (skipped === 0) {
+      ElMessage.success(`导入完成：成功 ${success} 条`)
+    } else {
+      const detail = errorList.slice(0, 5).map(e => `第${e.row}行：${e.reason}`).join('；')
+      const more = errorList.length > 5 ? ` 等共 ${errorList.length} 处` : ''
+      ElMessage.warning(`导入完成：成功 ${success} 条，跳过 ${skipped} 条。${detail}${more}`)
+    }
     scoreFile.value = null
   } catch (error) {
-    ElMessage.error('导入失败')
+    ElMessage.error('导入失败：' + (error.response?.data?.message || error.message || '未知错误'))
   }
 }
 
@@ -896,7 +984,7 @@ const loadReportTemplates = async () => {
 
 // 生成报表
 const generateReport = async () => {
-  if (!reportForm.value.template_id) {
+  if (!templateChoice.value) {
     ElMessage.error('请选择报表模板')
     return
   }
@@ -910,23 +998,47 @@ const generateReport = async () => {
   const endDate = new Date(reportForm.value.end_date)
   const today = new Date()
   today.setHours(0, 0, 0, 0)
-  
+
   if (startDate > endDate) {
     ElMessage.error('开始日期不能大于结束日期')
     return
   }
 
   try {
-    const response = await adminAPI.generateReport(reportForm.value)
+    const [kind, templateId] = templateChoice.value.split(':')
+    const range = {
+      start_date: reportForm.value.start_date,
+      end_date: reportForm.value.end_date
+    }
+    // W23：系统模板走 /reports/generate（白名单 1-4），自定义模板走
+    // /reports/generate-with-template（按表头匹配内置报表取数）。两条路后端都会回 rows。
+    const response = kind === 'custom'
+      ? await adminAPI.generateReportWithCustomTemplate({ ...range, custom_template_id: templateId })
+      : await adminAPI.generateReport({ ...range, template_id: templateId })
     console.log('报表生成响应:', response)
+
+    // 按后端**真的写了几行**来提示。此前无论文件里有没有数据行，一律弹「报表已生成」——
+    // 数据源为空时下载到的是一份只有表头的 xlsx，用户不会知道。
+    const rows = typeof response?.rows === 'number' ? response.rows : null
+    let note
+    if (response?.matched === false) {
+      note = '报表已生成：模板表头没有匹配上任何内置报表，文件中只含表头'
+    } else if (rows === 0) {
+      note = '报表已生成：该报表当前没有数据行，文件中只含表头'
+    } else if (rows !== null) {
+      note = `报表已生成（${rows} 行数据）`
+    } else {
+      note = '报表已生成'
+    }
+
     if (response && response.downloadUrl) {
       await downloadReportFile(response.downloadUrl)
-      ElMessage.success('报表已生成并开始下载')
+      ElMessage.success(note + '，已开始下载')
     } else if (response && response.filePath) {
       await downloadReportFile(response.filePath)
-      ElMessage.success('报表已生成并开始下载')
+      ElMessage.success(note + '，已开始下载')
     } else {
-      ElMessage.success('报表已生成')
+      ElMessage.success(note)
     }
     resetReportForm()
   } catch (error) {
@@ -937,10 +1049,10 @@ const generateReport = async () => {
 // 重置报表表单
 const resetReportForm = () => {
   reportForm.value = {
-    template_id: '',
     start_date: null,
     end_date: null
   }
+  templateChoice.value = ''
 }
 
 // 备份数据（2026-10-02 W1.10：后端真的起 mysqldump 了）
