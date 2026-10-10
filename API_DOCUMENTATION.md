@@ -257,7 +257,7 @@
 | GET | `/admin/permissions/roles` | 角色列表 | - |
 | GET | `/admin/permissions/list` | 权限列表 | - |
 | GET | `/admin/permissions/user/{userId}` | 用户权限 | `@PathVariable userId` |
-| POST | `/admin/permissions/assign-role` | 分配角色 | body |
+| POST | `/admin/permissions/assign-role` | 分配角色（**仅系统管理员 role 4**；body `{userId, role}`，`role=5` 时**必须**再带 `collegeId`） | body |
 | POST | `/admin/messages/broadcast` | 群发消息 | body |
 | POST | `/admin/messages/targeted` | 定向消息 | body |
 | GET | `/admin/messages/list` | 消息列表 | `?page, size` |

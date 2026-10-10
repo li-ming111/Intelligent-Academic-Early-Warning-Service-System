@@ -89,11 +89,11 @@ class UserControllerTest {
     void addUser_studentCannotCreateAdmin() {
         User body = new User().setUsername("evil").setPassword("123456").setRole(4).setStatus(1);
 
-        ApiResponse<Long> result = controller.addUser(body);
+        ApiResponse<Long> result = controller.addUser(body, null);
 
         assertFalse(result.isSuccess());
         assertEquals(403, result.getCode());
-        verify(userService, never()).save(any(User.class));
+        verify(userService, never()).createUserWithCollegeAdminProfile(any(User.class), any());
     }
 
     /** 管理员带 role:4 是**合法**的（管理员本来就能建账号），不能被上面那条误伤。 */
@@ -101,12 +101,45 @@ class UserControllerTest {
     void addUser_adminCanCreateAdmin() {
         authenticateAs(4, "admin");
         User body = new User().setUsername("adm002").setPassword("123456").setRole(4);
-        when(userService.save(body)).thenReturn(true);
+        when(userService.createUserWithCollegeAdminProfile(body, null)).thenReturn(true);
 
-        ApiResponse<Long> result = controller.addUser(body);
+        ApiResponse<Long> result = controller.addUser(body, null);
 
         assertTrue(result.isSuccess());
-        verify(userService, times(1)).save(body);
+        verify(userService, times(1)).createUserWithCollegeAdminProfile(body, null);
+    }
+
+    /**
+     * ★ 管理员建学院管理员(role 5) 时，{@code collegeId} 必须**原样转给 service**。
+     *
+     * <p>它是 query 参数（不走 body 反序列化），漏传的话账号能建出来但学院端全是 403 ——
+     * 而 HTTP 依然 200、页面上只说"添加成功"，从响应看不出来。
+     */
+    @Test
+    void addUser_passesCollegeIdToService() {
+        authenticateAs(4, "admin");
+        User body = new User().setUsername("collegeadmin9").setPassword("123456").setRole(5);
+        when(userService.createUserWithCollegeAdminProfile(body, 1L)).thenReturn(true);
+
+        ApiResponse<Long> result = controller.addUser(body, 1L);
+
+        assertTrue(result.isSuccess());
+        verify(userService).createUserWithCollegeAdminProfile(body, 1L);
+    }
+
+    /** 学院不存在 → 400 + 人话（不回 500、不漏异常原文）。 */
+    @Test
+    void addUser_unknownCollegeIsBadRequest() {
+        authenticateAs(4, "admin");
+        User body = new User().setUsername("collegeadmin9").setPassword("123456").setRole(5);
+        when(userService.createUserWithCollegeAdminProfile(body, 999L))
+                .thenThrow(new IllegalArgumentException("学院不存在: 999"));
+
+        ApiResponse<Long> result = controller.addUser(body, 999L);
+
+        assertFalse(result.isSuccess());
+        assertEquals(400, result.getCode());
+        assertEquals("学院不存在: 999", result.getMessage());
     }
 
     // ==================== PUT /users/update/{id}：自助提权的另一扇门 ====================

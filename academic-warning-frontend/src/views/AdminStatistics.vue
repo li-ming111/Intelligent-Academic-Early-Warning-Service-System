@@ -85,7 +85,7 @@ import { saveBlobAsFile, describeDownloadError } from '@/utils/download'
 const pieRef = ref(null)
 const barRef = ref(null)
 const exporting = ref(false)
-const stats = reactive({ totalStudents: 0, totalTeachers: 0, totalCounselors: 0, totalCourses: 0, totalMajors: 0, totalColleges: 0, totalUsers: 0, redWarnings: 0, yellowWarnings: 0, lowWarnings: 0 })
+const stats = reactive({ totalStudents: 0, totalTeachers: 0, totalCounselors: 0, totalCollegeAdmins: 0, totalCourses: 0, totalMajors: 0, totalColleges: 0, totalUsers: 0, redWarnings: 0, yellowWarnings: 0, lowWarnings: 0 })
 const collegeData = ref([])
 const majorData = ref([])
 
@@ -114,6 +114,7 @@ async function loadData() {
       stats.totalStudents = r.totalStudents || 0
       stats.totalTeachers = r.totalTeachers || 0
       stats.totalCounselors = r.totalCounselors || 0
+      stats.totalCollegeAdmins = r.totalCollegeAdmins || 0
       stats.totalCourses = r.totalCourses || 0
       stats.totalColleges = r.totalColleges || 0
       stats.totalMajors = r.totalMajors || 0
@@ -168,11 +169,16 @@ function renderCharts() {
     const bar = echarts.getInstanceByDom(barRef.value) || echarts.init(barRef.value)
     bar.setOption({
       tooltip: { trigger: 'axis' },
-      xAxis: { type: 'category', data: ['学生', '教师', '辅导员', '管理员'], axisTick: { show: false } },
+      xAxis: { type: 'category', data: ['学生', '教师', '辅导员', '学院管理员'], axisTick: { show: false } },
       yAxis: { type: 'value', minInterval: 1 },
       series: [{
         type: 'bar', barMaxWidth: 40,
-        data: [stats.totalStudents, stats.totalTeachers, stats.totalCounselors, 1],
+        // 2026-10-09（W32）：原来第四根柱是「管理员」且**写死成字面量 1**（当时的口径是
+        // "只有一个系统管理员"），且完全没画 role 5 的学院管理员。现在第四根改为
+        // 「学院管理员」，取后端新加的 totalCollegeAdmins（真实 COUNT，见
+        // AdminController.getStatistics）。系统管理员本身没进这张图：后端从来没有它的
+        // 计数，之前那个 1 是写死的常量 —— 与其留一个假数字，不如画一个真数字。
+        data: [stats.totalStudents, stats.totalTeachers, stats.totalCounselors, stats.totalCollegeAdmins],
         itemStyle: {
           borderRadius: [6, 6, 0, 0],
           color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [{ offset: 0, color: '#7c3aed' }, { offset: 1, color: '#a78bfa' }])

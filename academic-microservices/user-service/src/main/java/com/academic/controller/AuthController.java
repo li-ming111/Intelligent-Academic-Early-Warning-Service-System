@@ -187,6 +187,9 @@ public class AuthController {
     //
     // 于是**管理员建号全仓只剩一条活路径**: AdminUsers.vue → `POST /api/users/add`
     // → user-service `UserController.addUser`（那里有 `currentUserIsAdmin()` 闸）。
+    // ⚠️ 2026-10-09（W32）订正：上面这句**不成立** —— 还有第二条活路径
+    // 小程序 `admin/users.vue` → `POST /api/admin/users`（admin-service
+    // `AdminController.createUser`，闸是网关 PREFIX_ADMIN + 控制器内角色判断）。
     //
     // ⚠️ 历史留档：这里原来有个真实漏洞 —— 2026-09-30 实测，改前 `/auth/register/**`
     //    是 permitAll，**不带任何 token 直连 :8082/api/auth/register/admin 就能走到

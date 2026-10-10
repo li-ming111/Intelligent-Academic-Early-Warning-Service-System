@@ -100,7 +100,9 @@ Gateway (8076)
 - 前端路由守卫 + 后端双层拦截
 
 > **已删除的端点（不要再引用）**：
-> - `POST /auth/register/admin` —— 2026-10-01 删（零调用方且与 `/users/add` 重复）。管理员建号只剩 `POST /users/add` 一条路径。
+> - ⚠️ 2026-10-09（W33）**改角色那条路也补上了**：管理端「权限管理 → 用户权限」的「当前角色」下拉（`POST /admin/permissions/assign-role`）此前**同样只写 `users.role`、不碰 `college_admin_profile`** —— 是 W32 那个坑的**第二个入口**。现在改成学院管理员(5)**必须选学院**（`collegeId` 随 body 传），并 upsert 档案行；把角色从 5 改成别的会**删掉**残留档案行（直连绕过网关时那行仍会让 `CollegeAdminController` 解析出学院）。顺带收掉一个越权面：网关对 role 5 原本放行整个 `/api/admin/**`（而针对 `/api/permissions/**` 的那道闸前缀对不上真实路径 `/api/admin/permissions/...`），admin-service 又只要求"已认证"且**不验签** ⇒ **学院管理员能改全库任意账号的角色**（建号 `POST /admin/users`、删号 `DELETE /admin/users/{id}` 同病）。现在网关与控制器**两层**都只放行系统管理员(4)。
+> - `POST /auth/register/admin` —— 2026-10-01 删（零调用方且与 `/users/add` 重复）。
+> - ⚠️ 2026-10-09（W32）订正：这里原写「管理员建号只剩 `POST /users/add` 一条路径」，**与事实不符**。管理员建号有**两条活路径**：PC `AdminUsers.vue` → `POST /api/users/add`（user-service），小程序 `admin/users.vue` → `POST /api/admin/users`（admin-service）。两条此前都**不给 role 5（学院管理员）写 `college_admin_profile`** ⇒ 新建的学院管理员 `CollegeAdminController.getCollegeId()` 恒 null、18 个接口一律 403。W32 已给两条都补上「建号时带 `collegeId` 就写档案行」；`collegeId` 走 `@RequestParam(required=false)`（`users` 表无该列，不塞进 `User` 实体）。
 > - `GET /auth/courses` —— **从来没有实现过**，是一条"白名单里有名、`AuthController` 里没有映射"的幽灵地址。2026-10-02（W1.15）把引用它的封装**一并清干净**：PC `api/index.js` 的 `authAPI.getAllCourses`、小程序 `services/api.js` 的 `getAllCourses`（两处全仓零调用方），以及网关 `WHITE_LIST` 与 `auth-service/SecurityConfig` 里那两条对应的放行 —— **四处是同一次改动的四个半**，只删一部分会留下"永远不成立的放行"。教师端课程列表走的是 `/teachers/courses`，是另一条路，未受影响。
 > - 同轮删掉两个 `authAPI.registerAdmin`（PC，指向上面那个已删端点）与四个 **0 字节**占位 `.java` 文件（`auth-service/controller/AuthController.java`、三个 `util/RedisUtil.java`）—— 空文件不定义任何类、全仓零引用，留着只会让人以为"auth-service 管登录"。
 

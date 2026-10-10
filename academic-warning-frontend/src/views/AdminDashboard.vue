@@ -8,7 +8,7 @@
         <div class="adh-left">
           <div class="adh-avatar">A</div>
           <div>
-            <h1>{{ greetingText }}，管理员</h1>
+            <h1>{{ greetingText }}，{{ adminName }}</h1>
             <p class="adh-sub">全校数据统计 · 预警系统监控中心</p>
           </div>
         </div>
@@ -138,6 +138,15 @@ const stats = reactive({ totalStudents:'--', totalTeachers:'--', totalCounselors
 const warnings = ref([])
 const pending = reactive({ classRequests: 0, warnings: 0, appeals: 0 })
 const greetingText = (() => { const h = new Date().getHours(); return h<9?'早上好':h<12?'上午好':h<14?'中午好':h<18?'下午好':'晚上好' })()
+
+// 问候语后面接**真实姓名**，取法与侧栏 AdminLayout.vue 完全一致：登录时 Login.vue
+// 把 users.name（真名）写进 localStorage 的 'name'。此前这里是写死的「管理员」，
+// 与侧栏显示的姓名对不上（活库 admin=「系统管理员」、adm001=「夏志浩」）。
+// 只读 'name' 不读 'userName'：全项目没有任何地方给管理员写 'userName'（见 AdminLayout
+// 里那段注释）；这里也不额外打 /admin/users/{id} —— 姓名在登录时就已进入 localStorage，
+// 多打一次只会让首页与侧栏有可能读到两个不同版本的名字。
+const pickName = (v) => (v && !/^\d+$/.test(v) ? v : '')
+const adminName = ref(pickName(localStorage.getItem('name')) || '管理员')
 
 // 2026-10-01 第十九轮: 这四枚徽章原来是对 `warnings`(来自 /admin/dashboard 的 recentWarnings,
 // 后端只给前 5 条)做 filter 统计。数据一超 5 条,"严重/中度/轻度"就会少算、"已处理"更是把

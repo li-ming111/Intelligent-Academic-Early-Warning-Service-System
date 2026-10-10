@@ -109,14 +109,31 @@
               <el-table-column label="当前角色" width="150">
                 <template #default="{ row }">
                   <!-- 5 = 学院管理员（活库 users.role 真有 5 的账号）。原来只有 1-4，
-                       这些账号的下拉会显示不出当前值。 -->
-                  <el-select v-model="row.role" size="small" @change="updateUserRole(row)">
+                       这些账号的下拉会显示不出当前值。
+                       ⚠️ W33：这里是 **单向绑定** `:model-value`，不是 `v-model`。
+                       用 v-model 时 Element Plus 会**先**把 `row.role` 写成本次选中的值、
+                       再触发 change（useSelect 的 handleOptionSelect 同步发 update:modelValue
+                       再发 change），于是"改成学院管理员"这一步根本没机会先问学院 —— 而且
+                       用户点取消时还要再 `loadUsers()` 把界面"倒回去"。
+                       单向绑定下，`row.role` 只在提交成功后由 `loadUsers()` 从库里重新读出来，
+                       取消就是什么都不做。 -->
+                  <el-select :model-value="row.role" size="small" @change="(val) => onRoleChange(row, val)">
                     <el-option :value="1" label="学生"></el-option>
                     <el-option :value="2" label="教师"></el-option>
                     <el-option :value="3" label="辅导员"></el-option>
                     <el-option :value="4" label="管理员"></el-option>
                     <el-option :value="5" label="学院管理员"></el-option>
                   </el-select>
+                </template>
+              </el-table-column>
+              <!-- 学院管理员必须绑定学院，所以把绑定结果摆出来 —— 否则不点开弹窗就看不出来
+                   这个 role 5 的账号到底归哪个学院（数据本来就在 row 上，由
+                   `/admin/users/page` 的 enhanceUserProfile 补的）。 -->
+              <el-table-column label="所属学院" width="140">
+                <template #default="{ row }">
+                  <span v-if="row.collegeName">{{ row.collegeName }}</span>
+                  <span v-else-if="row.role === 5" style="color: #E6A23C;">未绑定</span>
+                  <span v-else style="color: #999;">-</span>
                 </template>
               </el-table-column>
               <el-table-column label="权限数" width="100">
@@ -266,6 +283,41 @@
       </template>
     </el-dialog>
 
+    <!-- 把账号改成「学院管理员」时**必须**先选学院（W33，2026-10-09）。
+         后端 `POST /admin/permissions/assign-role` 对 role 5 要求带 collegeId，
+         并据此写/更新 `college_admin_profile` 那一行；
+         没有它，CollegeAdminController 取不到学院，学院管理端 18 个接口会一律 403
+         （账号能登录、能进界面、每页没数据）。 -->
+    <el-dialog
+      v-model="showCollegeRoleDialog"
+      title="设置所属学院"
+      width="440px"
+      :close-on-click-modal="false"
+    >
+      <el-form label-width="90px">
+        <el-form-item label="账号">
+          <span>{{ pendingRoleUser ? (pendingRoleUser.name || pendingRoleUser.username) : '' }}</span>
+        </el-form-item>
+        <el-form-item label="所属学院" required>
+          <el-select v-model="pendingCollegeId" placeholder="请选择学院" style="width: 100%;">
+            <el-option v-for="c in colleges" :key="c.id" :value="c.id" :label="c.name"></el-option>
+          </el-select>
+          <div v-if="colleges.length === 0" class="form-tip" style="color: #E6A23C;">
+            学院列表没能加载出来，无法绑定学院。
+          </div>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="closeCollegeRoleDialog">取消</el-button>
+        <el-button
+          type="primary"
+          :loading="roleSaving"
+          :disabled="!pendingCollegeId"
+          @click="confirmCollegeRole"
+        >确定</el-button>
+      </template>
+    </el-dialog>
+
     <!-- 删除确认弹窗 -->
     <el-dialog v-model="deleteDialogVisible" title="确认删除" width="400px">
       <div class="delete-warning">
@@ -334,6 +386,14 @@ const deleteLoading = ref(false)
 const permissionDetailVisible = ref(false)
 const selectedUser = ref(null)
 
+// —— 把账号改成学院管理员时选学院（W33，2026-10-09）——
+/** 学院下拉的候选。学院列表失败只置空，**不让整页崩** —— 否则连普通的角色下拉都用不了。 */
+const colleges = ref([])
+const showCollegeRoleDialog = ref(false)
+/** 正在改角色的那一行（弹窗取消时不需要"回滚"，单向绑定下 `row.role` 根本没被改过）。 */
+const pendingRoleUser = ref(null)
+const pendingCollegeId = ref(null)
+
 const showCreateRoleDialog = ref(false)
 const newRole = ref({
   name: '',
@@ -380,7 +440,24 @@ onMounted(async () => {
   await loadRoles()
   await loadPermissions()
   await loadUsers()
+  await loadColleges()
 })
+
+/**
+ * 加载学院列表（W33）。「把账号改成学院管理员」要从中挑一个绑定。
+ * 失败只记日志 + 置空，不抛 —— 学院列表挂掉不该让整页（角色/权限/用户三块）都用不了。
+ */
+const loadColleges = async () => {
+  try {
+    const response = await adminAPI.getColleges()
+    colleges.value = Array.isArray(response) ? response
+      : Array.isArray(response?.items) ? response.items
+      : []
+  } catch (error) {
+    console.error('加载学院列表失败:', error)
+    colleges.value = []
+  }
+}
 
 // 加载角色
 const loadRoles = async () => {
@@ -445,20 +522,94 @@ const searchUsers = () => {
   currentPage.value = 1
 }
 
-// 更新用户角色
-const updateUserRole = async (user) => {
+/**
+ * 角色下拉变化（W33，2026-10-09）。
+ *
+ * <p>两件事必须在这里拦下，不能直接发请求：
+ * 1. **改成学院管理员(5)** ⇒ 先问"归哪个学院"。学院管理员端按档案行取学院，
+ *    不选学院就会造出"能登录、每页 403"的账号（W32 修的是建号那条路，这里是改角色那条）。
+ * 2. **把它从学院管理员改成别的角色** ⇒ 先确认"绑定会被清除"。后端会把
+ *    `college_admin_profile` 那行删掉，不告知就删等于悄悄动了数据。
+ *
+ * <p>⚠️ 本组件用的是 `:model-value` 单向绑定，所以 `row.role` 此刻**还是旧值** ——
+ * 用户取消时不用做任何"还原"，界面上显示的还是原来的角色。
+ */
+const onRoleChange = async (row, val) => {
+  // ① 改成学院管理员：弹窗选学院
+  if (val === 5) {
+    pendingRoleUser.value = row
+    // 预填当前绑定（本来就是学院管理员、只是换学院时用得上）；数据来自
+    // `/admin/users/page` 补的 collegeId，运行时就在 row 上。
+    pendingCollegeId.value = row.collegeId ?? null
+    if (colleges.value.length === 0) await loadColleges()
+    showCollegeRoleDialog.value = true
+    return
+  }
+
+  // ② 从学院管理员降级：明确告知绑定会被清除
+  if (row.role === 5) {
+    const label = row.name || row.username || row.id
+    try {
+      await ElMessageBox.confirm(
+        `「${label}」当前绑定学院「${row.collegeName || '未知'}」。改为其他角色将清除该学院绑定，`
+          + '该账号将不能再使用学院管理端。确认继续吗？',
+        '解除学院管理员',
+        { type: 'warning', confirmButtonText: '解除并改角色', cancelButtonText: '取消' }
+      )
+    } catch (e) {
+      return // 用户取消：单向绑定下界面无需还原
+    }
+  }
+
+  await submitRoleChange(row, val)
+}
+
+/** 打开弹窗时记住的那一行，确认后真正提交（role 5 + collegeId）。 */
+const confirmCollegeRole = async () => {
+  const row = pendingRoleUser.value
+  const collegeId = pendingCollegeId.value
+  if (!row || !collegeId) {
+    ElMessage.warning('请先选择所属学院')
+    return
+  }
+  roleSaving.value = true
+  try {
+    await submitRoleChange(row, 5, collegeId)
+    showCollegeRoleDialog.value = false
+  } finally {
+    roleSaving.value = false
+  }
+}
+
+const closeCollegeRoleDialog = () => {
+  showCollegeRoleDialog.value = false
+  pendingRoleUser.value = null
+  pendingCollegeId.value = null
+}
+
+/**
+ * 真正调后端。成功后**重新拉一遍**列表（与 toggleUserStatus 同一套口径：不猜结果、回读库）。
+ *
+ * <p>失败时把后端的原话显示出来：`api/client.js` 只在 **HTTP 2xx** 时把 body 的 message
+ * 转成 Error；HTTP 400 走的是 axios 的错误分支，`error.message` 会是
+ * "Request failed with status code 400"，真正的原因在 `error.response.data.message` 里。
+ */
+const submitRoleChange = async (user, role, collegeId) => {
   try {
     // ⚠️ 契约是 {userId, role}。这里原来发的是 {user_id, role_id}，后端
     //    `data.get("userId").toString()` 直接 NPE，被 catch 吞成 body code 500
     //    ⇒ 这一格下拉从来就没保存成功过（用户看到"更新角色失败"）。
-    await adminAPI.assignRole({
-      userId: user.id,
-      role: user.role
-    })
-    ElMessage.success('角色已更新')
+    const payload = { userId: user.id, role }
+    if (role === 5) payload.collegeId = collegeId
+    const message = await adminAPI.assignRole(payload)
+    await loadUsers()
+    ElMessage.success(message || '角色已更新')
   } catch (error) {
-    ElMessage.error(error?.message || '更新角色失败')
-    // 回滚本地显示：下拉已经改成新值了，但后端没收下，界面不能比库里"新"。
+    ElMessage.error(
+      error?.response?.data?.message || error?.message || '更新角色失败'
+    )
+    // 后端没收下（含"学院不存在"这类校验失败）⇒ 以库为准重新拉一遍。
+    // 单向绑定下界面本来就没变，这一步是为了让 enabled / 学院等其它列也保持真实。
     await loadUsers()
   }
 }

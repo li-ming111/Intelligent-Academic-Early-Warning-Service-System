@@ -21,6 +21,9 @@
         <el-option label="教师" value="2"></el-option>
         <el-option label="辅导员" value="3"></el-option>
         <el-option label="管理员" value="4"></el-option>
+        <!-- 2026-10-09（W32）：补「学院管理员」(role 5)。此前这里只有 1-4，
+             活库里 collegeadmin1 是 role 5 ⇒ 按该角色筛不出人、列表里角色列显示「未知」。 -->
+        <el-option label="学院管理员" value="5"></el-option>
       </el-select>
       <el-input v-model="searchText" placeholder="搜索用户名或姓名" style="width: 250px;" @input="searchUsers" clearable />
       <el-button @click="loadUsers" :loading="loading">
@@ -105,6 +108,7 @@
             <el-option label="教师" value="2"></el-option>
             <el-option label="辅导员" value="3"></el-option>
             <el-option label="管理员" value="4"></el-option>
+            <el-option label="学院管理员" value="5"></el-option>
           </el-select>
         </el-form-item>
         <el-form-item v-if="addUserForm.role === '1'" label="学号" prop="username">
@@ -122,6 +126,20 @@
         <el-form-item v-else-if="addUserForm.role === '4'" label="账号" prop="username">
           <el-input v-model="addUserForm.username" placeholder="请输入管理员账号"></el-input>
           <small style="color: #999; margin-top: 5px; display: block;">账号将作为用户名</small>
+        </el-form-item>
+        <el-form-item v-else-if="addUserForm.role === '5'" label="账号" prop="username">
+          <el-input v-model="addUserForm.username" placeholder="请输入学院管理员账号"></el-input>
+          <small style="color: #999; margin-top: 5px; display: block;">账号将作为用户名</small>
+        </el-form-item>
+        <!-- W32：学院管理员（role 5）的学院归属存在 college_admin_profile.college_id，
+             是**建号时**一并写进去的（users 表没有 college_id 列）。不选学院就不建档案，
+             该账号登录后学院管理端 18 个接口会一律 403（取不到任何数据）⇒ 这里做成必填。
+             其它角色不显示该项，也不会把它发给后端。 -->
+        <el-form-item v-if="addUserForm.role === '5'" label="所属学院" prop="collegeId">
+          <el-select v-model="addUserForm.collegeId" placeholder="请选择所属学院" style="width: 100%;">
+            <el-option v-for="college in colleges" :key="college.id" :label="college.name" :value="college.id" />
+          </el-select>
+          <small style="color: #999; margin-top: 5px; display: block;">学院管理员只能管理本学院的数据</small>
         </el-form-item>
         <el-form-item label="姓名" prop="name">
           <el-input v-model="addUserForm.name" placeholder="请输入姓名"></el-input>
@@ -154,6 +172,9 @@
         </el-form-item>
         <el-form-item v-else-if="editingUser.role === '4' || editingUser.role === 4" label="账号">
           <el-input v-model="editingUser.jobNumber" placeholder="请输入管理员账号"></el-input>
+        </el-form-item>
+        <el-form-item v-else-if="editingUser.role === '5' || editingUser.role === 5" label="账号">
+          <el-input v-model="editingUser.jobNumber" placeholder="请输入学院管理员账号"></el-input>
         </el-form-item>
         <el-form-item label="用户名">
           <el-input v-model="editingUser.username" disabled placeholder="自动由学号/工号生成"></el-input>
@@ -239,7 +260,10 @@ const addUserForm = ref({
   name: '',
   role: '',
   email: '',
-  password: '123456'
+  password: '123456',
+  // W32：仅 role 5 使用。提交时**不塞进 body**（users 表没有 college_id 列、
+  // User 实体也没有该字段），而是走 query 参数 `?collegeId=`。
+  collegeId: null
 })
 
 const formRules = {
@@ -256,6 +280,20 @@ const formRules = {
   ],
   password: [
     { required: true, message: '请输入密码', trigger: 'blur' }
+  ],
+  // W32：学院管理员必须选学院 —— 否则建出的账号没有 college_admin_profile 行，
+  // 学院管理端所有接口一律 403。校验器只在 role===5 时生效。
+  collegeId: [
+    {
+      validator: (rule, value, callback) => {
+        if (addUserForm.value.role === '5' && (value === null || value === undefined || value === '')) {
+          callback(new Error('请选择所属学院'))
+        } else {
+          callback()
+        }
+      },
+      trigger: 'change'
+    }
   ]
 }
 
@@ -322,6 +360,8 @@ const getRoleText = (role) => {
   if (role === '2' || role === 2) return '教师'
   if (role === '3' || role === 3) return '辅导员'
   if (role === '4' || role === 4) return '管理员'
+  // W32：缺这一支时活库里的 role 5 账号（collegeadmin1/2）在列表里显示「未知」。
+  if (role === '5' || role === 5) return '学院管理员'
   return '未知'
 }
 
@@ -330,6 +370,7 @@ const getRoleTagType = (role) => {
   if (role === '2' || role === 2) return 'info'
   if (role === '3' || role === 3) return 'warning'
   if (role === '4' || role === 4) return 'primary'
+  if (role === '5' || role === 5) return 'danger'
   return 'info'
 }
 
@@ -349,8 +390,8 @@ watch(
       if (newVal.studentId && newVal.studentId !== newVal.username) {
         newVal.username = newVal.studentId
       }
-    } else if ((role === '2' || role === 2) || (role === '3' || role === 3) || (role === '4' || role === 4)) {
-      // 教师、辅导员、管理员：工号/账号变化时更新用户名
+    } else if ((role === '2' || role === 2) || (role === '3' || role === 3) || (role === '4' || role === 4) || (role === '5' || role === 5)) {
+      // 教师、辅导员、管理员、学院管理员：工号/账号变化时更新用户名
       if (newVal.jobNumber && newVal.jobNumber !== newVal.username) {
         newVal.username = newVal.jobNumber
       }
@@ -399,7 +440,10 @@ const submitAddUser = async () => {
       email: addUserForm.value.email || null,
       password: addUserForm.value.password || '123456'
     }
-    await adminAPI.createUser(data)
+    // W32：学院管理员的学院归属走 query 参数（后端 @RequestParam），**不进 body** ——
+    // body 反序列化成 User 实体后落库，多一个实体上没有的键要么被忽略要么静默丢字段。
+    const collegeId = data.role === 5 ? addUserForm.value.collegeId : null
+    await adminAPI.createUser(data, collegeId)
     ElMessage.success('用户已添加')
     addUserDialogVisible.value = false
     addUserForm.value = {
@@ -407,7 +451,8 @@ const submitAddUser = async () => {
       name: '',
       role: '',
       email: '',
-      password: '123456'
+      password: '123456',
+      collegeId: null
     }
     await loadUsers()
   } catch (error) {

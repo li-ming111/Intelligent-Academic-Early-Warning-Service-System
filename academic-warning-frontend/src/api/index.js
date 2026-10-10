@@ -786,8 +786,11 @@ export const adminAPI = {
   // 新增用户走 /users/add，不用 /auth/register/*：register 在"用户名已存在"这类
   // 业务失败时**返回错误字符串但仍包成 code:200 的成功响应**，前端会提示"添加成功"。
   // /users/add 重名直接抛异常，前端能正确显示失败。
-  createUser: (data) => {
-    return apiClient.post('/users/add', data)
+  // W32：collegeId 走 query 参数（后端 @RequestParam(required=false)）。只对 role 5 有意义，
+  // 其它角色传 null 时不拼该参数 —— 避免给 user-service 送去一个它不该看的键。
+  createUser: (data, collegeId = null) => {
+    const config = collegeId ? { params: { collegeId } } : undefined
+    return apiClient.post('/users/add', data, config)
   },
   // ---- 管理员本人的账号级自助设置 ----
   // 与 student/teacher/counselor 用的是同两条路径（users 表是账号属性的唯一权威源）：

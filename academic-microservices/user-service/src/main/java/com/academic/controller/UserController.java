@@ -180,16 +180,23 @@ public class UserController {
     }
 
     /**
-     * 创建用户
+     * 创建用户（PC「添加用户」）。
+     *
+     * <p>2026-10-09（W32）：{@code collegeId} 走 query 参数（**不是** body）—— `users` 表没有
+     * {@code college_id} 列、{@code User} 实体也没有该字段（{@code UpdateBodyGuard} 的类注释
+     * 专门警告过"实体多一个字段就悄悄多写一列"这类坑）。只有 role 5（学院管理员）用得上它，
+     * 见 {@link UserService#createUserWithCollegeAdminProfile}。
      */
     @PostMapping("/add")
-    public ApiResponse<Long> addUser(@RequestBody User user) {
+    public ApiResponse<Long> addUser(@RequestBody User user,
+                                     @RequestParam(required = false) Long collegeId) {
         if (!currentUserIsAdmin()) {
             return ApiResponse.forbidden("需要管理员权限");
         }
         try {
-            log.info("Add user request: {}", user.getUsername());
-            boolean saved = userService.save(user);
+            log.info("Add user request: username={}, role={}, collegeId={}",
+                    user.getUsername(), user.getRole(), collegeId);
+            boolean saved = userService.createUserWithCollegeAdminProfile(user, collegeId);
             if (saved) {
                 return ApiResponse.success(user.getId());
             } else {
@@ -201,6 +208,10 @@ public class UserController {
             // 弹到页面上就是一大坨 SQL —— 用户只看得出"失败了"，看不出为什么。
             log.warn("Add user duplicate: {}", user.getUsername());
             return ApiResponse.error("用户名已存在");
+        } catch (IllegalArgumentException e) {
+            // 学院不存在之类：入参问题 ⇒ 400 + 人话（不回 500，也别把异常原文抛给前端）。
+            log.warn("Add user bad request: {}", e.getMessage());
+            return ApiResponse.badRequest(e.getMessage());
         } catch (Exception e) {
             log.error("Add user failed: {}", e.getMessage());
             if (String.valueOf(e.getMessage()).contains("Duplicate entry")) {

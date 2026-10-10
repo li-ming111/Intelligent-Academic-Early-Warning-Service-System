@@ -7,7 +7,7 @@
       :class="{ 'sidebar-collapsed': isCollapsed }"
     >
       <div class="sidebar-header">
-        <h2>{{ isAdmin ? '智能学习预警云服务平台' : '智能学习预警' }}</h2>
+        <h2>{{ isAdmin ? '智能学业预警服务系统' : '智能学习预警' }}</h2>
         <button v-if="!isAdmin" class="collapse-btn" @click="isCollapsed = !isCollapsed">
           {{ isCollapsed ? '▶' : '◀' }}
         </button>

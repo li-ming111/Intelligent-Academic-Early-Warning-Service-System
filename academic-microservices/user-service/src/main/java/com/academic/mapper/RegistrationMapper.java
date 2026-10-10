@@ -1,5 +1,6 @@
 package com.academic.mapper;
 
+import com.academic.common.entity.CollegeAdminProfile;
 import com.academic.common.entity.CounselorProfile;
 import com.academic.common.entity.TeacherProfile;
 import com.academic.common.entity.UserSettings;
@@ -39,9 +40,16 @@ import java.util.Map;
  * {@code created_at}/{@code updated_at} 都有 DB 默认值，故不写。
  *
  * <p>⚠️ 与 {@code admin-service/AdminController.createProfileIfNeeded} 的关系：
- * 那边是**管理员建号**（表单里没有学院），口径是"必填列拿不到就不建 profile"；
+ * 那边是**管理员建号**，口径原本是"必填列拿不到就不建 profile"；
  * 这里是**本人自助注册**（表单里学院是必填），口径是"教师必须带学院来"。
  * 两条路径要一起看，别只改一边 —— 否则同一个角色会出现两种"资料齐不齐"的标准。
+ *
+ * <p>⚠️ <b>2026-10-09（W32）：管理员建号不是一条路径、是两条。</b>
+ * PC 走 user-service {@code POST /users/add}（本文件上方那些 INSERT 的调用方是
+ * {@code UserServiceImpl.createUserWithProfile}），小程序走 admin-service
+ * {@code POST /admin/users}。本轮给学院管理员(role 5)补档案时**两条都补了** ——
+ * 只补一条就会出现上面说的"同一角色两种标准"。给 role 5 写档案的语句在下面
+ * {@link #insertCollegeAdminProfile}。
  */
 public interface RegistrationMapper {
 
@@ -102,6 +110,23 @@ public interface RegistrationMapper {
     @Insert("INSERT INTO teacher_profile (user_id, name, college_id, title) "
             + "VALUES (#{userId}, #{name}, #{collegeId}, #{title})")
     int insertTeacherProfile(TeacherProfile profile);
+
+    /**
+     * 学院管理员档案（role 5）。{@code college_id} 是 NOT NULL —— 调用方必须先保证它非空，
+     * 且它必须指向一个存在的学院（先走 {@link #countCollege}）。
+     *
+     * <p>2026-10-09（W32）新增。此前 {@code college_admin_profile} 全仓**只有读和删、零写入**，
+     * 于是任何新建的 role 5 账号都没有档案行 ⇒ {@code CollegeAdminController.getCollegeId()}
+     * 回 null ⇒ 学院管理端 18 个接口一律 403。写显式 INSERT 而不用
+     * {@code BaseMapper<CollegeAdminProfile>.insert}：与上面两条同一条理由（类注释第 2 条）
+     * —— 列名写在 SQL 里，改表结构时不会因为"实体多了一个字段"而悄悄多写一列。
+     *
+     * <p>取参数对象传，和 {@code insertTeacherProfile} 一样，不用裸参数列表（字段一多，
+     * 位置参数很容易错位）。{@code title} / {@code phone} / {@code email} 可空。
+     */
+    @Insert("INSERT INTO college_admin_profile (user_id, name, college_id, phone, email, title) "
+            + "VALUES (#{userId}, #{name}, #{collegeId}, #{phone}, #{email}, #{title})")
+    int insertCollegeAdminProfile(CollegeAdminProfile profile);
 
     /**
      * 辅导员档案。{@code office_location} / {@code duty_phone} **刻意不写** ——

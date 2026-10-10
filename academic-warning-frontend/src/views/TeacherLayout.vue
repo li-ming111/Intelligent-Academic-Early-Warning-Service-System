@@ -61,7 +61,7 @@
             class="nav-item"
             :class="{ active: isActive('/teacher/feedback') }"
           >
-            <span>反馈消息</span>
+            <span>反馈管理</span>
           </router-link>
           <router-link 
             to="/teacher/audit-log" 

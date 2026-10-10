@@ -27,6 +27,40 @@ public interface UserService {
     boolean save(User user);
 
     /**
+     * 管理员建号（PC 端 {@code POST /users/add}）：写 {@code users} 一行，并在**同一事务里**
+     * 为学院管理员({@code role=5})补一行 {@code college_admin_profile}。
+     *
+     * <p><b>2026-10-09（W32）新增。</b>此前这个端点是裸的 {@code save(user)}，一条 profile
+     * 都不建。对 role 5 来说那是致命的：{@code CollegeAdminController.getCollegeId()} 靠
+     * {@code college_admin_profile} 推学院，没有档案行就回 null ⇒ 该控制器 18 个接口
+     * 一律 403（"能登录、能进界面、每页都没数据"）。
+     *
+     * <p><b>为什么是一个 Service 方法而不是在 Controller 里 save 完再 insert：</b>
+     * 那是本工程记过的"假事务"—— 在控制器方法上标 {@code @Transactional} 又在方法体里
+     * try/catch，异常根本到不了事务拦截器，于是"账号建好了、档案没建"这种半截状态会照常提交。
+     * 这里把两步收进一个 {@code @Transactional} 方法、**方法体内不 catch**，
+     * 任何一步失败整体回滚。
+     *
+     * <p>口径（与 admin-service {@code AdminController.createProfileIfNeeded} 逐条对齐，
+     * 两条建号路径不能有两种"资料齐不齐"的标准）：
+     * <ul>
+     *   <li>role 5 且 {@code collegeId} 指向一个存在的学院 → 建档案行；</li>
+     *   <li>role 5 但没给 {@code collegeId} → **不建**，只记一条 WARN
+     *       （不造 {@code college_id=0} 的假档案：0 不是任何学院，会让按学院查人时静默漏人）；</li>
+     *   <li>role 5 但 {@code collegeId} 指向不存在的学院 → 抛 {@link IllegalArgumentException}
+     *       （写进去就是一条悬空引用，比不建更糟）；</li>
+     *   <li>其它角色 → 本方法与从前一样只写 {@code users}
+     *       （学生/辅导员的档案在这条路径上仍不建，见 {@code FEATURES.md} 的记录）。</li>
+     * </ul>
+     *
+     * @param user      账号（username/password/name/role/phone/email）
+     * @param collegeId 仅 role 5 使用；来自 query 参数，**不来自 User 实体**
+     *                  （users 表没有 college_id 列，实体也没有该字段）
+     * @throws IllegalArgumentException 用户名已存在，或学院不存在（调用方应翻成 400 + 人话）
+     */
+    boolean createUserWithCollegeAdminProfile(User user, Long collegeId);
+
+    /**
      * 更新用户
      */
     boolean updateById(User user);

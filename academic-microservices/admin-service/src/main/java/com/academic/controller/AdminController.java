@@ -58,6 +58,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.File;
 import java.io.FileOutputStream;
@@ -410,7 +411,15 @@ public class AdminController {
             QueryWrapper<User> counselorQuery = new QueryWrapper<>();
             counselorQuery.eq("role", 3);
             long counselorCount = userService.count(counselorQuery);
-            
+
+            // 2026-10-09（W32）：补 role 5（学院管理员）计数。PC「系统用户角色分布」柱状图
+            // 原来只画 学生/教师/辅导员/管理员 四根柱，管理员那根还写死成字面量 1（当时的
+            // 口径是"只有一个系统管理员"），role 5 的账号根本不显示。这里给出**真实计数**，
+            // 前端才有据可画 —— 不去按 totalUsers 减其他三类倒推（那会把 role 4 和 5 混一谈）。
+            QueryWrapper<User> collegeAdminQuery = new QueryWrapper<>();
+            collegeAdminQuery.eq("role", 5);
+            long collegeAdminCount = userService.count(collegeAdminQuery);
+
             long courseCount = courseService.count();
             long collegeCount = collegeService.count();
             long majorCount = majorService.count();
@@ -420,6 +429,7 @@ public class AdminController {
             statistics.put("totalStudents", studentCount);
             statistics.put("totalTeachers", teacherCount);
             statistics.put("totalCounselors", counselorCount);
+            statistics.put("totalCollegeAdmins", collegeAdminCount);
             statistics.put("totalCourses", courseCount);
             statistics.put("totalColleges", collegeCount);
             statistics.put("totalMajors", majorCount);
@@ -701,7 +711,8 @@ public class AdminController {
     @PostMapping("/users")
     @Transactional
     @SentinelResource(value = "adminApi:createUser")
-    public ApiResponse<String> createUser(@RequestBody User user) {
+    public ApiResponse<String> createUser(@RequestBody User user,
+                                          @RequestParam(required = false) Long collegeId) {
         try {
             // ⚠️ 原来是 userService.save(user) —— MyBatis-Plus 的裸插入，绕过了
             //    UserServiceImpl.createUser()，于是三件事都没做：
@@ -725,12 +736,19 @@ public class AdminController {
                 return ApiResponse.error("用户名已存在：" + user.getUsername());
             }
 
-            createProfileIfNeeded(user);
+            createProfileIfNeeded(user, collegeId);
 
-            log.info("User created: id={}, username={}, role={}", user.getId(), user.getUsername(), user.getRole());
+            log.info("User created: id={}, username={}, role={}, collegeId={}", user.getId(), user.getUsername(), user.getRole(), collegeId);
             auditLogService.record("CREATE", "USER", user.getId(),
                     "新建账号 " + user.getUsername() + "（角色 " + getRoleNameText(user.getRole()) + "）");
-            return ApiResponse.success("User created successfully");
+            // 2026-10-09（W32）：学院管理员没带学院时，如实说明后果 —— 不能只说
+            // "创建成功" 就让管理员拿到一个学院端全是 403 的账号还不知道为什么。
+            // ⚠️ 必须是 `success(消息, 数据)` 两参重载：单参的 `success(T data)` 会把这句
+            //    消息当成 data，message 仍是 "success"（专门写了一个用例钉这一条）。
+            if (user.getRole() != null && user.getRole() == 5 && collegeId == null) {
+                return ApiResponse.success("账号已创建，但未绑定学院，学院管理端将无法取数；请补录所属学院", null);
+            }
+            return ApiResponse.success("User created successfully", null);
         } catch (Exception e) {
             log.error("Create user failed: {}", e.getMessage());
             // 抛出去让事务回滚：返回 error 而不抛，@Transactional 会以为一切正常照常提交
@@ -746,13 +764,20 @@ public class AdminController {
      *   student_profile        user_id, student_id, name   → 新建时全都有（用户名即学号）
      *   teacher_profile        user_id, **college_id**     → 建号表单里没有学院 → 不建
      *   counselor_profiles     user_id                     → 有（编号用用户名兜）
-     *   college_admin_profile  user_id, name, **college_id** → 同上 → 不建
-     * 也就是"教师/学院管理员新建出来的账号只有账号、没有资料行"，
+     *   college_admin_profile  user_id, name, **college_id** → 建号时带了 collegeId 才建
+     * 也就是"教师新建出来的账号只有账号、没有资料行"，
      * 学院要由管理员在资料里补 —— 这比造一个 college_id=0 的假资料要好：
      * 0 不是任何学院，查学院时会静默漏掉这些人。
      * users.username 就是学号/工号/编号（学生 2023020616、教师 10001 都是这么存的）。
+     *
+     * <p>2026-10-09（W32）：学院管理员(role 5) 从这里"不建"改成"带了 {@code collegeId} 就建"。
+     * 此前该表**全仓零写入方**，任何新建的 role 5 账号都拿不到档案行 ⇒
+     * {@code CollegeAdminController.getCollegeId()} 回 null ⇒ 学院管理端 18 个接口一律 403
+     * （表现为"能登录、能进界面、每页都没数据"）。{@code collegeId} 走
+     * {@code @RequestParam}（users 表没有 college_id 列、User 实体也没有该字段），
+     * 由建号表单在选了「学院管理员」时提供。
      */
-    private void createProfileIfNeeded(User user) {
+    private void createProfileIfNeeded(User user, Long collegeId) {
         if (user.getId() == null || user.getRole() == null) {
             return;
         }
@@ -779,8 +804,28 @@ public class AdminController {
                 profile.setStatus(1);
                 counselorProfileMapper.insert(profile);
             }
+        } else if (user.getRole() == 5) {
+            // 只在拿到 collegeId 且它确实指向一个存在的学院时才建 —— 不造 college_id=0
+            // 或指向不存在学院的假档案（那会让学院管理端"有档案但取不到本学院数据"，
+            // 比 403 更难排查）。没带学院就不建，由前端/调用方补录。
+            if (collegeId != null && collegeService.getById(collegeId) != null) {
+                QueryWrapper<CollegeAdminProfile> exists =
+                        new QueryWrapper<CollegeAdminProfile>().eq("user_id", user.getId());
+                if (collegeAdminProfileMapper.selectCount(exists) == 0) {
+                    CollegeAdminProfile profile = new CollegeAdminProfile();
+                    profile.setUserId(user.getId());
+                    profile.setName(name);
+                    profile.setCollegeId(collegeId);
+                    profile.setPhone(user.getPhone());
+                    profile.setEmail(user.getEmail());
+                    collegeAdminProfileMapper.insert(profile);
+                }
+            } else {
+                log.warn("学院管理员账号建立但未绑定学院: userId={}, username={}, collegeId={}",
+                        user.getId(), user.getUsername(), collegeId);
+            }
         }
-        // 教师(2)/学院管理员(5) 的 profile 必填列里有 college_id，建号入参里没有学院，故不建。
+        // 教师(2) 的 profile 必填列里有 college_id，建号入参里没有学院，故不建。
     }
 
     @PutMapping("/users/{id}")
@@ -4975,7 +5020,8 @@ public class AdminController {
     }
 
     /**
-     * 给账号改角色。请求体：{@code {userId, role}}（{@code role} 是 {@code users.role} 的数值）。
+     * 给账号改角色。请求体：{@code {userId, role}}，把角色改成**学院管理员(5)**时还要带
+     * {@code {collegeId}}。
      *
      * <p>2026-10-01 第二十四轮：**契约本来是 {@code userId/role}，而唯一的调用方
      * {@code AdminPermissions.vue} 一直发的是 {@code {user_id, role_id}}** ⇒
@@ -4986,9 +5032,43 @@ public class AdminController {
      *
      * <p>修的是调用方（改发 {@code userId/role}），契约保持单一；这里顺带把"缺字段"
      * 变成明确的 400 而不是把 NPE 的原话抛给前端。
+     *
+     * <p><b>2026-10-09（W33）</b>：这条路此前**只写 {@code users.role}、从不碰
+     * {@code college_admin_profile}** —— 于是把某人改成学院管理员就造出一个
+     * 「能登录、能进学院端、每一页 403」的账号（CollegeAdminController 按档案行解析学院，
+     * 取不到就整组拒绝）。与 W32 修掉的那个坑是同一个，只是换了个入口（那边是"建号"）。
+     * 现在：
+     * <ul>
+     *   <li>{@code role == 5} ⇒ {@code collegeId} **必填**、学院必须存在，然后 upsert 档案行；</li>
+     *   <li>{@code role != 5} ⇒ 把该账号残留的档案行**删掉** —— 留着就是一条
+     *       "这个人还是学院管理员"的假事实，直连（绕过网关）时那行仍能解析出学院、
+     *       照样放行学院管理端接口；</li>
+     *   <li>两笔写收在同一个事务里，且**先写 {@code users.role}、后写档案**，
+     *       这样"档案写失败 ⇒ 角色一起回滚"才有实际内容可回滚。</li>
+     * </ul>
+     *
+     * <p><b>越权闸</b>：只有系统管理员({@code role} 4)可调。此前学院管理员(5)也能调 ——
+     * 网关 {@code hasPermission} 对 role 5 直接放行整个 {@code /api/admin/**}，
+     * 而针对 {@code /api/permissions/**} 的那道闸前缀对不上真实路径
+     * （{@code PREFIX_PERMISSIONS = "/api/permissions"} vs 实际 {@code /api/admin/permissions/...}），
+     * admin-service 又只要求"已认证"⇒ **学院管理员能改全库任意账号的角色**。
+     * 现在网关与控制器**两层**都收（只信网关注入的 {@code X-Role}，缺头默认拒）。
+     *
+     * <p>⚠️ 拒绝时**返回** {@code ApiResponse.forbidden(...)}（HTTP 200 + body code 403），
+     * **不要抛异常** —— 本模块的 {@code GlobalExceptionHandler} 没有
+     * {@code AccessDeniedException} 处理器，抛出去会被末尾的 {@code Exception} 兜底加成
+     * HTTP 500「系统内部错误」。形状与 W26 给 {@code POST /warnings/scan} 加的那道闸一致。
      */
     @PostMapping("/permissions/assign-role")
-    public ApiResponse<String> assignRole(@RequestBody Map<String, Object> data) {
+    @Transactional(rollbackFor = Exception.class)
+    public ApiResponse<String> assignRole(@RequestBody Map<String, Object> data,
+                                          HttpServletRequest request) {
+        // —— 角色闸：只放行系统管理员（缺 X-Role ⇒ 拒绝，fail-closed）——
+        String callerRole = request == null ? null : request.getHeader("X-Role");
+        if (!"4".equals(callerRole) && !"admin".equals(callerRole)) {
+            log.warn("拒绝一次角色调整：调用者 X-Role={}", callerRole);
+            return ApiResponse.forbidden("只有系统管理员可以调整账号角色");
+        }
         try {
             Object rawUserId = data == null ? null : data.get("userId");
             Object rawRole = data == null ? null : data.get("role");
@@ -5011,17 +5091,165 @@ public class AdminController {
                 // 抛出去由 GlobalExceptionHandler 翻成真正的 404（HTTP + body 都是 404）。
                 throw new ResourceNotFoundException("用户不存在: " + userId);
             }
-            user.setRole(role);
-            userService.updateById(user);
-            return ApiResponse.success("角色分配成功");
+
+            Integer previousRole = user.getRole();
+            // 降级时"到底有没有清掉学院绑定"由**实际删了几行**决定，不看 previousRole 猜。
+            int clearedProfiles = 0;
+
+            // ★ 校验全部放在**任何写库之前** —— 参数/学院有问题时压根没碰过库，
+            //   不依赖 @Transactional 回滚。(事务是第二道保险：纯 Mockito 单测里没有代理，
+            //   仍要能断言"什么都不该写"。)
+            // 改成学院管理员：必须点名一个**存在的**学院。不造 college_id=0 的假档案 ——
+            // 0 不是任何学院，查学院时会静默漏掉这个人（比 403 更难排查）。
+            College college = null;
+            if (role == 5) {
+                Object rawCollegeId = data.get("collegeId");
+                if (rawCollegeId == null || String.valueOf(rawCollegeId).isBlank()) {
+                    throw new IllegalArgumentException("学院管理员必须指定所属学院");
+                }
+                Long collegeId;
+                try {
+                    collegeId = Long.valueOf(String.valueOf(rawCollegeId).trim());
+                } catch (NumberFormatException e) {
+                    throw new IllegalArgumentException("学院 id 不是数字: " + rawCollegeId);
+                }
+                college = collegeService.getById(collegeId);
+                if (college == null) {
+                    throw new IllegalArgumentException("学院不存在: " + collegeId);
+                }
+                // ⚠️ 用 `updateUser` 而不是 `updateById`：后者既不清 `users` 缓存，
+                //    又不会推进 `updated_at`（实体是从 getById 来的，updatedAt 是旧值，
+                //    回写等于把旧时间戳原样写回去 ⇒ 小程序"最近更新"永远停在建号那天）。
+                user.setRole(role);
+                if (!userService.updateUser(user)) {
+                    throw new IllegalStateException("更新账号角色失败: " + userId);
+                }
+                upsertCollegeAdminProfile(user, collegeId);
+            } else {
+                user.setRole(role);
+                if (!userService.updateUser(user)) {
+                    throw new IllegalStateException("更新账号角色失败: " + userId);
+                }
+                // 降级：该账号不再代表任何学院，残留档案行必须清掉 ——
+                // 直连绕过网关时它仍会让 CollegeAdminController 解析出学院、照样放行学院端。
+                clearedProfiles = clearCollegeAdminProfile(userId);
+            }
+
+            String message = buildAssignRoleMessage(role, previousRole, college, clearedProfiles);
+            log.info("Role assigned: userId={}, {} -> {}, collegeId={}",
+                    userId, previousRole, role, college == null ? null : college.getId());
+            auditLogService.record("UPDATE", "USER", userId,
+                    "调整账号 " + user.getUsername() + " 的角色："
+                            + getRoleNameText(previousRole) + " → " + getRoleNameText(role)
+                            + (college == null ? "" : "（所属学院：" + college.getName() + "）"));
+            return ApiResponse.success(message, null);
         } catch (IllegalArgumentException | ResourceNotFoundException e) {
             // 参数错 / 找不到，都不该被下面那个 catch 压成 body code 500：
             // 抛出去由 GlobalExceptionHandler 翻成 HTTP 400 / 404（body 的 code 也对得上）。
+            // 由此**整个事务回滚** —— 这正是"role5 + 学院不存在 ⇒ users.role 不变"的实现依据。
             throw e;
         } catch (Exception e) {
             log.error("Assign role failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            // 必须抛出去：返回 error 而不抛，@Transactional 会以为一切正常照常提交，
+            // 留下"角色改了、档案没写"的半截状态（与 createUser/deleteUser 同一条规矩）。
+            throw new RuntimeException("Assign role failed: " + e.getMessage(), e);
         }
+    }
+
+    /**
+     * 写/更新一条 {@code college_admin_profile}（W33）。
+     *
+     * <p><b>upsert 而不是 insert</b>：{@code college_admin_profile.user_id} 上
+     * **只有普通索引 `idx_college_admin_user`、没有唯一约束**（见
+     * {@code academic_warning_system.sql:1556-1568}），所以"先 selectCount 再 insert"
+     * 的幂等是应用层自己撑的；已有的行若再插一条会变成**同一个 user 两份档案**，
+     * {@code selectByUserId} 那样的单行查询会随机取到一份（取到旧学院就白改了）。
+     * 已有则改 {@code college_id}/{@code name}。
+     *
+     * <p>{@code name} 的口径与 {@link #createProfileIfNeeded} 的 role 5 分支一致：
+     * 没有真名就退回用户名。
+     */
+    private void upsertCollegeAdminProfile(User user, Long collegeId) {
+        String name = user.getName() != null ? user.getName() : user.getUsername();
+        List<CollegeAdminProfile> existing = collegeAdminProfileMapper.selectList(
+                new QueryWrapper<CollegeAdminProfile>().eq("user_id", user.getId()));
+        if (existing == null || existing.isEmpty()) {
+            CollegeAdminProfile profile = new CollegeAdminProfile();
+            profile.setUserId(user.getId());
+            profile.setName(name);
+            profile.setCollegeId(collegeId);
+            profile.setPhone(user.getPhone());
+            profile.setEmail(user.getEmail());
+            collegeAdminProfileMapper.insert(profile);
+            return;
+        }
+        // ⚠️ 更新只带 id + 要改的两列，**不要**把查出来的整行回写：
+        //    那个实体里 phone/email/title 也会被带上，更要紧的是 `updatedAt` 是旧值 ——
+        //    MySQL 的 `ON UPDATE CURRENT_TIMESTAMP` 只在**没显式给值**时才自动更新，
+        //    回写旧时间戳会让这行看起来"从没改过"。只给两列，时间戳自己会走。
+        CollegeAdminProfile patch = new CollegeAdminProfile();
+        patch.setId(existing.get(0).getId());
+        patch.setCollegeId(collegeId);
+        patch.setName(name);
+        collegeAdminProfileMapper.updateById(patch);
+        // user_id 上没有唯一约束，历史脏数据可能有重复行 ⇒ 一并清掉多余的，
+        // 否则 selectByUserId 这类单行查询会随机取到一份（取到旧学院就白改了）。
+        for (int i = 1; i < existing.size(); i++) {
+            collegeAdminProfileMapper.deleteById(existing.get(i).getId());
+            log.warn("清除重复的学院管理员档案行: id={}, userId={}", existing.get(i).getId(), user.getId());
+        }
+    }
+
+    /**
+     * 清掉该账号的学院管理员档案行（W33，角色被改成非 5 时调用）。
+     *
+     * <p>为什么非删不可：{@code CollegeAdminController.getCollegeId(userId)} 就是读这张表
+     * 解析学院的。留着这行，"已经不是学院管理员"这个事实只体现在 {@code users.role} 上，
+     * 而**直连 admin-service（绕过网关）**时那行仍会解析出学院、照样放行学院管理端接口
+     * （{@code CollegeAdminController} 只校验"是不是本人"，**不核对 role**）。
+     *
+     * <p>用 {@code delete(eq)} 而不是 {@code deleteById}：{@code user_id} 上无唯一约束，
+     * 历史脏数据可能有重复行，按 {@code user_id} 删能一并清干净。
+     *
+     * <p>先 {@code selectCount} 再删：绝大多数降级（学生↔教师↔辅导员）根本没有档案行，
+     * 不查就发一条 DELETE 是无意义写；而且"到底有没有清掉绑定"要用来决定回执文案，
+     * 不能凭"上一个角色是不是 5"猜 —— 早期 W32 之前建出来的 role 5 账号**本来就没有档案行**。
+     *
+     * @return 实际删掉的行数
+     */
+    private int clearCollegeAdminProfile(Long userId) {
+        Long count = collegeAdminProfileMapper.selectCount(
+                new QueryWrapper<CollegeAdminProfile>().eq("user_id", userId));
+        if (count == null || count == 0) {
+            return 0;
+        }
+        int removed = collegeAdminProfileMapper.delete(
+                new QueryWrapper<CollegeAdminProfile>().eq("user_id", userId));
+        log.info("清除学院管理员档案: userId={}, removed={}", userId, removed);
+        return removed;
+    }
+
+    /**
+     * 角色调整的回执文案 —— 说清楚到底做了什么，别只回一句"成功"（"说法三层"规矩）。
+     *
+     * <p>末尾那句"需重新登录"不是客套：网关是从 **JWT 的 {@code role} 声明**里取角色的
+     * （{@code AuthenticationFilter.validateToken} → {@code claims.get("role")}），
+     * 已经登录的用户手里那张 token 不会因为你改了库而变 ⇒ 不重新登录就仍是旧角色。
+     */
+    private static String buildAssignRoleMessage(Integer role, Integer previousRole,
+                                                 College college, int clearedProfiles) {
+        if (role == 5) {
+            return "已设为学院管理员并绑定《" + college.getName() + "》；该用户需重新登录后生效";
+        }
+        StringBuilder sb = new StringBuilder("角色已更新为「").append(getRoleNameText(role)).append("」");
+        // 按**实际删掉的行数**说，不按"上一个角色是不是 5"猜：W32 之前建出来的 role 5
+        // 账号本来就没有档案行，那时说"已清除学院绑定"是谎报。
+        if (clearedProfiles > 0) {
+            sb.append("，已解除学院管理员并清除学院绑定");
+        } else if (previousRole != null && previousRole == 5) {
+            sb.append("，该账号本就没有学院绑定");
+        }
+        return sb.append("；该用户需重新登录后生效").toString();
     }
 
     // ==================== P0新增：班级管理remove-teacher ====================

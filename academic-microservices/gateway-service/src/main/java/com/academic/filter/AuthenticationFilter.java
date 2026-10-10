@@ -299,7 +299,8 @@ public class AuthenticationFilter implements GlobalFilter, Ordered {
      *
      * <ul>
      *   <li><b>管理员(4)</b>：可访问所有路径；</li>
-     *   <li><b>学院管理员(5)</b>：college-admin 与 admin 前缀，外加仅限本人的自助账号路径；</li>
+     *   <li><b>学院管理员(5)</b>：**只有** college-admin 前缀，外加仅限本人的自助账号路径
+     *       （<b>不含</b> admin 前缀，见下面 role 5 那段的说明）；</li>
      *   <li><b>内置角色 1/2/3</b>：路径前缀层（各自的角色前缀 + 自助账号路径）；</li>
      *   <li><b>自定义角色（id ≥ 6，管理员在权限管理页新建的）</b>：**权限表驱动**，
      *       见 {@link #customRoleAllows}。</li>
@@ -317,9 +318,26 @@ public class AuthenticationFilter implements GlobalFilter, Ordered {
             return true;
         }
 
-        // 学院管理员：college-admin 与 admin 前缀，外加**仅限本人**的自助账号路径
+        // 学院管理员：**只有** college-admin 前缀，外加**仅限本人**的自助账号路径
+        //
+        // ⚠️ W33（2026-10-09）：原来这里写的是 `path.startsWith(PREFIX_COLLEGE_ADMIN)
+        //    || path.startsWith(PREFIX_ADMIN)` —— 学院管理员因此能打**整个** `/api/admin/**`。
+        //    那段注释把理由写成"college-admin 与 admin 前缀"，但**学院管理员是本院管理员，
+        //    `/api/admin/**` 是全局管理员面**（改任意账号的角色 / 建号 / 删号 / 改学院），
+        //    两个前缀放一起是范畴错误。admin-service 侧只有 `anyRequest().authenticated()`
+        //    + 不验签的 GatewayAuthFilter ⇒ 这一层放行等于**学院管理员可改全库账号角色**
+        //    （`POST /api/admin/permissions/assign-role` 实测可达）。
+        //    针对 `/api/permissions/**` 的那道闸救不了它：`PREFIX_PERMISSIONS` 是
+        //    `/api/permissions`，而真实路径是 `/api/admin/permissions/...`，前缀对不上。
+        //
+        //    现在把 PREFIX_ADMIN 从这一支删掉 ⇒ 直落到本段末尾 `return false`。
+        //    ⚠️ 不需要给学院管理端补白名单：`/college-admin` 路由组下的全部 9 个页面
+        //    （CollegeAdmin*.vue）只打 `/api/college-admin/**`，零处 `/api/admin/`；
+        //    `/admin/appeals`、`/admin/audit-logs` 属**管理员**的页面（AdminAppeals.vue /
+        //    AdminSettings.vue），Router 在 `router/index.js` 里按 `/admin` 前缀只放 role 4。
+        //    role 1/2/3 无需改动：它们走不到这里，下面 `path.startsWith(PREFIX_ADMIN)` 已拒。
         if (role == ROLE_COLLEGE_ADMIN) {
-            if (path.startsWith(PREFIX_COLLEGE_ADMIN) || path.startsWith(PREFIX_ADMIN)) {
+            if (path.startsWith(PREFIX_COLLEGE_ADMIN)) {
                 return true;
             }
             if (AUTH_CHANGE_PASSWORD.equals(path) || SELF_AUTH_PATTERN.matcher(path).matches()) {
@@ -458,6 +476,9 @@ public class AuthenticationFilter implements GlobalFilter, Ordered {
         // 控制器按已验签 token 再判一次）；2026-10-01 发现它零调用方、且与 `/users/add` 重复，
         // 就**删掉端点本身** ⇒ 攻击面消失，比留着再加闸更彻底。管理员建号现在只剩
         // AdminUsers.vue → `POST /api/users/add` 一条活路径（上面 PREFIX_USERS 那段管着）。
+        // ⚠️ 2026-10-09（W32）订正：这句"只剩一条活路径"**不成立**。全仓另有第二条 ——
+        // 小程序 `admin/users.vue` → `POST /api/admin/users`（admin-service，下面
+        // PREFIX_ADMIN 管着）。两条都是现役，且都要给 role 5 写 `college_admin_profile`。
         //
         // 剩下的那段 `path.startsWith("/api/auth/register")` 闸，**原本只拦得住裸的
         // `/api/auth/register`**（白名单放了三条自助路径，它们匹配后直接 return，走不到这里；

@@ -98,9 +98,19 @@ class AuthenticationFilterTest {
         assertTrue(allow(ADMIN, HttpMethod.GET, "/api/admin/statistics"));
         assertTrue(allow(ADMIN, HttpMethod.DELETE, "/api/roles/delete/9"), "管理员不受任何前缀限制");
 
-        // —— 学院管理员：college-admin 与 admin 两面，但**不碰全局角色表** ——
+        // —— 学院管理员：**只有** college-admin 面，不碰 admin 面、也不碰全局角色表 ——
+        // ⚠️ 2026-10-09（W33）订正：这里原来有一条
+        //      assertTrue(allow(COLLEGE_ADMIN, HttpMethod.GET, "/api/admin/statistics"));
+        //    —— 它**把缺陷钉住了**：网关对 role 5 放行整个 `/api/admin/**`，而
+        //    `/api/admin/permissions/assign-role`（改**全库**任意账号的角色）就在这个前缀下。
+        //    admin-service 侧只有 `anyRequest().authenticated()` + **不验签**的
+        //    `GatewayAuthFilter`，没有任何角色判断 ⇒ 学院管理员真能改全库账号角色
+        //    （建号 `POST /admin/users`、删号 `DELETE /admin/users/{id}` 同病）。
+        //    这与 W31 那条 `/api/courses/1` 是同一族毛病：回归护栏把**旧行为当成了要保的行为**。
+        //    role 5 是本院管理员，`/api/admin/**` 是全局管理员面，放一起是范畴错误。
+        //    role 1/2/3 无需改：它们走不到那一段，下面 `PREFIX_ADMIN → return false` 已经拒了。
         assertTrue(allow(COLLEGE_ADMIN, HttpMethod.GET, "/api/college-admin/classes/1"));
-        assertTrue(allow(COLLEGE_ADMIN, HttpMethod.GET, "/api/admin/statistics"));
+        assertFalse(allow(COLLEGE_ADMIN, HttpMethod.GET, "/api/admin/statistics"));
         assertFalse(allow(COLLEGE_ADMIN, HttpMethod.GET, "/api/roles/count"));
         assertFalse(allow(COLLEGE_ADMIN, HttpMethod.GET, "/api/teachers/list"));
 
@@ -188,6 +198,50 @@ class AuthenticationFilterTest {
         filter = filterWith(Map.of("ROLE_ASSISTANT", List.of("PERM_COURSE_VIEW")));
         assertTrue(allow(CUSTOM, HttpMethod.GET, "/api/courses/list"));
         assertFalse(allow(CUSTOM, HttpMethod.POST, "/api/courses/add"));
+    }
+
+    // ==================== /api/admin/**：W33 收掉的学院管理员越权面（2026-10-09） ====================
+    //
+    // 补闸前：`role == ROLE_COLLEGE_ADMIN` 那一支写的是
+    //   `path.startsWith(PREFIX_COLLEGE_ADMIN) || path.startsWith(PREFIX_ADMIN)`
+    // —— 注释把理由写成"college-admin 与 admin 前缀"，但**学院管理员是本院管理员**，
+    // `/api/admin/**` 是全局管理员面。而针对 `/api/permissions/**` 的那道闸救不了它：
+    // `PREFIX_PERMISSIONS` 是 `/api/permissions`，真实路径是 `/api/admin/permissions/...`，
+    // 前缀对不上。下游 admin-service 不做角色判断 ⇒ 改角色/建号/删号全通。
+    //
+    // ⚠️ 被拒的形状与控制器层不同：这里是**网关 403 + body `{"code":403,...}`**，
+    // 拦在路由之前。控制器层（`assignRole` 自己的 `X-Role` 闸）是 **HTTP 200 + body code 403**。
+    // 两个都要在，因为"网关不是网络边界"（admin-service 本机可直连，且它不验签）。
+
+    @Test
+    @DisplayName("W33：学院管理员进不去 /api/admin/**（改角色/建号/删号同族），但学院端自己的面照常")
+    void adminSurface_deniedForCollegeAdmin() {
+        filter = filterWithBuiltInBindings();
+
+        // —— 题眼：把账号改成学院管理员的那支，补闸前 role 5 自己能调 ——
+        assertFalse(allow(COLLEGE_ADMIN, HttpMethod.POST, "/api/admin/permissions/assign-role"));
+        // 同病的三条，一并钉住
+        assertFalse(allow(COLLEGE_ADMIN, HttpMethod.POST, "/api/admin/users"));
+        assertFalse(allow(COLLEGE_ADMIN, HttpMethod.DELETE, "/api/admin/users/1"));
+        assertFalse(allow(COLLEGE_ADMIN, HttpMethod.GET, "/api/admin/users/page"));
+        // `/api/admin/colleges` 也是全局学院目录（本院信息走 /api/college-admin/profile）
+        assertFalse(allow(COLLEGE_ADMIN, HttpMethod.POST, "/api/admin/colleges"));
+
+        // ★ 正对照：改的是"admin 面"这一支，**没有连坐**关掉学院管理端自己的面。
+        //   正对照要挑**确实存在**的样本（`/college-admin` 路由组下 9 个页面只打这些），
+        //   否则"对照没打中"会被误读成"搜索器坏了"。
+        assertTrue(allow(COLLEGE_ADMIN, HttpMethod.GET, "/api/college-admin/dashboard/5"));
+        assertTrue(allow(COLLEGE_ADMIN, HttpMethod.GET, "/api/college-admin/warnings/5"));
+        assertTrue(allow(COLLEGE_ADMIN, HttpMethod.DELETE, "/api/college-admin/delete-warning/5/9"));
+        // 以及"仅限本人"的自助面（小程序「我的」页要用）
+        assertTrue(allowAs(COLLEGE_ADMIN, 5L, HttpMethod.GET, "/api/users/info/5"));
+        assertTrue(allowAs(COLLEGE_ADMIN, 5L, HttpMethod.GET, "/api/users/5/settings"));
+        // 别人的资料权限仍按老规矩拒
+        assertFalse(allowAs(COLLEGE_ADMIN, 5L, HttpMethod.GET, "/api/users/7"));
+
+        // ★ 反面：管理员(4) 不受新闸误伤
+        assertTrue(allow(ADMIN, HttpMethod.POST, "/api/admin/permissions/assign-role"));
+        assertTrue(allow(ADMIN, HttpMethod.GET, "/api/admin/statistics"));
     }
 
     // ==================== 自定义角色：本轮新增的能力 ====================

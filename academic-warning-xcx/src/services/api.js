@@ -700,13 +700,20 @@ class ApiClient {
     getUserById: (id) => this._get(`/admin/users/${id}`),
     /**
      * 建号。体 `{username, name, role, email, password}`（PC 表单就这五个）。
-     * ⚠️ 建号**不会**给教师(2)/学院管理员(5)建档案行 —— 那两张表的 `college_id`
-     *    是 NOT NULL 而建号表单里没有学院，硬填 0 会造出"不属于任何学院"的幽灵账号。
+     * ⚠️ 建号**不会**给教师(2)建档案行 —— `teacher_profile.college_id` 是 NOT NULL
+     *    而建号表单里没有学院，硬填 0 会造出"不属于任何学院"的幽灵账号。
      *    所以新建的教师要在「编辑」里补学院，否则按学院筛选时查不到他。
+     * ✅ 2026-10-09（W32）：**学院管理员(5) 不再属于这一类** —— 选了该角色时表单会多一个
+     *    「所属学院」选项，值经 query 参数发给后端（`?collegeId=`），后端据它建
+     *    `college_admin_profile` 行。学院管理端的学院归属就靠这行推出来，没有它 18 个
+     *    接口一律 403。不传 `collegeId` 时不建档案行，响应 message 会如实说明。
      * ⚠️ 重名是**业务错误**：`code=500` + message「用户名已存在：xxx」，要按 message 提示，
      *    不能只判 HTTP。
      */
-    createUser: (data) => this._post('/admin/users', data),
+    createUser: (data, collegeId = null) => {
+      const url = collegeId ? `/admin/users?collegeId=${encodeURIComponent(collegeId)}` : '/admin/users'
+      return this._post(url, data)
+    },
     /**
      * 改用户。体只发改动的字段。
      * ⚠️ `password` 传**空串等于"不改"**（后端会置 null，MyBatis-Plus 默认不更新 null 字段）；

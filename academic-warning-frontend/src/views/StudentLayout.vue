@@ -19,7 +19,7 @@
             class="nav-item"
             :class="{ active: isActive('/student/scores') }"
           >
-            <span>成绩分析</span>
+            <span>成绩管理</span>
           </router-link>
           <router-link 
             to="/student/warnings" 
@@ -40,7 +40,7 @@
             class="nav-item"
             :class="{ active: isActive('/student/appeals') }"
           >
-            <span>成绩申诉</span>
+            <span>申诉管理</span>
           </router-link>
           <router-link 
             to="/student/messages" 

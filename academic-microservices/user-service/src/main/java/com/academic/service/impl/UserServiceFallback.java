@@ -46,6 +46,13 @@ public class UserServiceFallback implements UserService {
     }
 
     @Override
+    public boolean createUserWithCollegeAdminProfile(User user, Long collegeId) {
+        // 降级时**抛异常**，不返回 false —— 返回 false 会被 controller 包成
+        // "创建用户失败"（看起来像入参问题）；这里要让调用方知道是服务不可用。
+        throw new IllegalStateException("用户服务暂时不可用，请稍后重试");
+    }
+
+    @Override
     public boolean updateById(User user) {
         return false;
     }

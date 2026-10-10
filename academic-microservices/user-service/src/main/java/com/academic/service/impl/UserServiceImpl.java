@@ -1,5 +1,6 @@
 package com.academic.service.impl;
 
+import com.academic.common.entity.CollegeAdminProfile;
 import com.academic.common.entity.CounselorProfile;
 import com.academic.common.entity.TeacherProfile;
 import com.academic.common.entity.User;
@@ -84,6 +85,48 @@ public class UserServiceImpl implements UserService {
             log.error("Save user failed: {}", e.getMessage());
             throw e;
         }
+    }
+
+    private static final int ROLE_COLLEGE_ADMIN = 5;
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public boolean createUserWithCollegeAdminProfile(User user, Long collegeId) {
+        log.info("Create user (admin path): username={}, role={}, collegeId={}",
+                user.getUsername(), user.getRole(), collegeId);
+
+        // ★ save() 内部对用户名唯一约束冲突会抛 DuplicateKeyException，这里**不 catch**
+        //   —— 让它冒到控制器翻成"用户名已存在"。在这里吞掉再 return false 的话，
+        //   调用方分不清"重名"和"别的失败"。
+        boolean saved = save(user);
+        if (!saved) {
+            return false;
+        }
+        // save() 走 MyBatis-Plus insert，主键会回填；没有它下面的档案无从挂起。
+        if (user.getId() == null) {
+            throw new IllegalStateException("账号已写入但未取回主键，无法继续建档");
+        }
+
+        if (user.getRole() != null && user.getRole() == ROLE_COLLEGE_ADMIN) {
+            // 口径与 admin-service AdminController.createProfileIfNeeded 逐条对齐。
+            if (collegeId == null) {
+                log.warn("学院管理员账号建立但未绑定学院（学院管理端将无法取数）: userId={}, username={}",
+                        user.getId(), user.getUsername());
+            } else if (registrationMapper.countCollege(collegeId) == 0) {
+                // 写进去就是一条指向不存在学院的悬空引用，查学院时会静默漏人 ⇒ 直接拒。
+                // 抛出去让整笔回滚：宁可"建号失败"，也不要留一个取不到数的半截账号。
+                throw new IllegalArgumentException("学院不存在: " + collegeId);
+            } else {
+                CollegeAdminProfile profile = new CollegeAdminProfile();
+                profile.setUserId(user.getId());
+                profile.setName(user.getName() != null ? user.getName() : user.getUsername());
+                profile.setCollegeId(collegeId);
+                profile.setPhone(user.getPhone());
+                profile.setEmail(user.getEmail());
+                registrationMapper.insertCollegeAdminProfile(profile);
+            }
+        }
+        return true;
     }
 
     @Override

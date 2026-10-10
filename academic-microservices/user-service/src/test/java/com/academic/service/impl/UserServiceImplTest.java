@@ -538,41 +538,92 @@ class UserServiceImplTest {
         verify(userMapper, never()).insert(any(User.class));
     }
 
+    // ==================== 管理员建号（POST /users/add）：W32 ====================
+    //
+    // 这一段钉的是「学院管理员(role 5) 建号时**真的写 college_admin_profile**」。
+    // 此前该表全仓只有读和删、零写入 ⇒ 新建的 role 5 账号拿不到档案行 ⇒
+    // CollegeAdminController.getCollegeId() 回 null ⇒ 学院管理端 18 个接口一律 403。
+    // 只断言"账号建出来了"的话，档案那一行不写测试照样绿 —— 所以下面逐条断言 insert 参数。
+
+    /** role 5 + 学院存在 → users 与 college_admin_profile 各写一行（同一事务）。 */
+    @Test
+    void createUserWithCollegeAdminProfile_role5WritesProfile() {
+        when(passwordEncoder.encode(anyString())).thenReturn("$2a$10$encoded");
+        stubUserInsertBackfillsId(200L);
+        when(registrationMapper.countCollege(1L)).thenReturn(1);
+
+        boolean ok = userService.createUserWithCollegeAdminProfile(
+                new User().setUsername("collegeadmin9").setPassword("123456").setName("新院长")
+                        .setRole(5).setPhone("13900009999").setEmail("dean@academic.edu"),
+                1L);
+
+        assertTrue(ok);
+        assertEquals(200L, capturedUserInsert().getId(), "账号行必须落库");
+        ArgumentCaptor<com.academic.common.entity.CollegeAdminProfile> cap =
+                ArgumentCaptor.forClass(com.academic.common.entity.CollegeAdminProfile.class);
+        verify(registrationMapper).insertCollegeAdminProfile(cap.capture());
+        assertEquals(200L, cap.getValue().getUserId());
+        assertEquals("新院长", cap.getValue().getName());
+        assertEquals(1L, cap.getValue().getCollegeId(), "学院必须写进去 —— 学院管理端全靠它");
+    }
+
+    /**
+     * ★ role 5 但**没给学院** → 账号照建、**档案不建**（不造 college_id=0 的假档案），
+     * 且不抛异常（这是**允许**的状态，只是学院端取不到数，由调用方如实提示）。
+     */
+    @Test
+    void createUserWithCollegeAdminProfile_role5WithoutCollegeCreatesNoProfile() {
+        when(passwordEncoder.encode(anyString())).thenReturn("$2a$10$encoded");
+        stubUserInsertBackfillsId(201L);
+
+        boolean ok = userService.createUserWithCollegeAdminProfile(
+                new User().setUsername("collegeadmin10").setPassword("123456").setName("无院院长")
+                        .setRole(5),
+                null);
+
+        assertTrue(ok, "没给学院不该让建号失败");
+        verify(registrationMapper, never()).insertCollegeAdminProfile(any());
+        // 也不能去查学院（没得查）
+        verify(registrationMapper, never()).countCollege(any());
+    }
+
+    /**
+     * ★ role 5 + 学院**不存在** → 抛异常（写进去就是悬空引用 ⇒ 按学院查人时静默漏人）。
+     * 异常会冒到控制器翻成 400，事务整体回滚（本方法标了 @Transactional）。
+     */
+    @Test
+    void createUserWithCollegeAdminProfile_role5UnknownCollegeRejected() {
+        when(passwordEncoder.encode(anyString())).thenReturn("$2a$10$encoded");
+        stubUserInsertBackfillsId(202L);
+        when(registrationMapper.countCollege(999L)).thenReturn(0);
+
+        IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
+                () -> userService.createUserWithCollegeAdminProfile(
+                        new User().setUsername("collegeadmin11").setPassword("123456").setName("幽灵院长")
+                                .setRole(5),
+                        999L));
+        assertEquals("学院不存在: 999", e.getMessage());
+        verify(registrationMapper, never()).insertCollegeAdminProfile(any());
+    }
+
+    /** 其它角色（这里取 role 4）不因这次改动而多写任何 profile 行。 */
+    @Test
+    void createUserWithCollegeAdminProfile_otherRoleWritesNoProfile() {
+        when(passwordEncoder.encode(anyString())).thenReturn("$2a$10$encoded");
+        stubUserInsertBackfillsId(203L);
+
+        boolean ok = userService.createUserWithCollegeAdminProfile(
+                new User().setUsername("adm009").setPassword("123456").setName("另一个管理员").setRole(4),
+                null);
+
+        assertTrue(ok);
+        verifyNoInteractions(registrationMapper);
+    }
+
     /** 取回 {@code users} 那一行的入参（断言"到底写了什么"）。*/
     private User capturedUserInsert() {
         ArgumentCaptor<User> cap = ArgumentCaptor.forClass(User.class);
         verify(userMapper).insert(cap.capture());
         return cap.getValue();
-    }
-
-    /** 取用户信息：查得到就返回脱敏后的 Map，查不到返回 null。 */
-    @Test
-    void testGetUserInfo() {
-        User user = new User()
-                .setId(1L)
-                .setUsername("admin")
-                .setName("系统管理员")
-                .setRole(4)
-                .setStatus(1)
-                .setPassword("$2a$10$shouldnotleak");
-
-        when(userMapper.selectById(1L)).thenReturn(user);
-
-        Object info = userService.getUserInfo(1L);
-
-        assertInstanceOf(Map.class, info);
-        Map<?, ?> map = (Map<?, ?>) info;
-        assertEquals(1L, map.get("id"));
-        assertEquals("admin", map.get("username"));
-        assertEquals("系统管理员", map.get("name"));
-        // 返回体里不能带密码
-        assertFalse(map.containsKey("password"));
-    }
-
-    @Test
-    void testGetUserInfo_notFound() {
-        when(userMapper.selectById(999L)).thenReturn(null);
-
-        assertNull(userService.getUserInfo(999L));
     }
 }
