@@ -2,6 +2,7 @@ package com.academic.controller;
 
 import com.academic.common.dto.ApiResponse;
 import com.academic.common.entity.AcademicWarning;
+import com.academic.common.entity.TeacherProfile;
 import com.academic.entity.StudentProfile;
 import com.academic.mapper.*;
 import org.junit.jupiter.api.AfterEach;
@@ -287,5 +288,103 @@ class CollegeAdminControllerGuardTest {
 
         assertNotEquals(200, controller.deleteWarning(ADMIN_B, 9L).getCode());
         verify(academicWarningMapper, never()).deleteById(anyLong());
+    }
+
+    // ==================== ④ 详情接口的归属口径（W35，2026-10-10） ====================
+    //
+    // 上面 ② 钉住了 class-students / process-warning / delete-warning 的归属拒绝都是 403，
+    // 但**详情两条漏了**：student-detail 与 teacher-detail 的"不属于本院"改前用的是
+    // `error(String)`（code 500）—— 与本文件"越权一律 forbidden(403)"的头注、
+    // 以及同类拒绝的实际口径都不一致，客户端会把"越权"读成"服务器错误"。
+    // 因为此前没有任何用例钉这两条，口径漂到 500 也没人发现。下面两个方向各一条承重断言。
+
+    /** 乙院的学生档案拿给甲院管理员 ⇒ 403（不是 500），且**在返回前不读成绩明细**。 */
+    @Test
+    @DisplayName("学生详情：学生不属于本院 ⇒ 403，且不读成绩表")
+    void studentDetail_rejectsForeignStudent() {
+        login(ADMIN_A, "ROLE_COLLEGE_ADMIN");
+        profileOf(ADMIN_A, COLLEGE_A);
+        StudentProfile sp = new StudentProfile();
+        sp.setId(34L); sp.setClassId(30L); sp.setStudentId("2023029999"); sp.setName("外院生");
+        when(studentProfileMapper.selectById(34L)).thenReturn(sp);
+        // 本院名下没有 classId=30 这个班 ⇒ 学生不属于本院
+        when(classesMapper.getClassesByCollegeId(COLLEGE_A)).thenReturn(List.of());
+
+        ApiResponse<Map<String, Object>> r = controller.getStudentDetail(ADMIN_A, 34L);
+
+        assertEquals(403, r.getCode());
+        verify(scoreStatMapper, never()).selectStudentScoreRows(any());
+    }
+
+    /** 本院的学生照常返回（别把正常路径一起挡了）。 */
+    @Test
+    @DisplayName("学生详情：本院的学生 ⇒ 正常返回")
+    void studentDetail_allowsOwnStudent() {
+        login(ADMIN_A, "ROLE_COLLEGE_ADMIN");
+        profileOf(ADMIN_A, COLLEGE_A);
+        StudentProfile sp = new StudentProfile();
+        sp.setId(3L); sp.setClassId(1L); sp.setStudentId("2023020616"); sp.setName("司明");
+        when(studentProfileMapper.selectById(3L)).thenReturn(sp);
+        Map<String, Object> cls = new HashMap<>(); cls.put("id", 1L);
+        when(classesMapper.getClassesByCollegeId(COLLEGE_A)).thenReturn(List.of(cls));
+        when(scoreStatMapper.selectStudentScoreRows(3L)).thenReturn(List.of());
+        when(scoreStatMapper.selectOneStudentScoreStats(3L)).thenReturn(null);
+        when(academicWarningMapper.selectList(any())).thenReturn(List.of());
+
+        ApiResponse<Map<String, Object>> r = controller.getStudentDetail(ADMIN_A, 3L);
+
+        assertEquals(200, r.getCode());
+        assertEquals("司明", r.getData().get("name"));
+    }
+
+    /** 乙院的教师档案拿给甲院管理员 ⇒ 403（不是 500），且不读该教师的成绩。 */
+    @Test
+    @DisplayName("教师详情：教师不属于本院 ⇒ 403，且不读成绩表")
+    void teacherDetail_rejectsForeignTeacher() {
+        login(ADMIN_A, "ROLE_COLLEGE_ADMIN");
+        profileOf(ADMIN_A, COLLEGE_A);
+        TeacherProfile tp = new TeacherProfile();
+        tp.setId(7L); tp.setUserId(55L); tp.setCollegeId(COLLEGE_B); tp.setName("外院师");
+        when(teacherProfileMapper.selectById(7L)).thenReturn(tp);
+
+        ApiResponse<Map<String, Object>> r = controller.getTeacherDetail(ADMIN_A, 7L);
+
+        assertEquals(403, r.getCode());
+        verify(scoreStatMapper, never()).selectTeacherScoreRows(any(), any());
+    }
+
+    /** 本院的教师照常返回。 */
+    @Test
+    @DisplayName("教师详情：本院的教师 ⇒ 正常返回")
+    void teacherDetail_allowsOwnTeacher() {
+        login(ADMIN_A, "ROLE_COLLEGE_ADMIN");
+        profileOf(ADMIN_A, COLLEGE_A);
+        TeacherProfile tp = new TeacherProfile();
+        tp.setId(1L); tp.setUserId(29L); tp.setCollegeId(COLLEGE_A); tp.setName("李明");
+        when(teacherProfileMapper.selectById(1L)).thenReturn(tp);
+        when(scoreStatMapper.selectTeacherScoreRows(COLLEGE_A, 29L)).thenReturn(List.of());
+
+        ApiResponse<Map<String, Object>> r = controller.getTeacherDetail(ADMIN_A, 1L);
+
+        assertEquals(200, r.getCode());
+        assertEquals("李明", r.getData().get("name"));
+    }
+
+    /**
+     * "教师不存在"与"不属于本院"是两回事 —— 前者是 500（沿用本文件服务器侧失败的既有口径），
+     * 后者是 403。合并成一个码会让前端分不清"查不到人"和"没权限"。
+     */
+    @Test
+    @DisplayName("教师详情：教师不存在 ⇒ 500「教师不存在」，且不读成绩表")
+    void teacherDetail_missingTeacher() {
+        login(ADMIN_A, "ROLE_COLLEGE_ADMIN");
+        profileOf(ADMIN_A, COLLEGE_A);
+        when(teacherProfileMapper.selectById(9999L)).thenReturn(null);
+
+        ApiResponse<Map<String, Object>> r = controller.getTeacherDetail(ADMIN_A, 9999L);
+
+        assertEquals(500, r.getCode());
+        assertTrue(r.getMessage().contains("不存在"), "实际: " + r.getMessage());
+        verify(scoreStatMapper, never()).selectTeacherScoreRows(any(), any());
     }
 }

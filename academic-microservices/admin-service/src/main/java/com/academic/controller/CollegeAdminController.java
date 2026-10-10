@@ -299,7 +299,7 @@ public class CollegeAdminController {
         if (sp.getClassId() == null) return ApiResponse.error("该学生无班级信息");
         List<Map<String, Object>> classes = classesMapper.getClassesByCollegeId(collegeId);
         boolean inCollege = classes.stream().anyMatch(c -> c.get("id").equals(sp.getClassId()));
-        if (!inCollege) return ApiResponse.error("该学生不属于您管理的学院");
+        if (!inCollege) return ApiResponse.forbidden("该学生不属于您管理的学院");
 
         Map<String, Object> detail = new HashMap<>();
         detail.put("id", sp.getId());
@@ -607,7 +607,8 @@ public class CollegeAdminController {
         Long collegeId = getCollegeId(userId);
         if (collegeId == null) return ApiResponse.forbidden("无权限");
         TeacherProfile tp = teacherProfileMapper.selectById(teacherId);
-        if (tp == null || !tp.getCollegeId().equals(collegeId)) return ApiResponse.error("无权限");
+        if (tp == null) return ApiResponse.error("教师不存在");
+        if (!tp.getCollegeId().equals(collegeId)) return ApiResponse.forbidden("该教师不属于您管理的学院");
         Map<String, Object> d = new HashMap<>();
         d.put("id", tp.getId()); d.put("name", tp.getName()); d.put("title", tp.getTitle());
         d.put("researchAreas", tp.getResearchAreas());
