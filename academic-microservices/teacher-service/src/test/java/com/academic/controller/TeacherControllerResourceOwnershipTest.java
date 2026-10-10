@@ -121,10 +121,16 @@ class TeacherControllerResourceOwnershipTest {
         return c;
     }
 
-    private static ScoreRecord scoreOwnedBy(long teacherId) {
+    /**
+     * 一行成绩：{@code scores.id} + 所属课程 id。
+     *
+     * <p>W36 起归属判据是**课程**（{@code scores} 表没有 {@code teacher_id}），
+     * 所以这里给的是 {@code courseId} 而不是 {@code teacherId}。
+     */
+    private static ScoreRecord scoreInCourse(long courseId) {
         ScoreRecord s = new ScoreRecord();
         s.setId(277L);
-        s.setTeacherId(teacherId);
+        s.setCourseId(courseId);
         return s;
     }
 
@@ -317,10 +323,12 @@ class TeacherControllerResourceOwnershipTest {
     }
 
     @Test
-    @DisplayName("★ 批量删分：只要有一条不是本人录的，整批拒（不做「部分成功」）")
+    @DisplayName("★ 批量删分：只要有一条不是本人课上的，整批拒（不做「部分成功」）")
     void batchDeleteRequiresEveryRowMine() {
-        when(scoreRecordService.getById(277L)).thenReturn(scoreOwnedBy(ME));
-        when(scoreRecordService.getById(278L)).thenReturn(scoreOwnedBy(OTHER));
+        when(scoreRecordService.getById(277L)).thenReturn(scoreInCourse(MY_COURSE));
+        when(scoreRecordService.getById(278L)).thenReturn(scoreInCourse(OTHERS_COURSE));
+        when(courseService.getById(MY_COURSE)).thenReturn(courseOwnedBy(ME));
+        when(courseService.getById(OTHERS_COURSE)).thenReturn(courseOwnedBy(OTHER));
 
         assertEquals(403, controller.batchDeleteScores(List.of(277L, 278L), as(ME)).getCode());
         // 查不到的行也算"不是本人的"

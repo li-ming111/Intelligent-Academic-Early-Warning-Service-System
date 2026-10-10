@@ -61,8 +61,11 @@ public interface ClassInfoMapper extends BaseMapper<ClassInfo> {
 
     /**
      * 学生的姓名（{@code student_profile → users.name}）。2026-10-04（W19）补，给教师端
-     * 成绩导入用：Excel 里「姓名」列是可选的，没填时用它回填 {@code score_record.student_name}
-     * —— 否则导入的行在成绩列表里没有姓名，变成一串"光有分数没有名字"的记录。
+     * 成绩导入用：Excel 里「姓名」列是可选的，没填时用它回填——否则导入的行在成绩列表里
+     * 没有姓名，变成一串"光有分数没有名字"的记录。
+     *
+     * <p>W36 起回填结果只是路径内使用（教师端成绩不再落 {@code score_record}）；
+     * 成绩行的姓名一律由 {@code student_profile} 联表取得，不存冗余列。
      *
      * <p>同样**刻意拆成单列标量**而不是返回 Map：{@code mapUnderscoreToCamelCase} 开着时
      * Map 结果的 key 是 {@code name} 还是别的取决于版本，取错就静默当成"查不到学生"。
@@ -87,9 +90,13 @@ public interface ClassInfoMapper extends BaseMapper<ClassInfo> {
      * 左右。返回 0 涵盖"没有这个班"与"这个班不是我的"两种情况 ——
      * 在归属闸里这两者必须同解（判不出来 ≠ 放行）。
      *
-     * <p>⚠️ 已知边界：{@code score_record} 只存 {@code class_name} 字符串、不存 {@code class_id}，
-     * 所以同名班级的成绩行在数据模型里**本来就分不开**。若真出现两个同名班，
-     * 本闸放行的是"按名字取到的那些行"，这是数据模型的上限，不是闸的疏漏。
+     * <p>⚠️ 已知边界（W36 更正）：此前写的理由是「{@code score_record} 只存 {@code class_name}
+     * 字符串、不存 {@code class_id}，所以同名班级的成绩行本来就分不开」。前半句已不成立 ——
+     * 教师端成绩改读 {@code scores} 后，班级归属走的是 {@code student_profile.class_id}
+     * （成绩行本身不再携带 class_name）。但**边界本身仍在**，只是换了位置：本端点的入参就是
+     * 一个 {@code class_name} 字符串，由它反查 {@code classes} 时同名班仍会被一并命中。
+     * 真正要根治得先把这个端点的入参改成 {@code class_id}（属于接口契约变更，未在本轮做）。
+     * 若真出现两个同名班，本闸放行的是"按名字取到的那些行"，这是接口契约的上限，不是闸的疏漏。
      */
     @Select("SELECT COUNT(*) FROM classes WHERE name = #{className} AND teacher_id = #{teacherId}")
     int countClassesNamedAndOwned(@Param("className") String className, @Param("teacherId") Long teacherId);

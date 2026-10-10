@@ -526,16 +526,28 @@ public class TeacherController {
     @PutMapping("/scores/{scoreId}")
     public ApiResponse<Object> updateScore(@PathVariable Long scoreId, @RequestBody Map<String, Object> data,
                                             HttpServletRequest request) {
-        Long requestUserId = getUserIdFromGateway(request);
         ScoreRecord record = scoreRecordService.getById(scoreId);
-        if (record != null && record.getTeacherId() != null
-                && !record.getTeacherId().equals(requestUserId) && !isAdmin(request)) {
-            return ApiResponse.error(403, "无权修改其他教师录入的成绩");
+        if (record == null) {
+            return ApiResponse.notFound("成绩记录不存在");
+        }
+        // W36：{@code scoreId} 现在是 {@code scores.id}。scores 表**没有** teacher_id，
+        // 成绩的归属落在**课程**上（courses.teacher_id = users.id）—— 判据与同族读端点一致。
+        // 请求体契约沿用 {score, remark, modifiedBy}（小程序一直这么发；PC 端此前键名写错，
+        // 见 TeacherScores.vue，本轮一并修）。
+        ApiResponse<Object> deny = denyUnlessMyCourse(record.getCourseId(), request, "只能修改本人所授课程的成绩");
+        if (deny != null) {
+            return deny;
         }
         try {
-            Double score = Double.parseDouble(data.get("score").toString());
-            String remark = (String) data.get("remark");
-            String modifiedBy = (String) data.getOrDefault("modifiedBy", "教师");
+            Object rawScore = data == null ? null : data.get("score");
+            if (rawScore == null) {
+                return ApiResponse.badRequest("缺少 score 字段");
+            }
+            Double score = Double.parseDouble(rawScore.toString());
+            Object rawRemark = data.get("remark");
+            String remark = rawRemark == null ? null : String.valueOf(rawRemark);
+            // modifiedBy 前端可能传数字（用户 id）或姓名，统一转字符串（列是 varchar）。
+            String modifiedBy = String.valueOf(data.getOrDefault("modifiedBy", "教师"));
             scoreRecordService.updateScore(scoreId, score, remark, modifiedBy);
             return ApiResponse.success("成绩更新成功");
         } catch (Exception e) {
@@ -657,16 +669,21 @@ public class TeacherController {
      * <p>学号 → {@code student_profile.id} 的换算在这里做（{@code saveScores} 要的是**档案 id**，
      * 不是学号字符串）。
      *
-     * <p><b>列口径</b>（与 {@link #downloadScoresTemplate} 产出的模板一致，也与本端点真正
-     * 能落库的字段一致）：{@code 学号(必填) | 姓名 | 总评成绩(必填) | 学期 | 备注}。
-     * 刻意**没有「平时成绩/期末成绩」**：{@code ScoreRecordService.saveScores} 不读这两个 key，
-     * {@code insertScore} 的 INSERT 列里也没有它们，放上模板只会变成"填了却静默消失"。
-     * 导出文件里那两列同样被忽略；但"导出→改分→导回"改的是**已存在的行**，
-     * {@code saveScores} 走 existing 分支时不碰这两列（从库里原样保留），所以不会丢。
+     * <p><b>列口径</b>（与 {@link #downloadScoresTemplate} 产出的模板一致）：
+     * {@code 学号(必填) | 姓名 | 总评成绩(必填) | 学期 | 备注}。
      *
-     * <p><b>semester 必须是数字</b>：{@code scores.semester} 是 int 列，而
-     * {@code score_record.semester} 是 varchar —— 塞进 {@code "2025-2026-1"} 这类字符串，
-     * 写 {@code scores} 那一步会在 MySQL 严格模式下报错。所以这里先卡格式，不留给数据库去炸。
+     * <p><b>2026-10-10（W36）更正</b>：这里原写着「刻意没有平时成绩/期末成绩，因为
+     * {@code saveScores} 不读这两个 key，{@code insertScore} 的 INSERT 列里也没有它们」。
+     * 前半句现在已经不成立 —— {@code saveScores} 改为直写 {@code scores} 后会读
+     * {@code regularScore}/{@code finalScore} 并交给 {@code ScoreSyncSupport.applyToAuthoritative}
+     * （{@code insertScore} 这个方法本身也已随 {@code score_record} 一起废掉）。
+     * 模板仍然**不放**这两列，但这已经是**产品口径**的选择（导入以"总评成绩"为准，
+     * 平时/期末留给录分界面），而不是"放了会被丢掉"——那是另一回事，不能拿旧理由当挡箭牌。
+     * 换言之：若将来要把这两列加回模板，后端现在**是**接得住的。
+     *
+     * <p><b>semester 必须是数字</b>：{@code scores.semester} 是 int 列，塞进
+     * {@code "2025-2026-1"} 这类字符串会在 MySQL 严格模式下报错。
+     * 所以这里先卡格式，不留给数据库去炸。
      */
     @PostMapping("/scores/import")
     public ApiResponse<Map<String, Object>> importScores(@RequestParam("file") MultipartFile file,
@@ -1504,7 +1521,7 @@ public class TeacherController {
             return deny;
         }
         try {
-            List<ScoreRecord> scores = latestPerStudent(scoreRecordService.getScoresByCourseId(course_id));
+            List<ScoreRecord> scores = scoreRecordService.getScoresByCourseId(course_id);
             long belowPassLine = scores.stream()
                 .map(ScoreRecord::getScore)
                 .filter(Objects::nonNull)              // 未录入的不算 0 分
@@ -1603,7 +1620,7 @@ public class TeacherController {
             // 一人一行：司明在高等数学下有 3 个批次，取最新的那次（第 5 学期 56.5），
             // 否则"当前成绩"会随行序随机命中第 3 学期的 87 分 —— 同一个接口两次调用
             // 给出两个分数，且与预警里的 56.5 对不上。
-            List<ScoreRecord> rows = latestPerStudent(scoreRecordService.getScoresByCourseId(course_id));
+            List<ScoreRecord> rows = scoreRecordService.getScoresByCourseId(course_id);
 
             Double studentScore = null;
             String studentName = null;
@@ -1777,7 +1794,7 @@ public class TeacherController {
         }
         try {
             int[] distribution = new int[5]; // 90+, 80-89, 70-79, 60-69, <60
-            for (ScoreRecord row : latestPerStudent(scoreRecordService.getScoresByCourseId(courseId))) {
+            for (ScoreRecord row : scoreRecordService.getScoresByCourseId(courseId)) {
                 Double s = row.getScore();
                 if (s == null) continue;       // 未录入不属于任何一档
                 if (s >= 90) distribution[0]++;
@@ -1821,7 +1838,7 @@ public class TeacherController {
         }
         try {
             List<ScoreRecord> anomalies = new ArrayList<>();
-            for (ScoreRecord row : latestPerStudent(scoreRecordService.getScoresByCourseId(courseId))) {
+            for (ScoreRecord row : scoreRecordService.getScoresByCourseId(courseId)) {
                 Double s = row.getScore();
                 if (s != null && s < threshold) {
                     anomalies.add(row);
@@ -1850,7 +1867,7 @@ public class TeacherController {
             return deny;
         }
         try {
-            List<ScoreRecord> all = latestPerStudent(scoreRecordService.getScoresByCourseId(courseId));
+            List<ScoreRecord> all = scoreRecordService.getScoresByCourseId(courseId);
             int p = page == null || page < 1 ? 1 : page;
             int s = size == null || size < 1 ? 20 : size;
             int from = Math.min((p - 1) * s, all.size());
@@ -1888,7 +1905,7 @@ public class TeacherController {
         try {
             List<Map<String, Object>> recommendations = new ArrayList<>();
             // 根据课程成绩分布推荐学习建议（一人一行，避免同一名学生被数多次）
-            List<ScoreRecord> scores = latestPerStudent(scoreRecordService.getScoresByCourseId(courseId));
+            List<ScoreRecord> scores = scoreRecordService.getScoresByCourseId(courseId);
             if (scores.isEmpty()) {
                 return ApiResponse.success(recommendations);
             }
@@ -2038,24 +2055,21 @@ public class TeacherController {
      * {@code ClassCastException}。留一份实现，两个入口共用 —— 否则同一位老师
      * 从两个按钮点进去会看到两个不同的平均分。
      *
-     * <p>口径：数据源是 {@code score_record}（教师自己的录入暂存表），
-     * 并先用 {@link #latestPerStudent} 收敛成"一人一行／取学期最大的那次录入"——
-     * 与学生端和预警引擎"每门课取期末已录入的最新一次"是同一套收敛方式，
-     * 所以这里的班额、及格人数与预警里的人数不会各说各话。
-     * 唯一不复用 {@link ScoreCaliber} 的地方是它要求 {@code scores} 表的
-     * {@code final_score IS NOT NULL}（"期末未录入"整行排除），而教师看的是
-     * 自己录进来的分数本身，期末/平时还没填也要能统计。
+     * <p>口径：数据源是权威表 {@code scores} 的权威投影 —— 它本身已经
+     * "每门课每生取期末已录入的最新一次"，所以"一人一行"这件事在取数时就完成了
+     * （W36 之前是本方法在 Java 里用 {@code latestPerStudent} 手工收敛，因为那时读的是
+     * {@code score_record} 的流水行）。班额、及格人数与预警里的人数因此天然同源。
      *
      * <p>{@code score} 为 NULL 的行（未录入）不计入任何一档，也**不当作 0 分**：
-     * 当成 0 分会凭空多出一批"不及格"，与前端"待录入"的展示口径冲突。
+     * 当成 0 分会凭空多出一批"不及格"。
      *
      * <p>{@code passRate} / {@code excellentRate} 是 <b>0~1 的小数</b>（与
      * {@code /classes/{classId}/analysis} 一致），不是百分数；标准差是总体标准差
      * （分母为 n，与 {@code /scores/anomalies} 的 2σ 判定同一套）。
      */
     private Map<String, Object> buildCourseAnalysis(Long courseId) {
-        // 先去重再统计：一人一行，班额/平均分/标准差才与预警口径一致
-        List<ScoreRecord> rows = latestPerStudent(scoreRecordService.getScoresByCourseId(courseId));
+        // 权威投影已是一人一行（每门课每生取期末已录入的最新一次），无需再在 Java 里去重。
+        List<ScoreRecord> rows = scoreRecordService.getScoresByCourseId(courseId);
         Course course = courseService.getById(courseId);
 
         List<Double> scores = new ArrayList<>();
@@ -2137,54 +2151,6 @@ public class TeacherController {
     }
 
     /**
-     * 同一名学生的一门课只保留**最新一次**录入（学期号最大；学期为空视为最早，
-     * 并列时取 id 大的那个）。
-     *
-     * <p>统计类接口必须先去重，否则同一个人的多个批次会被重复计入：
-     * 司明在高等数学下有三行（第 3/4/5 学期，87 → 71.5 → 56.5），
-     * 不去重的话——课程平均分把他算三遍、标准差被这三行撑大、
-     * "低于 60 分的名单"里他出现三次、班额显示 26 人（实际 24 人）。
-     * 同样的数字在预警引擎那边（{@link ScoreCaliber}：每门课取期末已录入的
-     * 最新一次）只算一次，两处必然对不上。
-     *
-     * <p>列表明细接口（{@code /scores}、{@code /scores/by-class}、{@code /enrollments}）
-     * 刻意**不**去重：那是"录入了哪些批次"的台账，每一行都要能单独改分/删分。
-     * 只有统计才收敛到一人一行。
-     *
-     * <p>键带上 courseId 是防御性的：万一将来有人把多门课的行一起传进来，
-     * 不会把"同一学生在另一门课的最新成绩"当成这门课的。
-     */
-    private static List<ScoreRecord> latestPerStudent(List<ScoreRecord> rows) {
-        Map<String, ScoreRecord> best = new java.util.LinkedHashMap<>();
-        for (ScoreRecord row : rows) {
-            if (row.getStudentId() == null) continue;
-            String key = row.getCourseId() + "#" + row.getStudentId();
-            ScoreRecord kept = best.get(key);
-            if (kept == null || isLater(row, kept)) {
-                best.put(key, row);
-            }
-        }
-        return new ArrayList<>(best.values());
-    }
-
-    private static boolean isLater(ScoreRecord a, ScoreRecord b) {
-        int sa = semesterNo(a.getSemester());
-        int sb = semesterNo(b.getSemester());
-        if (sa != sb) return sa > sb;
-        return a.getId() != null && b.getId() != null && a.getId() > b.getId();
-    }
-
-    /** 学期列是 varchar，必须按数值比，否则 "10" &lt; "2"。空/非数字按 0（最早）。 */
-    private static int semesterNo(String semester) {
-        if (semester == null) return 0;
-        try {
-            return Integer.parseInt(semester.trim());
-        } catch (NumberFormatException e) {
-            return 0;
-        }
-    }
-
-    /**
      * 检测成绩异常
      */
     @GetMapping("/scores/anomalies")
@@ -2197,7 +2163,7 @@ public class TeacherController {
             // 先把"未录入"的行剔出去再算平均分与标准差：把它们当 0 分会把均值
             // 整体拉低、标准差抬高，判定阈值随之虚高 —— 结果是"正常偏低的学生"
             // 反而被判成异常，真正异常的却因为阈值太宽被漏掉。
-            List<ScoreRecord> rows = latestPerStudent(scoreRecordService.getScoresByCourseId(course_id));
+            List<ScoreRecord> rows = scoreRecordService.getScoresByCourseId(course_id);
             List<Double> values = new ArrayList<>();
             for (ScoreRecord row : rows) {
                 if (row.getScore() != null) values.add(row.getScore());
@@ -2230,16 +2196,23 @@ public class TeacherController {
     }
 
     /**
-     * 删除成绩（仅限录入该成绩的教师）
+     * 删除成绩（仅限该成绩所属课程的授课教师）。
+     *
+     * <p>W36：归属判据由"录入该成绩的教师"（{@code score_record.teacher_id}）改为
+     * "这门课是谁教的"（{@code scores.course_id → courses.teacher_id}）—— {@code scores}
+     * 表没有 teacher_id，且一门课的归属本来就记在课程上。
      */
     @DeleteMapping("/scores/{scoreId}")
     public ApiResponse<Object> deleteScore(@PathVariable Long scoreId,
                                             HttpServletRequest request) {
-        Long requestUserId = getUserIdFromGateway(request);
         ScoreRecord record = scoreRecordService.getById(scoreId);
-        if (record != null && record.getTeacherId() != null
-                && !record.getTeacherId().equals(requestUserId) && !isAdmin(request)) {
-            return ApiResponse.error(403, "无权删除其他教师录入的成绩");
+        if (record == null) {
+            // 不存在的 id 一律 404（W7），不为"归属无从谈起"回 403 泄漏它存不存在。
+            return ApiResponse.notFound("成绩记录不存在");
+        }
+        ApiResponse<Object> deny = denyUnlessMyCourse(record.getCourseId(), request, "只能删除本人所授课程的成绩");
+        if (deny != null) {
+            return deny;
         }
         try {
             // 2026-10-03（W7）：0 行 = 该 id 不存在（此前回「成绩删除成功」）
@@ -2256,8 +2229,11 @@ public class TeacherController {
      *
      * <p><b>2026-10-04（W12）补归属闸</b>：单条 {@code DELETE /scores/{scoreId}} 一直有
      * "只能删自己录的"这道闸，而这条**按 id 列表**的批量版一道都没有 —— 同一个资源、
-     * 两个入口、两套口径。传别人的 id 进来就删掉了别人的成绩。现在逐条比
-     * {@code score_record.teacher_id}，有一条不是本人录的就整批拒绝。
+     * 两个入口、两套口径。传别人的 id 进来就删掉了别人的成绩。
+     *
+     * <p>W36：逐条比的对象由 {@code score_record.teacher_id} 改为
+     * {@code scores.course_id → courses.teacher_id}（同 {@link #deleteScore}）。
+     * 有一条不属于本人课程的就整批拒绝。
      */
     @PostMapping("/scores/batch-delete")
     public ApiResponse<Object> batchDeleteScores(@RequestBody List<Long> scoreIds, HttpServletRequest request) {
@@ -2851,12 +2827,13 @@ public class TeacherController {
     }
 
     /**
-     * 这批成绩是不是**本人录的**。
+     * 这批成绩是不是**本人课程里的**。
      *
-     * <p>用于 {@code /scores/batch-delete} 这类**按 id 列表下手**的路径 —— 逐条比
-     * {@code score_record.teacher_id}，有一条不是本人录的就整批拒绝（不做"部分成功"：
-     * 一半写进去一半没写，调用方无法知道到底发生了什么）。
-     * id 在库里查不到时**不算通过**（不存在 ≠ 属于本人）。
+     * <p>用于 {@code /scores/batch-delete} 这类**按 id 列表下手**的路径 —— 逐条经
+     * {@code scores.course_id} 找到课程、比 {@code courses.teacher_id}（W36 之前比的
+     * 是 {@code score_record.teacher_id}，那张表已不是教师端数据源），有一条不属于就整批
+     * 拒绝（不做"部分成功"：一半写进去一半没写，调用方无法知道到底发生了什么）。
+     * id 在库里查不到、或它所属的课程查不到时**不算通过**（不存在 ≠ 属于本人）。
      */
     private boolean allScoresAreMine(List<Long> scoreIds, HttpServletRequest request) {
         if (scoreIds == null || scoreIds.isEmpty()) {
@@ -2871,7 +2848,12 @@ public class TeacherController {
                 return false;
             }
             ScoreRecord record = scoreRecordService.getById(scoreId);
-            if (record == null || record.getTeacherId() == null || !record.getTeacherId().equals(me)) {
+            if (record == null || record.getCourseId() == null) {
+                return false;
+            }
+            // W36：归属改判课程（scores 无 teacher_id）：该成绩所属课程的授课教师必须是本人。
+            Course course = courseService.getById(record.getCourseId());
+            if (course == null || course.getTeacherId() == null || !course.getTeacherId().equals(me)) {
                 return false;
             }
         }

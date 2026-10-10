@@ -471,6 +471,11 @@ CREATE TABLE IF NOT EXISTS `scores` (
     `score_total` decimal(5,2) NOT NULL,
     `grade` varchar(20) DEFAULT NULL,
     `grade_point` decimal(5,2) DEFAULT NULL,
+    -- 2026-10-10（W36）加：教师录入/导入的「备注」。
+    -- 此前备注只存在 score_record（教师录入暂存表），scores 没有这一列。
+    -- 教师成绩册/导出/模板都带「备注」，废弃暂存表前必须落到权威表，
+    -- 否则备注会在写入时被静默丢弃（本仓明令禁止的"提交体丢字段"）。
+    `remark` varchar(500) DEFAULT NULL,
     `reason_for_change` varchar(500) DEFAULT NULL,
     `modified_by` bigint DEFAULT NULL,
     `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,

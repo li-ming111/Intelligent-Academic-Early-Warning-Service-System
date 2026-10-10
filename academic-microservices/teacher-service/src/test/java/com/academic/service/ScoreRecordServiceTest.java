@@ -4,6 +4,7 @@ import com.academic.common.entity.Score;
 import com.academic.common.entity.ScoreRecord;
 import com.academic.mapper.ScoreMapper;
 import com.academic.mapper.ScoreRecordMapper;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -18,310 +19,199 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
+/**
+ * {@link ScoreRecordService} 的读写路径（W36，2026-10-10 改写）。
+ *
+ * <p>本轮的实质变化：教师端读写的数据源由 {@code score_record}（暂存表）改为
+ * {@code scores}（权威表）。所以本测试钉住的正是"落库目标是 {@code scores}、不再碰
+ * {@code score_record}"以及口径细节（学期/学年推导、final_score 补齐、改分不抹平时分）。
+ */
 @ExtendWith(MockitoExtension.class)
 class ScoreRecordServiceTest {
 
-    @Mock
-    private ScoreRecordMapper scoreRecordMapper;
+    @Mock private ScoreRecordMapper scoreRecordMapper;
+    @Mock private ScoreMapper scoreMapper;
+    @Mock private ScoreAuditLogService auditLogService;
 
-    @Mock
-    private ScoreMapper scoreMapper;
+    @InjectMocks private ScoreRecordService scoreRecordService;
 
-    @Mock
-    private ScoreAuditLogService auditLogService;
-
-    @InjectMocks
-    private ScoreRecordService scoreRecordService;
-
-    // ------------------------------------------------------------------
-    // 读路径（原有用例）
-    // ------------------------------------------------------------------
+    // ------------------------------------------------------------------ 读（委派给权威投影）
 
     @Test
-    void testGetScoresByClassName() {
-        ScoreRecord record = new ScoreRecord();
-        record.setId(1L);
-        record.setStudentName("张三");
+    @DisplayName("读按班级名 → 委派权威投影，不再查 score_record")
+    void readsDelegateToAuthoritativeProjection() {
+        ScoreRecord r = new ScoreRecord();
+        r.setStudentName("张三");
+        when(scoreRecordMapper.listLatestValidByClassName("计科2306班")).thenReturn(List.of(r));
 
-        when(scoreRecordMapper.getScoresByClassName("软件工程2101")).thenReturn(List.of(record));
-
-        List<ScoreRecord> results = scoreRecordService.getScoresByClassName("软件工程2101");
-
-        assertEquals(1, results.size());
-        assertEquals("张三", results.get(0).getStudentName());
-        verify(scoreRecordMapper).getScoresByClassName("软件工程2101");
+        assertEquals("张三", scoreRecordService.getScoresByClassName("计科2306班").get(0).getStudentName());
+        verify(scoreRecordMapper).listLatestValidByClassName("计科2306班");
     }
 
     @Test
-    void testGetScoresByClassName_EmptyClass() {
-        when(scoreRecordMapper.getScoresByClassName("不存在的班级")).thenReturn(Collections.emptyList());
-
-        assertTrue(scoreRecordService.getScoresByClassName("不存在的班级").isEmpty());
+    @DisplayName("按课程 id 读 → 委派权威投影；带 teacher_id 的重载同源")
+    void readsByCourseDelegate() {
+        when(scoreRecordMapper.listLatestValidByCourse(1L)).thenReturn(List.of());
+        assertTrue(scoreRecordService.getScoresByCourseId(1L).isEmpty());
+        assertTrue(scoreRecordService.getScoresByCourseIdAndTeacherId(1L, 29L).isEmpty());
+        verify(scoreRecordMapper, times(2)).listLatestValidByCourse(1L);
     }
 
     @Test
-    void testGetScoresByTeacherId() {
-        ScoreRecord record = new ScoreRecord();
-        record.setStudentName("李四");
-        when(scoreRecordMapper.getScoresByTeacherId(10L)).thenReturn(List.of(record));
-
-        assertEquals("李四", scoreRecordService.getScoresByTeacherId(10L).get(0).getStudentName());
+    @DisplayName("按 scores.id 取行 → 委派 selectScoreById")
+    void getByIdDelegates() {
+        ScoreRecord r = new ScoreRecord();
+        r.setId(11L);
+        when(scoreRecordMapper.selectScoreById(11L)).thenReturn(r);
+        assertEquals(11L, scoreRecordService.getById(11L).getId());
     }
 
-    @Test
-    void testGetScoresByStudentId() {
-        ScoreRecord record = new ScoreRecord();
-        record.setScore(78.0);
-        when(scoreRecordMapper.getScoresByStudentId("100")).thenReturn(List.of(record));
-
-        assertEquals(78.0, scoreRecordService.getScoresByStudentId(100L).get(0).getScore());
-    }
+    // ------------------------------------------------------------------ 写（直落 scores）
 
     @Test
-    void testExportScores() {
-        when(scoreRecordMapper.getScoresByCourseId(10L)).thenReturn(Collections.emptyList());
-
-        assertTrue(scoreRecordService.exportScores(10L).isEmpty());
-    }
-
-    // ------------------------------------------------------------------
-    // 写入路径：录 / 改 / 删
-    // ------------------------------------------------------------------
-
-    /** 录一门新课（调用方未指定学期）→ semester/year 必须真正落库，且 scores 行补齐 final_score。 */
-    @Test
-    void testSaveScores_newRecord_persistsSemesterYearAndFinalScore() {
-        when(scoreRecordMapper.selectLatestByStudentAndCourse(3L, 1L)).thenReturn(null);
+    @DisplayName("录一门新课（未指定学期）：直接 INSERT scores，学期/学年/final_score 都补齐")
+    void saveScores_newRow_insertsIntoAuthoritativeTable() {
         when(scoreMapper.selectMaxSemester(3L)).thenReturn(5);
         when(scoreRecordMapper.selectStudentNo(3L)).thenReturn("2023020616");
         when(scoreMapper.selectByStudentCourseSemester(3L, 1L, "5")).thenReturn(null);
-        when(scoreRecordMapper.insertScore(any(ScoreRecord.class))).thenReturn(1);
         when(scoreMapper.insert(any(Score.class))).thenReturn(1);
 
         scoreRecordService.saveScores(List.of(scoreData(3L, 1L, 92.0, null)), 7L);
 
-        // 暂存行：学期/学年必须写进去（旧实现是 insert 之后才 set，SQL 里又没有这两列 → 恒为 NULL）
-        ArgumentCaptor<ScoreRecord> recCap = ArgumentCaptor.forClass(ScoreRecord.class);
-        verify(scoreRecordMapper).insertScore(recCap.capture());
-        assertEquals("5", recCap.getValue().getSemester());
-        // 学年 = 学号前四位 + (学期-1) DIV 2 = 2023 + 2 = 2025
-        assertEquals(2025, recCap.getValue().getYear());
-        // 派生列按权威口径（ScoreSyncSupport）折算
-        assertEquals("A", recCap.getValue().getGrade());
-        assertEquals(4.0, recCap.getValue().getGradePoint());
-        assertEquals(1, recCap.getValue().getScoreLevel());
-
-        // 权威行：final_score 必须补齐，否则该行被"期末未录入"口径整体排除，永远不参与预警
-        ArgumentCaptor<Score> scoreCap = ArgumentCaptor.forClass(Score.class);
-        verify(scoreMapper).insert(scoreCap.capture());
-        Score saved = scoreCap.getValue();
-        assertEquals("5", saved.getSemester());
-        assertEquals(2025, saved.getYear());
-        assertNotNull(saved.getFinalScore(), "final_score 为空会让这一行被挂科口径整体排除");
-        assertEquals(0, new BigDecimal("92.0").compareTo(saved.getFinalScore()));
+        ArgumentCaptor<Score> cap = ArgumentCaptor.forClass(Score.class);
+        verify(scoreMapper).insert(cap.capture());
+        Score saved = cap.getValue();
+        assertEquals("5", saved.getSemester(), "未指定学期 → 取该生最大学期");
+        assertEquals(2025, saved.getYear(), "学年 = 学号前四位 2023 + (5-1)/2");
+        assertEquals(0, new BigDecimal("92.0").compareTo(saved.getScoreTotal()));
         assertEquals("A", saved.getGrade());
         assertEquals(0, BigDecimal.valueOf(4.0).compareTo(saved.getGradePoint()));
+        assertNotNull(saved.getFinalScore(), "final_score 必须补齐，否则被『期末未录入』口径整体排除");
+        assertEquals(0, new BigDecimal("92.0").compareTo(saved.getFinalScore()));
+        assertEquals("测试", saved.getRemark(), "备注必须落到 scores.remark");
+        assertEquals(7L, saved.getModifiedBy());
+        // 一次 saveScores = 一次 insert（早先是"先写 score_record 再二跳进 scores"，两次写）
+        verify(scoreMapper, times(1)).insert(any(Score.class));
     }
 
-    /** 重修：调用方显式指定学期时必须按三元组查重，新增一行而不是覆盖旧学期。 */
     @Test
-    void testSaveScores_retake_usesTripleKeyAndKeepsOldSemesterRow() {
-        ScoreRecord oldSemesterRow = new ScoreRecord();
-        oldSemesterRow.setId(50L);
-        oldSemesterRow.setSemester("3");
-
-        when(scoreRecordMapper.selectLatestByStudentAndCourse(3L, 1L)).thenReturn(oldSemesterRow);
-        when(scoreRecordMapper.selectByStudentCourseSemester(3L, 1L, "6")).thenReturn(null);
+    @DisplayName("重修（显式指定学期）：按三元组在 scores 查重，新增一行")
+    void saveScores_retake_usesTripleKey() {
         when(scoreRecordMapper.selectStudentNo(3L)).thenReturn("2023020616");
-        when(scoreRecordMapper.insertScore(any(ScoreRecord.class))).thenReturn(1);
         when(scoreMapper.selectByStudentCourseSemester(3L, 1L, "6")).thenReturn(null);
         when(scoreMapper.insert(any(Score.class))).thenReturn(1);
 
         scoreRecordService.saveScores(List.of(scoreData(3L, 1L, 66.0, "6")), 7L);
 
-        // 必须按三元组查，而不是沿用学期 3 的那一行
-        verify(scoreRecordMapper).selectByStudentCourseSemester(3L, 1L, "6");
-        verify(scoreRecordMapper, never()).updateScore(any(ScoreRecord.class));
-
-        ArgumentCaptor<ScoreRecord> recCap = ArgumentCaptor.forClass(ScoreRecord.class);
-        verify(scoreRecordMapper).insertScore(recCap.capture());
-        assertEquals("6", recCap.getValue().getSemester());
+        verify(scoreMapper).selectByStudentCourseSemester(3L, 1L, "6");
+        verify(scoreMapper, never()).selectMaxSemester(anyLong());
+        ArgumentCaptor<Score> cap = ArgumentCaptor.forClass(Score.class);
+        verify(scoreMapper).insert(cap.capture());
+        assertEquals("6", cap.getValue().getSemester());
     }
 
-    /** 改分：regular_score / final_score 不能被抹掉，等级必须跟着新分数重算。 */
     @Test
-    void testUpdateScore_keepsRegularAndFinalAndRecomputesGrade() {
-        ScoreRecord oldRecord = new ScoreRecord();
-        oldRecord.setId(1L);
-        oldRecord.setStudentId(3L);
-        oldRecord.setCourseId(1L);
-        oldRecord.setSemester("5");
-        oldRecord.setScore(55.0);
-        oldRecord.setRegularScore(80.0);
-        oldRecord.setFinalScore(90.0);
+    @DisplayName("已有该三元组 → UPDATE scores（不是新增）")
+    void saveScores_existing_updates() {
+        Score existing = new Score();
+        existing.setId(11L);
+        existing.setStudentId(3L);
+        existing.setCourseId(1L);
+        existing.setSemester("5");
+        when(scoreRecordMapper.selectStudentNo(3L)).thenReturn("2023020616");
+        when(scoreMapper.selectByStudentCourseSemester(3L, 1L, "5")).thenReturn(existing);
+        when(scoreMapper.updateById(any(Score.class))).thenReturn(1);
 
+        scoreRecordService.saveScores(List.of(scoreData(3L, 1L, 80.0, "5")), 7L);
+
+        verify(scoreMapper).updateById(any(Score.class));
+        verify(scoreMapper, never()).insert(any(Score.class));
+    }
+
+    @Test
+    @DisplayName("改分：更新 scores 一行，重算等级/绩点，保留平时分与期末分，并写审计")
+    void updateScore_updatesAuthoritativeRowAndAudits() {
         Score existing = new Score();
         existing.setId(11L);
         existing.setStudentId(3L);
         existing.setCourseId(1L);
         existing.setSemester("5");
         existing.setScoreTotal(new BigDecimal("55.0"));
-        existing.setGrade("D");
-        existing.setGradePoint(BigDecimal.ZERO);
         existing.setRegularScore(new BigDecimal("80.0"));
         existing.setFinalScore(new BigDecimal("90.0"));
+        existing.setGrade("D");
 
-        when(scoreRecordMapper.selectById(1L)).thenReturn(oldRecord);
-        when(scoreRecordMapper.updateScore(any(ScoreRecord.class))).thenReturn(1);
-        when(scoreMapper.selectByStudentCourseSemester(3L, 1L, "5")).thenReturn(existing);
+        when(scoreMapper.selectById(11L)).thenReturn(existing);
+        when(scoreRecordMapper.selectStudentName(3L)).thenReturn("司明");
+        when(scoreRecordMapper.selectCourseTeacherId(1L)).thenReturn(29L);
         when(scoreMapper.updateById(any(Score.class))).thenReturn(1);
 
-        scoreRecordService.updateScore(1L, 62.0, "补考通过", "教师");
+        scoreRecordService.updateScore(11L, 62.0, "补考通过", "教师");
 
-        // 暂存行：派生列跟着新分数重算，且不携带 regular/final（由 mapper 的 <if> 守空放行）
-        ArgumentCaptor<ScoreRecord> recCap = ArgumentCaptor.forClass(ScoreRecord.class);
-        verify(scoreRecordMapper).updateScore(recCap.capture());
-        ScoreRecord sent = recCap.getValue();
-        assertEquals("C", sent.getGrade());
-        assertEquals(1.0, sent.getGradePoint());
-        assertEquals(62.0, sent.getScoreTotal());
-        assertNull(sent.getRegularScore());
-        assertNull(sent.getFinalScore());
-
-        // 权威行：总评和等级变了，平时分/期末分原封不动
-        ArgumentCaptor<Score> scoreCap = ArgumentCaptor.forClass(Score.class);
-        verify(scoreMapper).updateById(scoreCap.capture());
-        Score saved = scoreCap.getValue();
+        ArgumentCaptor<Score> cap = ArgumentCaptor.forClass(Score.class);
+        verify(scoreMapper).updateById(cap.capture());
+        Score saved = cap.getValue();
         assertEquals(0, new BigDecimal("62.0").compareTo(saved.getScoreTotal()));
-        assertEquals("C", saved.getGrade());
+        assertEquals("C", saved.getGrade(), "等级必须跟着新分数重算");
+        assertEquals(0, BigDecimal.valueOf(1.0).compareTo(saved.getGradePoint()));
         assertNotNull(saved.getRegularScore(), "改分不该抹掉平时分");
         assertEquals(0, new BigDecimal("80.0").compareTo(saved.getRegularScore()));
         assertNotNull(saved.getFinalScore(), "final_score 被抹掉会让这一行从挂科统计里消失");
         assertEquals(0, new BigDecimal("90.0").compareTo(saved.getFinalScore()));
+        assertEquals("补考通过", saved.getRemark());
 
-        // 审计日志：ScoreAuditLogService.record() 只从 newRecord 里取**归属**
-        // （studentId / studentName / courseId / teacherId）和**新旧分数**，
-        // 它不读 grade / grade_point / score_total / remark。
-        // 所以不能拿上面那个裸对象 `sent` 当预期 —— 生产代码故意另起了一个
-        // 只带归属信息的新对象：裸对象没有 student_id，而 score_audit_log.student_id
-        // 是 NOT NULL，直接塞进去会插入失败 → 整个事务回滚 → 接口表面 500、
-        // 实际一分都没改。这里断言的是"审计行最终会被写成什么"。
-        ArgumentCaptor<ScoreRecord> auditNewCap = ArgumentCaptor.forClass(ScoreRecord.class);
-        verify(auditLogService).record(same(oldRecord), auditNewCap.capture(),
-                eq("补考通过"), eq("教师"));
-        ScoreRecord audited = auditNewCap.getValue();
-        assertEquals(3L, audited.getStudentId(), "student_id 是 NOT NULL，不能为 null");
+        // 审计：旧分数取自改分前那一行，归属取自课程/档案
+        ArgumentCaptor<ScoreRecord> oldCap = ArgumentCaptor.forClass(ScoreRecord.class);
+        ArgumentCaptor<ScoreRecord> newCap = ArgumentCaptor.forClass(ScoreRecord.class);
+        verify(auditLogService).record(oldCap.capture(), newCap.capture(), eq("补考通过"), eq("教师"));
+        assertEquals(55.0, oldCap.getValue().getScore());
+        ScoreRecord audited = newCap.getValue();
+        assertEquals(3L, audited.getStudentId(), "student_id 是 NOT NULL");
         assertEquals(1L, audited.getCourseId());
-        assertEquals(62.0, audited.getScore(), "审计行的新分数必须是被写入的那个分数");
-        assertEquals(55.0, oldRecord.getScore(), "旧分数取自改分前那一行");
+        assertEquals(29L, audited.getTeacherId(), "teacher_id 是 NOT NULL，取课程授课教师");
+        assertEquals(62.0, audited.getScore());
     }
 
-    /** 删单条：连带删掉对应学期的权威行。 */
     @Test
-    void testRemoveById_deletesMatchingAuthoritativeRow() {
-        ScoreRecord sr = new ScoreRecord();
-        sr.setId(1L);
-        sr.setStudentId(3L);
-        sr.setCourseId(1L);
-        sr.setSemester("5");
+    @DisplayName("改一个不存在的 scores.id → 抛异常（不假装成功、不留审计）")
+    void updateScore_missingRow_throws() {
+        when(scoreMapper.selectById(99L)).thenReturn(null);
+        assertThrows(IllegalArgumentException.class, () -> scoreRecordService.updateScore(99L, 60.0, "x", "教师"));
+        verify(auditLogService, never()).record(any(), any(), any(), any());
+    }
 
-        Score authoritative = new Score();
-        authoritative.setId(11L);
+    // ------------------------------------------------------------------ 删（scores）
 
-        when(scoreRecordMapper.selectById(1L)).thenReturn(sr);
-        when(scoreMapper.selectByStudentCourseSemester(3L, 1L, "5")).thenReturn(authoritative);
+    @Test
+    @DisplayName("删单条：直接删 scores 一行，返回影响行数")
+    void removeById_deletesAuthoritativeRow() {
         when(scoreMapper.deleteById(11L)).thenReturn(1);
-        when(scoreRecordMapper.deleteById(1L)).thenReturn(1);
-
-        // 2026-10-03（W7）：删到行时返回 1（调用方据此回 success）
-        assertEquals(1, scoreRecordService.removeById(1L));
-
-        verify(scoreMapper).deleteById(11L);
-        verify(scoreRecordMapper).deleteById(1L);
+        assertEquals(1, scoreRecordService.removeById(11L));
+        verify(scoreMapper, times(1)).deleteById(11L);
     }
 
-    /**
-     * 2026-10-03（W7）：删一个不存在的 id —— mapper 返回 0 行，服务层如实返回 0，
-     * 控制器据此回 404（HTTP 200 + body code 404）。这是本轮修的那族"假成功"。
-     */
     @Test
-    void testRemoveById_nonExistentId_returnsZero() {
-        when(scoreRecordMapper.selectById(99L)).thenReturn(null);
-        when(scoreRecordMapper.deleteById(99L)).thenReturn(0);
-
-        assertEquals(0, scoreRecordService.removeById(99L),
-                "不存在的 id 必须返回 0，不能假装删掉了");
-
-        verify(scoreMapper, never()).deleteById(anyLong());
+    @DisplayName("删不存在的 id → 返回 0（控制器据此回 404）")
+    void removeById_nonExistent_returnsZero() {
+        when(scoreMapper.deleteById(99L)).thenReturn(0);
+        assertEquals(0, scoreRecordService.removeById(99L));
     }
 
-    /** 删单条但学期为空：不猜、不乱删，只删录入记录并留下 warn。 */
     @Test
-    void testRemoveById_nullSemester_doesNotGuessWhichAuthoritativeRow() {
-        ScoreRecord sr = new ScoreRecord();
-        sr.setId(3L);
-        sr.setStudentId(4L);
-        sr.setCourseId(7L);
-        sr.setSemester(null);
-
-        when(scoreRecordMapper.selectById(3L)).thenReturn(sr);
-        when(scoreRecordMapper.deleteById(3L)).thenReturn(1);
-
-        assertEquals(1, scoreRecordService.removeById(3L));
-
-        verify(scoreMapper, never()).deleteById(anyLong());
-        verify(scoreMapper, never()).selectByStudentCourseSemester(anyLong(), anyLong(), any());
-        verify(scoreRecordMapper).deleteById(3L);
-    }
-
-    /** 批量删除必须和单条一样连带删权威行 —— 旧实现只删暂存表，scores 里留下孤儿行。 */
-    @Test
-    void testRemoveByIds_alsoDeletesAuthoritativeRows() {
-        ScoreRecord a = new ScoreRecord();
-        a.setId(1L);
-        a.setStudentId(3L);
-        a.setCourseId(1L);
-        a.setSemester("5");
-        ScoreRecord b = new ScoreRecord();
-        b.setId(2L);
-        b.setStudentId(4L);
-        b.setCourseId(2L);
-        b.setSemester("6");
-
-        Score scoreA = new Score();
-        scoreA.setId(11L);
-        Score scoreB = new Score();
-        scoreB.setId(22L);
-
-        when(scoreRecordMapper.selectById(1L)).thenReturn(a);
-        when(scoreRecordMapper.selectById(2L)).thenReturn(b);
-        when(scoreMapper.selectByStudentCourseSemester(3L, 1L, "5")).thenReturn(scoreA);
-        when(scoreMapper.selectByStudentCourseSemester(4L, 2L, "6")).thenReturn(scoreB);
+    @DisplayName("批量删：逐个删 scores 行，累加影响行数")
+    void removeByIds_deletesEach() {
         when(scoreMapper.deleteById(11L)).thenReturn(1);
         when(scoreMapper.deleteById(22L)).thenReturn(1);
-        when(scoreRecordMapper.deleteByIds(List.of(1L, 2L))).thenReturn(2);
-
-        assertEquals(2, scoreRecordService.removeByIds(Arrays.asList(1L, 2L)));
-
+        assertEquals(2, scoreRecordService.removeByIds(Arrays.asList(11L, 22L)));
         verify(scoreMapper).deleteById(11L);
         verify(scoreMapper).deleteById(22L);
-        verify(scoreRecordMapper).deleteByIds(List.of(1L, 2L));
-    }
-
-    /** 2026-10-03（W7）：批量删但一个 id 都不存在 —— 返回 0，控制器回 404。 */
-    @Test
-    void testRemoveByIds_allMissing_returnsZero() {
-        when(scoreRecordMapper.selectById(97L)).thenReturn(null);
-        when(scoreRecordMapper.selectById(98L)).thenReturn(null);
-        when(scoreRecordMapper.deleteByIds(List.of(97L, 98L))).thenReturn(0);
-
-        assertEquals(0, scoreRecordService.removeByIds(List.of(97L, 98L)));
     }
 
     @Test
-    void testRemoveByIds_emptyListIsNoop() {
-        scoreRecordService.removeByIds(Collections.emptyList());
-        verifyNoInteractions(scoreRecordMapper, scoreMapper);
+    @DisplayName("批量删空列表 → 不做任何事")
+    void removeByIds_emptyIsNoop() {
+        assertEquals(0, scoreRecordService.removeByIds(Collections.emptyList()));
+        verifyNoInteractions(scoreMapper, scoreRecordMapper);
     }
 
     private static Map<String, Object> scoreData(Long studentId, Long courseId, double score, String semester) {

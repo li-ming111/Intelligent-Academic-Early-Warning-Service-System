@@ -7,142 +7,128 @@ import org.apache.ibatis.annotations.*;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * 教师端成绩读投影（数据源 = 权威表 {@code scores}）。
+ *
+ * <p>2026-10-10（W36）：本接口过去叫 {@code ScoreRecordMapper}，读的是 {@code score_record}
+ * （教师录入暂存表），与辅导员 / 学生 / 预警读的 {@code scores} 分叉。现在读端一律改走
+ * {@link ScoreCaliber#LATEST_VALID_SCORE}（每门课每生取最新一次有效成绩），
+ * 返回类型仍是 {@link ScoreRecord} 以便控制器消费面不变。
+ *
+ * <p>名字里的 "Record" 是历史残留（对应的实体叫 {@code ScoreRecord}），
+ * 数据源已经不是 {@code score_record} 了。
+ */
 public interface ScoreRecordMapper {
-    @Select("SELECT * FROM score_record WHERE id = #{id}")
-    ScoreRecord selectById(Long id);
 
     /**
-     * 某门课的成绩单，附带学生**学号**（{@code studentNo}）。
+     * 权威投影：来源是 {@code scores}，每门课每生取「最新一次有效成绩」
+     * （{@code final_score IS NOT NULL}），并补齐姓名 / 学号 / 班级 / 课程名 / 五级档。
      *
-     * <p>2026-10-04（W19）：成绩单导出的第一列要显示学号，而 {@code score_record}
-     * 里只有 {@code student_id}（= {@code student_profile.id}），学号在
-     * {@code student_profile.student_id} 上 —— 顺带 JOIN 出来，省得前端再反查。
+     * <p>{@code semester} 是 {@code scores} 的 int 列，映射到 {@code ScoreRecord.semester}（String）
+     * 由 MyBatis 按属性类型转换；{@code scoreLevel} 由 {@link ScoreCaliber#SCORE_LEVEL_CASE} 按总评
+     * 派生（{@code scores} 表不存这一列）；{@code score} 与 {@code scoreTotal} 同值，兼容两个消费面。
      *
-     * <p>⚠️ 必须写成 {@code sr.*} 而不是裸 {@code *}：{@code score_record} 与
-     * {@code student_profile} 都有 {@code id/student_id/created_at/updated_at}，
-     * 不限定正表会让结果集出现重名列。
+     * <p><b>刻意不查 {@code credits}/{@code type}</b>：早先这两列是给"选课花名册"那类消费方用的，
+     * 但它们只被 {@link #getScoresByClassId} 与控制器里另起 JOIN 的两处消费，而
+     * {@code ScoreRecord} 实体**没有** {@code credits}/{@code type} 属性 —— {@code courses.credits}
+     * （decimal）映射到实体的 {@code Double} 字段会在 MyBatis 里抛
+     * {@code UnsupportedOperationException: cannot convert BigDecimal to Double}。
+     * 与其在两处各写一遍类型处理器，不如让这条公共投影只取实体真正有的列。
      */
-    @Select("SELECT sr.*, sp.student_id AS studentNo FROM score_record sr "
-          + "LEFT JOIN student_profile sp ON sp.id = sr.student_id "
-          + "WHERE sr.course_id = #{courseId} ORDER BY sr.student_name")
-    List<ScoreRecord> getScoresByCourseId(Long courseId);
+    String LATEST_VALID_SELECT =
+            "SELECT v.id AS id, v.student_id AS studentId, sp.student_id AS studentNo, "
+          + "       sp.name AS studentName, sp.class_name AS className, "
+          + "       v.course_id AS courseId, c.name AS courseName, "
+          + "       v.regular_score AS regularScore, v.final_score AS finalScore, "
+          + "       v.score_total AS scoreTotal, v.score_total AS score, "
+          + "       v.grade AS grade, v.grade_point AS gradePoint, "
+          + "       v.semester AS semester, v.year AS year, v.remark AS remark, "
+          +          ScoreCaliber.SCORE_LEVEL_CASE + " AS scoreLevel "
+          + "  FROM " + ScoreCaliber.LATEST_VALID_SCORE + " v "
+          + "  JOIN student_profile sp ON sp.id = v.student_id "
+          + "  LEFT JOIN courses c ON c.id = v.course_id ";
 
-    @Select("SELECT * FROM score_record WHERE course_id = #{courseId} AND teacher_id = #{teacherId} ORDER BY student_name")
-    List<ScoreRecord> getScoresByCourseIdAndTeacherId(Long courseId, Long teacherId);
-    
-    @Select("SELECT * FROM score_record WHERE student_id = #{studentId}")
-    List<ScoreRecord> getScoresByStudentId(String studentId);
-    
-    @Insert("INSERT INTO score_record(course_id, student_id, teacher_id, student_name, class_name, "
-          + "score, score_total, score_level, grade, grade_point, remark, semester, year) "
-          + "VALUES(#{courseId}, #{studentId}, #{teacherId}, #{studentName}, #{className}, "
-          + "#{score}, #{scoreTotal}, #{scoreLevel}, #{grade}, #{gradePoint}, #{remark}, #{semester}, #{year})")
-    int insertScore(ScoreRecord score);
+    /** 某门课的权威成绩单（每生一行、最新一次有效成绩）。 */
+    @Select(LATEST_VALID_SELECT + "WHERE v.course_id = #{courseId} ORDER BY sp.name")
+    List<ScoreRecord> listLatestValidByCourse(@Param("courseId") Long courseId);
+
+    /** 某班级（按 {@code student_profile.class_id}）的权威成绩单。 */
+    @Select(LATEST_VALID_SELECT + "WHERE sp.class_id = #{classId} ORDER BY sp.name")
+    List<ScoreRecord> listLatestValidByClassId(@Param("classId") Long classId);
 
     /**
-     * 只更新调用方明确提供的字段。
+     * 某班级（按**班级名**）的权威成绩单。
      *
-     * <p>score / score_level / remark 是每次保存都会给的（录入界面的三个输入项）。
-     * 其余字段一律用 {@code <if>} 守空 —— 早期实现写成 {@code SET regular_score = #{regularScore}}
-     * 这种无条件赋值，而 {@code updateScore(Long, Double, String, String)} 那条路径
-     * 只构造了一个只含分数和评语的裸对象，于是改一次分就会把该行的
-     * regular_score / final_score **置空**；final_score 一空，这一行就会被
-     * "期末未录入"的口径整体排除，学生的挂科会从预警里静默消失。
+     * <p>经 {@code classes.name → classes.id → student_profile.class_id}，而不是用
+     * {@code student_profile.class_name} 这个冗余列 —— 后者与 {@code classes.name}
+     * 可能漂移，班级归属的唯一真源是 {@code class_id}。
+     *
+     * <p>{@code classes.name} 没有唯一约束，同名班会同时命中（数据模型上限，见
+     * {@code ClassInfoMapper.countClassesNamedAndOwned}）。
      */
-    @Update("<script>UPDATE score_record <set>"
-          + "score = #{score}, score_level = #{scoreLevel}, remark = #{remark}"
-          + "<if test='scoreTotal != null'>, score_total = #{scoreTotal}</if>"
-          + "<if test='grade != null'>, grade = #{grade}</if>"
-          + "<if test='gradePoint != null'>, grade_point = #{gradePoint}</if>"
-          + "<if test='regularScore != null'>, regular_score = #{regularScore}</if>"
-          + "<if test='finalScore != null'>, final_score = #{finalScore}</if>"
-          + "<if test='semester != null'>, semester = #{semester}</if>"
-          + "<if test='year != null'>, year = #{year}</if>"
-          + "</set> WHERE id = #{id}</script>")
-    int updateScore(ScoreRecord score);
-    
-    @Delete("DELETE FROM score_record WHERE id = #{id}")
-    int deleteScore(Long id);
-    
-    @Delete("DELETE FROM score_record WHERE id = #{id}")
-    int deleteById(Long id);
-    
-    @Delete("<script>DELETE FROM score_record WHERE id IN <foreach item='id' collection='ids' open='(' separator=',' close=')'>#{id}</foreach></script>")
-    int deleteByIds(List<Long> ids);
-    
-    @Select("SELECT sr.*, c.name as course_name, sp.student_id as student_no FROM score_record sr LEFT JOIN courses c ON sr.course_id = c.id LEFT JOIN student_profile sp ON sr.student_id = sp.id WHERE sr.class_name = #{className}")
-    List<ScoreRecord> getScoresByClassName(String className);
-
-    @Select("SELECT sr.*, c.name as course_name, sp.student_id as student_no FROM score_record sr LEFT JOIN courses c ON sr.course_id = c.id LEFT JOIN student_profile sp ON sr.student_id = sp.id WHERE sr.class_name = #{className} AND sr.teacher_id = #{teacherId}")
-    List<ScoreRecord> getScoresByClassNameAndTeacherId(String className, Long teacherId);
-    
-    @Select("SELECT * FROM score_record WHERE teacher_id = #{teacherId} ORDER BY id DESC")
-    List<ScoreRecord> getScoresByTeacherId(Long teacherId);
+    @Select(LATEST_VALID_SELECT + "WHERE sp.class_id IN (SELECT id FROM classes WHERE name = #{className}) ORDER BY sp.name")
+    List<ScoreRecord> listLatestValidByClassName(@Param("className") String className);
 
     /**
-     * 该生该门课已有的最近一条录入记录，用于继承学期。
-     *
-     * <p>{@code LIMIT 1} 与排序都不能省：实测 238 个 (student_id, course_id) 组里有 144 组
-     * 有多于一行，方法返回单个对象时 MyBatis 走的是 {@code selectOne}，
-     * 多行会直接抛 {@code TooManyResultsException} —— 也就是 60% 的组一保存成绩就报错。
-     *
-     * <p>排序先按"学期已知"优先（{@code semester IS NULL} 为 0 排在前），
-     * 再按学期数值倒序。学期列是 varchar，直接 {@code ORDER BY semester DESC} 是字典序
-     * （"10" &lt; "2"），必须 CAST 成数值。
+     * 按 {@code scores.id} 取一行原始成绩（**含**待录入行、含 {@code course_id}）。
+     * 供编辑 / 删除定位与归属判定用 —— 必须能拿到 {@code course_id} 才能按课程归属把关。
      */
-    @Select("SELECT * FROM score_record WHERE student_id = #{studentId} AND course_id = #{courseId} "
-          + "ORDER BY (semester IS NULL), CAST(semester AS UNSIGNED) DESC, id DESC LIMIT 1")
-    ScoreRecord selectLatestByStudentAndCourse(@Param("studentId") Long studentId,
-                                               @Param("courseId") Long courseId);
+    @Select("SELECT s.id, s.student_id AS studentId, s.course_id AS courseId, s.semester, s.year, "
+          + "       s.regular_score AS regularScore, s.final_score AS finalScore, "
+          + "       s.score_total AS scoreTotal, s.grade, s.grade_point AS gradePoint, "
+          + "       s.remark, s.reason_for_change AS reasonForChange, s.modified_by AS modifiedBy "
+          + "  FROM scores s WHERE s.id = #{id}")
+    ScoreRecord selectScoreById(@Param("id") Long id);
+
+    /** 某门课的授课教师（{@code courses.teacher_id} = {@code users.id}）。查不到返回 null。 */
+    @Select("SELECT teacher_id FROM courses WHERE id = #{courseId}")
+    Long selectCourseTeacherId(@Param("courseId") Long courseId);
 
     /**
-     * 按 (student_id, course_id, semester) 三元组查重 —— 重修路径用。
+     * 某班级全部学生的权威成绩行（每生每课程一行、最新一次有效成绩），
+     * 键名保持控制器消费的下划线形态（{@code student_id}/{@code course_name}/...）。
      *
-     * <p>调用方显式指定了学期时走这条：重修是同一个学生同一门课的**另一个学期**，
-     * 应该新增一行而不是覆盖旧学期成绩；不带学期查重会让重修覆盖历史成绩，
-     * "按最新一次成绩判定挂科"的口径就退化成"只有一次成绩"，重修抵扣无从谈起。
-     *
-     * <p>{@code LIMIT 1} 是防御性的：历史数据里同一三元组可能已有多行，
-     * 不能让一次保存因为脏数据而抛异常。
+     * <p>W36：来源由 {@code score_record}（按 {@code class_name} 字符串）改为 {@code scores}，
+     * 班级归属改经 {@code student_profile.class_id} —— 后者是与预警、辅导员同源的唯一真源。
      */
-    @Select("SELECT * FROM score_record WHERE student_id = #{studentId} AND course_id = #{courseId} "
-          + "AND semester = #{semester} ORDER BY id DESC LIMIT 1")
-    ScoreRecord selectByStudentCourseSemester(@Param("studentId") Long studentId,
-                                              @Param("courseId") Long courseId,
-                                              @Param("semester") String semester);
-
-    @Select("SELECT sr.student_id, sr.student_name, sr.course_id, c.name AS course_name, c.credits, c.type, sr.score AS score_total, sr.score_level FROM score_record sr LEFT JOIN courses c ON sr.course_id = c.id WHERE sr.class_name = (SELECT name FROM classes WHERE id = #{classId})")
-    List<Map<String, Object>> getScoresByClassId(Long classId);
+    @Select("SELECT v.student_id AS student_id, sp.name AS student_name, "
+          + "       v.course_id AS course_id, c.name AS course_name, "
+          + "       c.credits AS credits, c.type AS type, "
+          + "       v.score_total AS score_total, " + ScoreCaliber.SCORE_LEVEL_CASE + " AS score_level "
+          + "  FROM " + ScoreCaliber.LATEST_VALID_SCORE + " v "
+          + "  JOIN student_profile sp ON sp.id = v.student_id "
+          + "  LEFT JOIN courses c ON c.id = v.course_id "
+          + " WHERE sp.class_id = #{classId} ORDER BY sp.name, c.name")
+    List<Map<String, Object>> getScoresByClassId(@Param("classId") Long classId);
 
     /**
      * 取学号，用于推导入学年（{@code 学年 = 学号前四位 + (学期-1) DIV 2}）。
      *
-     * <p>注意 {@code student_profile.student_id} 是**学号字符串**，
-     * 不是主键 —— 主键是 {@code id}，这里按主键查。传入 users.id 会静默查不到。
+     * <p>注意 {@code student_profile.student_id} 是**学号字符串**，不是主键 —— 主键是 {@code id}，
+     * 这里按主键查。传入 {@code users.id} 会静默查不到。
      */
     @Select("SELECT student_id FROM student_profile WHERE id = #{studentProfileId}")
     String selectStudentNo(@Param("studentProfileId") Long studentProfileId);
 
-    /** 取姓名（按 student_profile.id）。查不到返回 null，不编造。 */
+    /** 取姓名（按 {@code student_profile.id}）。查不到返回 null，不编造。 */
     @Select("SELECT name FROM student_profile WHERE id = #{studentProfileId}")
     String selectStudentName(@Param("studentProfileId") Long studentProfileId);
 
     /**
      * 单名学生的学分/挂科汇总。
      *
-     * <p>直接复用 {@link com.academic.common.constant.ScoreCaliber#ONE_STUDENT_STATS} ——
-     * 学生端的"已修学分"也用这一段，两边共用一份口径，不可能各算各的。
-     * 列（camelCase）：totalCourses / failedCourses / completedCredits / gpa / gradedCredits。
+     * <p>直接复用 {@link ScoreCaliber#ONE_STUDENT_STATS} —— 学生端的"已修学分"也用这一段，
+     * 两边共用一份口径。列（camelCase）：totalCourses / failedCourses / completedCredits / gpa / gradedCredits。
      *
-     * <p>参数是 {@code student_profile.id}（= {@code scores.student_id}），
-     * <b>不是</b> {@code users.id}：传 users.id 会静默返回一行全 0，不报错。
+     * <p>参数是 {@code student_profile.id}（= {@code scores.student_id}），**不是** {@code users.id}：
+     * 传 {@code users.id} 会静默返回一行全 0，不报错。
      */
     @Select(ScoreCaliber.ONE_STUDENT_STATS)
     Map<String, Object> selectStudentStats(@Param("studentId") Long studentId);
 
     /**
-     * 单名学生的挂科门数（每门课取期末已录入的最新一次、按课程去重，
-     * 与预警引擎同一口径）。参数是 {@code student_profile.id}。
+     * 单名学生的挂科门数（每门课取期末已录入的最新一次、按课程去重，与预警引擎同一口径）。
+     * 参数是 {@code student_profile.id}。
      */
     @Select(ScoreCaliber.FAIL_COUNT_BY_ONE_STUDENT)
     Integer selectFailedCourseCount(@Param("studentId") Long studentId);

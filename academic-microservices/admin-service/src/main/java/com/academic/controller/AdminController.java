@@ -3186,6 +3186,27 @@ public class AdminController {
         }
     }
 
+    /**
+     * 导出全库成绩单（xlsx）。
+     *
+     * <p><b>2026-10-10（W36）：数据源由 {@code score_record}（教师录入暂存表）改为
+     * 权威表 {@code scores}。</b>
+     *
+     * <p>此前这条导出读 {@code score_record} 整表，与预警引擎、学生端、辅导员端读的
+     * {@code scores} 分叉 —— 同一个"成绩数据"导出件里的行数（246）和系统里其余页面
+     * 看到的（259）对不上，而且导出件里没有那些只存在于 {@code scores} 的行
+     * （历史学期、期末未录入行）。整仓的权威口径就是 {@code scores}，管理端导出
+     * 没有理由自己留一份。
+     *
+     * <p>三处随之对齐：
+     * <ul>
+     *   <li>姓名 / 学号不再逐行回查 {@code student_profile}（原来是 N+1 次查询），
+     *       改为一次 JOIN 取回；</li>
+     *   <li>"成绩"列取 {@code score_total}（总评）而非 {@code score_record.score}；</li>
+     *   <li>"备注"列原本**固定写空串** —— 明明 {@code score_record} 有备注列却一行都不写。
+     *       现在写 {@code scores.remark} 的真值。</li>
+     * </ul>
+     */
     @GetMapping("/export/scores")
     public void exportScores(HttpServletResponse response) throws IOException {
         try {
@@ -3197,7 +3218,8 @@ public class AdminController {
                 exportDirFile.mkdirs();
             }
 
-            List<ScoreRecord> scores = scoreRecordMapper.selectList(null);
+            // 权威成绩源：scores 一次取回，JOIN 学生与课程补齐展示列。
+            List<Map<String, Object>> scores = scoreStatMapper.selectAllScoreRows();
 
             Workbook workbook = new XSSFWorkbook();
             Sheet sheet = workbook.createSheet("成绩数据");
@@ -3210,38 +3232,18 @@ public class AdminController {
             }
 
             int rowNum = 1;
-            for (ScoreRecord score : scores) {
+            for (Map<String, Object> score : scores) {
                 Row row = sheet.createRow(rowNum++);
-                row.createCell(0).setCellValue(score.getId());
-                
-                String studentId = "";
-                String studentName = "";
-                // 通过 student_profile 查找学生
-                QueryWrapper<com.academic.common.entity.Student> studentQuery = new QueryWrapper<>();
-                studentQuery.eq("id", score.getStudentId());
-                com.academic.common.entity.Student studentProfile = studentService.getOne(studentQuery);
-                if (studentProfile != null) {
-                    studentId = studentProfile.getStudentId();
-                    studentName = studentProfile.getName();
-                }
-                row.createCell(1).setCellValue(studentId);
-                row.createCell(2).setCellValue(studentName);
-                
-                String courseName = "";
-                Integer credit = 0;
-                if (score.getCourseId() != null) {
-                    Course course = courseService.getById(score.getCourseId());
-                    if (course != null) {
-                        courseName = course.getName();
-                        credit = course.getCredits() != null ? course.getCredits().intValue() : 0;
-                    }
-                }
-                row.createCell(3).setCellValue(score.getCourseId() != null ? score.getCourseId() : 0);
-                row.createCell(4).setCellValue(courseName);
-                row.createCell(5).setCellValue(score.getScore() != null ? score.getScore() : 0);
-                row.createCell(6).setCellValue(credit);
-                row.createCell(7).setCellValue(score.getSemester() != null ? score.getSemester() : "");
-                row.createCell(8).setCellValue("");
+                row.createCell(0).setCellValue(asLong(score.get("id")));
+                row.createCell(1).setCellValue(asText(score.get("student_no")));
+                row.createCell(2).setCellValue(asText(score.get("student_name")));
+                row.createCell(3).setCellValue(asLong(score.get("course_id")));
+                row.createCell(4).setCellValue(asText(score.get("course_name")));
+                // 期末未录入时 score_total 可能为 NULL —— 写空串而不是 0 分（0 分会读成"挂科"）。
+                row.createCell(5).setCellValue(asText(score.get("score_total")));
+                row.createCell(6).setCellValue(asLong(score.get("credits")));
+                row.createCell(7).setCellValue(asText(score.get("semester")));
+                row.createCell(8).setCellValue(asText(score.get("remark")));
             }
 
             for (int i = 0; i < headers.length; i++) {
@@ -4255,6 +4257,11 @@ public class AdminController {
 
     private static String asString(Object o) {
         return o == null ? null : o.toString();
+    }
+
+    /** 导出单元格用：null 一律成空串（写 0 会被读成真实值）。 */
+    private static String asText(Object o) {
+        return o == null ? "" : o.toString();
     }
 
     private static long asLong(Object o) {

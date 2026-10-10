@@ -41,7 +41,16 @@ public class Score {
     
     @TableField("grade_point")
     private BigDecimal gradePoint;
-    
+
+    /**
+     * 教师录入/导入的「备注」。
+     *
+     * <p>2026-10-10（W36）加：此前备注只存在 {@code score_record}（教师录入暂存表），
+     * 教师成绩册/导出/模板都带「备注」，而权威表 {@code scores} 没有这一列。
+     * 教师端改用 {@code scores} 后，备注必须落到这里，否则会被静默丢弃。
+     */
+    private String remark;
+
     @TableField("reason_for_change")
     private String reasonForChange;
     

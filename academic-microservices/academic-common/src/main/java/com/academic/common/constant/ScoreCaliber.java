@@ -63,14 +63,19 @@ public final class ScoreCaliber {
      * {@code ORDER BY semester DESC} 是数值排序，不存在 "10" &lt; "2" 的字典序陷阱。
      *
      * <p>用法：{@code "SELECT ... FROM " + LATEST_VALID_SCORE + " v WHERE ..."}
+     *
+     * <p>2026-10-10（W36）：派生列里补了 {@code remark}（教师录入/导入的备注）。
+     * 教师端成绩册要显示「备注」，此前它只存在 {@code score_record}；改用本口径后
+     * 备注必须能取到。加一列不影响既有消费方 —— 全仓没有一处对本派生表写
+     * {@code SELECT *}（只用具体列名或 {@code COUNT(*)}/{@code AVG(...)}）。
      */
     public static final String LATEST_VALID_SCORE =
             "(SELECT lat.id, lat.student_id, lat.course_id, lat.semester, lat.score_total, "
           + "        lat.regular_score, lat.final_score, lat.year, lat.created_at, "
-          + "        lat.grade, lat.grade_point "
+          + "        lat.grade, lat.grade_point, lat.remark "
           + "   FROM (SELECT s.id, s.student_id, s.course_id, s.semester, s.score_total, "
           + "                s.regular_score, s.final_score, s.year, s.created_at, "
-          + "                s.grade, s.grade_point, "
+          + "                s.grade, s.grade_point, s.remark, "
           + "                ROW_NUMBER() OVER (PARTITION BY s.student_id, s.course_id "
           + "                                   ORDER BY s.semester DESC, s.id DESC) AS rn "
           + "           FROM scores s WHERE s.final_score IS NOT NULL) lat "

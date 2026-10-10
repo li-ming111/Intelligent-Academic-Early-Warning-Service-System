@@ -31,10 +31,9 @@ public class ScoreAuditLogService extends ServiceImpl<ScoreAuditLogMapper, Score
         log.setStudentName(newRecord.getStudentName());
         log.setCourseId(newRecord.getCourseId());
         // 课程名要单独查：score_audit_log.course_name 是冗余列，调用方传进来的
-        // ScoreRecord 是从 score_record 按 id 单查的（SELECT *，没有 join courses），
-        // 它的 courseName 是 @TableField(exist=false) 的联表字段，这里必定为 null。
-        // 不补这一下，教师端"成绩修改记录"页的「课程」一列对新产生的记录就是空白
-        // ——而历史那一条（手工造的数据）有课程名，新旧不一致最容易被看出来。
+        // ScoreRecord 只带 course_id（它的 courseName 是 @TableField(exist=false) 的联表字段，
+        // 这里必定为 null）。不补这一下，教师端"成绩修改记录"页的「课程」一列对新产生的
+        // 记录就是空白 —— 而历史那一条（手工造的数据）有课程名，新旧不一致最容易被看出来。
         if (newRecord.getCourseId() != null) {
             Course course = courseMapper.selectById(newRecord.getCourseId());
             if (course != null) {

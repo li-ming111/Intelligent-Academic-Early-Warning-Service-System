@@ -215,16 +215,22 @@ class ApiClient {
     /** 导入成绩，与 saveScores 同一实现、只是提示语不同。体同上。 */
     importScores: (data) => this._post('/teachers/scores/import', data),
     /**
-     * 改分。**真落库**（`score_record` + 镜像 `scores` + 写一条 `score_audit_log`）。
-     * 体：`{score, remark?, modifiedBy?}`。
+     * 改分。**真落库**（直写 `scores` + 写一条 `score_audit_log`；W36 起不再经 `score_record`）。
+     * 体：`{score, remark?, modifiedBy?}`。`id` 是 **`scores.id`**。
      * 已实测：写完回读一致，且**不会**抹掉 `regular_score`/`final_score`
      * （早先这里因为审计日志违反非空约束而整体回滚，接口 500、一分没改，已修）。
      */
     updateScore: (id, data) => this._put(`/teachers/scores/${id}`, data),
-    /** 删除成绩。**真落库**。 */
+    /** 删除成绩（`scores.id`）。**真落库**。 */
     deleteScore: (id) => this._del(`/teachers/scores/${id}`),
-    /** 批量删除。体：`{ids:[...]}`。 */
-    batchDeleteScores: (ids) => this._post('/teachers/scores/batch-delete', { ids }),
+    /**
+     * 批量删除。体：**裸数组** `[1,2,3]`（`scores.id`）。
+     *
+     * <p>W36 修：此前发的是 `{ids:[...]}`，而后端 `@RequestBody List<Long>` 收的是裸数组
+     * ⇒ 每次都 400，这条批量删除**一次都没成功过**。与 PC 端 `teacherAPI.batchDeleteScores`
+     * 的形状对齐（那条发的一直是裸数组）。
+     */
+    batchDeleteScores: (ids) => this._post('/teachers/scores/batch-delete', ids),
 
     // —— 成绩分析（口径统一，统计数只认这几个） ——
     /**

@@ -502,15 +502,17 @@ Gateway (8076)
 ### 4.1 成绩数据链路
 
 ```
-教师录入成绩 (TeacherService)
+教师录入/导入成绩 (teacher-service)
     ↓
-写入 score_record 表 (course_id + student_id + score)
+直写 scores 表（权威表）：course_id + student_id(=student_profile.id) + semester + score_total
+    │   {@code ScoreSyncSupport.applyToAuthoritative} 顺带算出 grade / grade_point、并镜像 final_score
     ↓
-学生查看成绩 (StudentService)
-    ├── 联表 courses 获取课程名
-    ├── 联表 student_profile 获取学号
-    └── Feign 调用 student-service
+学生查看成绩 (student-service) / 辅导员 (counselor-service) / 预警引擎 (warning-service)
+    全部读 scores（口径 = ScoreCaliber：每门课每生取 final_score 非空的最新一次）
 ```
+
+> ⚠️ **2026-10-10（W36）改正**：上文原写「教师录入 → 写入 `score_record`」。
+> 这张表**已不是**教师端的数据源 —— 真实链路是直写 `scores`。见 §8.9。
 
 ### 4.2 预警闭环链路
 
@@ -597,8 +599,8 @@ WebSocket 实时推送 → 学生/辅导员收到通知
 | `teacher_profile` | 教师档案表 | id, user_id, college_id, title(职称) |
 | `counselor_profiles` | 辅导员档案表 | id, user_id, college_id |
 | `courses` | 课程表 | id, name, code, credits |
-| `score_record` | 成绩记录表 | id, student_id, course_id, teacher_id, score, score_level |
-| `scores` | **权威成绩表**（`score_record` 经 `syncToScores` 同步而来，分析/预警读它） | id, student_id, course_id, score_total, regular_score, final_score, grade_point |
+| `scores` | **唯一权威成绩表**（W36 起：教师端读写、辅导员端、学生端、预警引擎**全部**读它） | id, student_id(**profile id**), course_id, semester(int), year, score_total, regular_score, final_score, grade, grade_point, **remark**, modified_by |
+| `score_record` | ~~成绩记录表~~ **2026-10-10（W36）起教师端已不再读写它**，只剩 `admin-service` 的 `POST /admin/import/scores` 一个写方 ⇒ 现在它是"**管理端导入暂存表**" | id, student_id, course_id, teacher_id, score, score_level |
 | `academic_warning` | 预警记录表（**单数**） | id, student_id, warning_level, status(0待处理/1已处理/2已解除) |
 | `warning_rules` | 预警规则表 | id, name, rule_condition, level, status |
 | `assistance_plans` | 帮扶计划表 | id, student_id, counselor_id, status, progress |
@@ -782,7 +784,94 @@ public Object registerStudent(Object request) {
 > 2. **两个请求头都要发** —— 闸读 `X-Role`，探针第一版只发 `X-User-Id` ⇒ 连管理员都被拒；
 >    别让被测方替你挑键名（W8/W12 一族的第四次）。
 
+### 8.9 教师端与辅导员端「成绩对不上」的根因：两套成绩表（2026-10-10 W36）
+
+**现象**（用户报的原话）：「预警信息，于凤海和辅导员显示的对应不上，课程信息也对应不上。」
+
+**根因**：全项目**两张成绩表并行**，且各自被一半的角色读：
+
+| 读的人 | 读的表 |
+|---|---|
+| teacher-service（**全部**成绩端点） | `score_record`（教师录入暂存表） |
+| counselor / student / warning / ai-service | `scores`（**权威表**，`ScoreCaliber` 头注释自己写着的） |
+
+实测学生**司明**（`student_profile.id=3`，计科2306班）：
+
+| | `score_record`（教师读） | `scores`（其余人读） |
+|---|---|---|
+| 行数 | 16 | 29 |
+| 挂科门数 | **4** | **3** |
+| 缺失方向 | 缺第 2 学期历史、缺第 6 学期「期末未录入」行 | —— |
+
+`academic_warning`（id=395）里司明那条写的是 `fail_count=3`、「操作系统 40分、计算机基础 47分、高等数学 56.5分」——
+正是 `scores` 口径。教师成绩页（`score_record`，**不按课程去重**）数出 4 门 ⇒ 同一屏上两个数字打架。
+
+**本轮修法**（用户选定：**治本**，含写路径）：教师端**读写全部改走 `scores`**。
+
+- 读：`ScoreRecordMapper` 只保留基于 `ScoreCaliber.LATEST_VALID_SCORE` 的权威投影（每门课每生取
+  `final_score` 非空的最新一次），返回类型仍是 `ScoreRecord` 以保持控制器消费面不变。
+- 写：`ScoreRecordService.saveScores` **直写 `scores`**（不再"先写 `score_record` 再 `syncToScores` 二跳"）。
+- 改/删：`PUT|DELETE /teachers/scores/{id}` 的 `scoreId` 语义由 `score_record.id` 改为 **`scores.id`**，
+  归属判据由"录入人是不是我"改为"**这门课是不是我教的**"（`scores` 无 `teacher_id`；
+  顺带与学生申诉 `score_appeals.score_id`（本就外联 `scores.id`）统一）。
+- Schema：`scores` 补 `remark varchar(500)`（`init_schema.sql` + 活库 + `db_backups/w36_scores_remark_apply|rollback.sql`）——
+  不补就是**又一处「提交体被静默丢弃」**（本仓明令禁止）。**未跑 `rebuild_schema.py`**。
+  ⚠️ **改表结构要同步的是四处，不是两处**：还有 `academic-common/.../config/DataInitializer.java` 的
+  `EXPECTED_COLUMNS`（启动时对照 `information_schema` 自检，判据是**相等**）。`scores` 那行原写 14，
+  加了列就是 15 —— 不改则**每个服务启动都 ERROR 报"少列"**。这声警报本身是对的（它正好逮到这次变更），
+  但漏改等于把自己的自检喂瞎。该表**没有单测钉**，只有启动日志看得见。
+- 顺带修好两条**此前一次都没成功过**的路径：PC `TeacherScores.vue` 改分弹窗（弹窗绑 `totalScore`、
+  提交却发 `{regularScore,finalScore,reason}`、后端读 `{score,remark,modifiedBy}` ⇒ 键名对不上，必回「缺少 score 字段」）；
+  小程序 `batchDeleteScores`（发 `{ids:[...]}` 而后端 `@RequestBody List<Long>` 收裸数组 ⇒ 必 400）。
+- `admin-service` `GET /admin/export/scores` 一并切 `scores`（原读 `score_record` 整表、且「备注」列**恒写空串**）；
+  admin **导入**本轮不动 ⇒ `score_record` 保留为"管理端导入暂存表"，**不删不回填**（登记为后续项）。
+- 删除死代码 `latestPerStudent`（`scores` 投影已是一人一行，Java 侧再去重是空转）。
+
+**E2E 实测**（活库，直连 8090，显式 UTF-8 百分号编码中文查询参数）：
+
+| 检查 | 结果 |
+|---|---|
+| `GET /teachers/scores/by-class?class_name=计科2306班&teacher_id=29` | 238 行；**司明 8 门课、挂 3 门**，与 `academic_warning` 逐条对上 |
+| `GET /teachers/enrollments?teacherId=29` | **238 行**（改造前为空） |
+| 改自己的课 | HTTP 200 且 `scores` 真变、`grade/grade_point` 重算、`regular_score`/`final_score` **未被抹掉**、`score_audit_log` 落一行 |
+| 改别人的课 | **HTTP 200 + body `code:403`**（本仓控制器业务拒绝的惯用形状），一行未写 |
+| 管理员（`X-Role:4`）改别人的课 | 放行 |
+| 不带头 / 不存在的 id | 下游 Spring Security **403 空体** / **404「成绩记录不存在」** |
+| 批量删除裸数组 `[id]` | 别人的课 403、自己的课删成功；旧形状 `{ids:[...]}` ⇒ **400** |
+
+> ⚠️ **写探针的靶是自建行**（`semester=1`，被"取最新一次"的投影遮蔽 ⇒ 对任何演示视图零影响），
+> 结束即删；探针产生的 2 条 `score_audit_log` 也一并删掉（否则留下指向已删成绩行的悬空审计）。
+> 核完 `scores` 恢复 259 行、`score_record` 246 行未动。
+> ⚠️ 中文 body 在 MSYS bash 会按 GBK 发出去 ⇒ 探针 payload 一律用 ASCII，中文只走**显式百分号编码的查询参数**。
+
+**未修边界**：① `admin-service` 的 `POST /admin/import/scores` 仍写 `score_record`（登记）；
+② `/teachers/scores/by-class` 的入参仍是 `class_name` 字符串，同名班仍会被一并命中（要根治得改接口契约收 `class_id`）；
+③ 教师端「成绩册/导出」沿用**分析口径**（过滤 `final_score IS NULL`）—— 司明那 4 行「期末未录入」因此不出现在教师页。
+实测全库**没有**"只有未录入行"的课，所以没有任何数据被隐藏；但那 4 行里 3 行低于 60，
+若哪天改成"不过滤"的口径，司明的挂科会从 3 变成 6（错误方向）—— 这也正是不能改的原因。
+选项 **2** 的语义就是这条：**统一到 `scores` 口径 = 建库以来就存在的那套**，而不是统一到某个角色过去读的那张表。
+
+**核过并排除的疑点**（免得下一个人重查）：迁移后全仓 `score_record` 的**活读方只剩 admin 导入那一处**
+（`admin-service` `AdminController` 里查重的 `scoreRecordMapper.selectOne`）；`student-service` /
+`counselor-service` / `warning-service` 对 `score_record` 的提及**全在注释里**（写的是"这里**原**读
+`score_record`，已改 `scores`"的沿革），SQL 一律走 `ScoreCaliber` → `scores`。
+⚠️ 另有一条**口径陷阱**：`academic_warning` 里的 40/47/56.5 是 `score_total`（总评），而 `scores`
+同一行的 `final_score` 是 38/45/55 —— 两组数是**同样的三门课**，看列名再下结论。
+
+⚠️ **同一族又两条「说法与事实不符」**（已修）：
+`importScores` 的 javadoc 写「刻意没有平时/期末成绩，因为 `saveScores` 不读这两个 key、`insertScore` 的 INSERT 里也没有」
+（`saveScores` 现在**会**读、`insertScore` 已随 `score_record` 废掉 ⇒ 前半句不成立）；
+`ClassInfoMapper.countClassesNamedAndOwned` 的注释把"同名班分不开"归因于 `score_record` 只存 `class_name`
+（教师端改读 `scores` 后成绩行不再携带 class_name，**边界还在但归因换了位置**，已改成"接口契约的上限"）。
+⇒ **修完一条候选要顺手改台账那一条**，"说法"有三层：接口返回值 / 代码注释 / 文档台账。
+
+**单测**：全量 reactor **627 例 / 0 失败**（基线 624）。`ScoreRecordServiceTest` 12 例按新语义重写
+（钉"落库目标是 `scores`、不再碰 `score_record`"），`TeacherControllerScoreOwnershipTest` 6 例改判据为课程归属
+（旧的那条"记录没有 teacherId 就放行"已随列消失而**失效**，换成"所属课程查不到 ⇒ 拒绝"）。
+⚠️ `mvn -pl teacher-service test` 会解析到 `~/.m2` 里的**旧 academic-common jar**（缺 `CourseRecommendation`）⇒
+`TestEngine ... failed to discover tests`，**必须带 `-am`**；全量回归必须跑 reactor（`-pl` 只覆盖点名模块）。
+
 ---
 
 > **文档维护者：** 系统自动生成  
-> **最后更新：** 2026-10-08
+> **最后更新：** 2026-10-10（W36）

@@ -309,4 +309,24 @@ public interface ScoreStatMapper {
     List<Map<String, Object>> selectScoreRows(@Param("collegeId") Long collegeId,
                                               @Param("classId") Long classId,
                                               @Param("keyword") String keyword);
+
+    /**
+     * 全库成绩明细，供 {@code GET /admin/export/scores} 导出（W36，2026-10-10）。
+     *
+     * <p>数据源是权威表 {@code scores} <b>整表</b>（不经 {@link ScoreCaliber#LATEST_VALID_SCORE}
+     * 去重、不过滤 {@code final_score IS NULL}）—— 导出件是"库里有哪些成绩行"的台账，
+     * 每一行、每个学期都要在里面；这与"分析/预警只看每门课最新一次"的口径不同，
+     * 是有意的：导出件用来核对数据，不是用来统计。
+     *
+     * <p>一次 JOIN 补齐学号 / 姓名 / 课程名 / 学分，取代原先逐行回查
+     * {@code student_profile} 的 N+1 查询。
+     */
+    @Select("SELECT s.id AS id, sp.student_id AS student_no, sp.name AS student_name, "
+          + "       s.course_id AS course_id, c.name AS course_name, c.credits AS credits, "
+          + "       s.score_total AS score_total, s.semester AS semester, s.remark AS remark "
+          + "  FROM scores s "
+          + "  LEFT JOIN student_profile sp ON sp.id = s.student_id "
+          + "  LEFT JOIN courses c ON c.id = s.course_id "
+          + " ORDER BY sp.name, s.course_id, s.semester")
+    List<Map<String, Object>> selectAllScoreRows();
 }

@@ -128,7 +128,10 @@
             <span>最终成绩</span>
           </template>
           <template #default="{ row }">
-            <span class="score-value">{{ row.totalScore || row.scoreTotal || row.score || '--' }}</span>
+            <!-- W36：本列的数来自权威投影（每门课取"期末已录入的最新一次"），期末未录入的行
+                 在这条口径下根本不会出现 —— 显示"待录入"是多余且做不到的。这里保留空值兜底，
+                 只是防数据源换回不过滤的版本时不显示成 `undefined`。 -->
+            <span class="score-value">{{ row.totalScore ?? '--' }}</span>
           </template>
         </el-table-column>
         <el-table-column label="操作" width="260" fixed="right">
@@ -490,10 +493,17 @@ const loadClassScores = async (className) => {
       const response = await teacherAPI.getScoresByClass(className, teacherId)
       if (Array.isArray(response)) {
         scoresList.value = response.map(item => {
-          const totalScore = item.totalScore || item.score || 0
+          // W36：数据源由 score_record 改为权威表 scores。
+          // · `scoreTotal` 可能为 null（期末未录入）—— 不能用 `|| 0` 吞成 0 分，
+          //   0 分会显示成"不及格"并进挂科名单，而事实是"还没录"。
+          // · `studentId` 是 student_profile.id，"查看分析"要拿它打 analyzeStudentScore；
+          //   旧 remap 漏了这一项 ⇒ 那条路径一直传 undefined。
+          const rawTotal = item.scoreTotal ?? item.totalScore ?? item.score
+          const totalScore = (rawTotal === null || rawTotal === undefined) ? null : Number(rawTotal)
           const displayStudentNo = item.studentNo || item.studentId || ''
           return {
             id: item.id,
+            studentId: item.studentId,
             studentNo: displayStudentNo,
             studentName: item.studentName,
             courseId: item.courseId,
@@ -523,11 +533,21 @@ const submitEdit = async () => {
       ElMessage.error('请填写修改原因')
       return
     }
+    // W36：这个弹窗**此前一次都没成功过** —— 弹窗只绑了 totalScore（见模板里的
+    // `v-model="editingScore.totalScore"`），提交却发 `{regularScore, finalScore, reason}`
+    // （这两个字段从没被绑过，永远是 undefined），而后端读的是 `{score, remark, modifiedBy}`
+    // ⇒ 键名对不上，后端每次都回「缺少 score 字段」。
+    // 现在按后端契约发：`score` = 弹窗里真正改的那个数；`remark` = 修改原因
+    // （后端落到 scores.remark 与审计的 reason）。
+    const score = editingScore.value.totalScore
+    if (score === null || score === undefined || score === '') {
+      ElMessage.error('请填写成绩')
+      return
+    }
     const userId = getUserId()
     const data = {
-      regularScore: editingScore.value.regularScore,
-      finalScore: editingScore.value.finalScore,
-      reason: editingScore.value.reason,
+      score: Number(score),
+      remark: editingScore.value.reason,
       modifiedBy: userId
     }
     await teacherAPI.updateScore(editingScore.value.id, data)

@@ -59,7 +59,10 @@ public class DataInitializer {
         EXPECTED_COLUMNS.put("majors", 9);
         EXPECTED_COLUMNS.put("classes", 8);
         EXPECTED_COLUMNS.put("courses", 11);
-        EXPECTED_COLUMNS.put("scores", 14);
+        // 2026-10-10（W36）：14 → 15，新增 remark（教师录入/导入的「备注」）。
+        // 判据是"相等"，加了列不改这行 ⇒ 每个服务启动都会 ERROR 报"少列"，
+        // 那声警报本身是对的（它逮到了这次 schema 变更），不更新就等于把自己的自检喂瞎。
+        EXPECTED_COLUMNS.put("scores", 15);
         EXPECTED_COLUMNS.put("score_record", 22);
         EXPECTED_COLUMNS.put("warning_rules", 24);
         EXPECTED_COLUMNS.put("academic_warning", 21);
