@@ -149,9 +149,11 @@ public class AuthenticationFilter implements GlobalFilter, Ordered {
     //   /api/users/list、/api/users/add、/api/users/delete/{id}、/api/users/count
     //   /api/users/by-username/{name}  ← 直接返回含密码哈希的原始 User 实体
     //   /api/users/update/{id}         ← ★ 请求体是完整 User 实体，改别人的 role/status 就是提权
-    // 同理 `/api/auth/**` 也不能整段放开：`/api/auth/register/student` 能建账号，
-    // `/api/auth/info/{id}` 也会绕过下面的归属校验。
-    // （原话点名的是 `/api/auth/register/admin` —— 它能造系统管理员账号，那个端点 2026-10-01 已删；
+    // 同理 `/api/auth/**` 也不能整段放开：`/api/auth/register/student` 能建账号。
+    // （⚠️ 2026-10-10（W34）订正：这里原还点名 `/api/auth/info/{id}`「也会绕过归属校验」——
+    //  它**确实绕过**（无前缀检查 + 下游只要求已认证 + 方法体不判归属），但**已按"零调用方"整条删掉**
+    //  （见 `AuthController` 里 W34 那一段留档），本句不再成立。原话点名的是
+    //  `/api/auth/register/admin` —— 它能造系统管理员账号，那个端点 2026-10-01 已删；
     //  裸的 `/api/auth/register` 同日也按"零调用方"删了，所以现在这一段伞下**只剩三条自助注册路径**，
     //  而它们的约束在 user-service 自己的 SecurityConfig 里逐条列着。）
 

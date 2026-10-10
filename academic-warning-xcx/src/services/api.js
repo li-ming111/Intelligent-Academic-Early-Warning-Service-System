@@ -1134,8 +1134,10 @@ class ApiClient {
     //     已在网关 `AuthenticationFilter.hasPermission()` 里按"**仅限本人 id**"
     //     放行（`/api/users/info/{ownId}`、`/api/users/{ownId}/settings`、
     //     `/api/auth/change-password`、`/api/auth/logout|refresh-token`），
-    //     并实测过越权面：别人 id 的资料/设置、`/users/list|delete|by-username`、
-    //     `/auth/info/**` 仍是 403。
+    //     并实测过越权面：别人 id 的资料/设置、`/users/list|delete|by-username` 仍是 403。
+    //     ⚠️ 2026-10-10（W34）订正：本句原还列了 `/auth/info/**`「仍是 403」——
+    //     那条端点**已按"零调用方"整条删除**（它本就是无归属校验的跨用户读，见
+    //     `AuthController` 里 W34 留档）⇒ 现在已认证打它是 **404（无映射）**，不再有意义。
     //
     // 所以这三支现在对 role=5 是通的，但**只对本人 id 通** ——
     // 传别人的 userId 依然 403。

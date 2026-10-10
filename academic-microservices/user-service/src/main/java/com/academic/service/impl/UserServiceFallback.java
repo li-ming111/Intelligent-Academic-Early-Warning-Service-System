@@ -94,11 +94,6 @@ public class UserServiceFallback implements UserService {
     }
 
     @Override
-    public Object getUserInfo(Long userId) {
-        return ApiResponse.error("获取用户信息服务暂时不可用，请稍后重试");
-    }
-
-    @Override
     public Object logout(Long userId, String role) {
         return ApiResponse.error("登出服务暂时不可用，请稍后重试");
     }

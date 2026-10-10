@@ -195,25 +195,26 @@ public class AuthController {
     //    同理每个 register 端点的角色**由端点写死**、绝不从请求体读（见上面的常量注释）。
 
 
-    /**
-     * 获取用户信息
-     * <p>
-     * 根据用户ID获取用户详细信息
-     * </p>
-     * @param userId 用户ID
-     * @return 用户信息
-     */
-    @GetMapping("/info/{userId}")
-    public ApiResponse<Object> getUserInfo(@PathVariable Long userId) {
-        try {
-            log.info("Get user info: {}", userId);
-            Object info = userService.getUserInfo(userId);
-            return ApiResponse.success(info);
-        } catch (Exception e) {
-            log.error("Get user info failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
-        }
-    }
+    // ⚠️ 2026-10-10（W34）这里原有 `GET /auth/info/{userId}` —— **已删，不要再加回来**。
+    //
+    // 它是一条**无归属校验的跨用户读**：网关 `hasPermission` 对 `/api/auth/**` 没有任何前缀
+    // 检查（`/api/auth` 不匹配任何受限前缀，内置角色 1/2/3 一路落到末尾 `return true`），
+    // user-service `SecurityConfig` 是 `anyRequest().authenticated()`，而这个方法体**不判归属**
+    // ⇒ **任何已登录用户（含学生）都能读任意 userId 的 name/username/role/status，并据此枚举 id**
+    // （2026-10-08 实测：学生 27 打 `/auth/info/18` 得 HTTP 200 + name=刘教授）。
+    //
+    // 它与 `/users/info/{userId}` 是**孪生**，但那条**两层都判归属**（网关 `USER_SELF_PATTERN`
+    // 要求 id==本人、控制器 `isAdminOrSelf`）且回**更多**字段 ⇒ 本端点是它**无闸且更弱的重复**。
+    // 且**全仓零调用方**（PC + 小程序封装与页面字面路径均 0 —— 各端 `getUserInfo` 打的是
+    // `/users/info/{userId}`）⇒ 按本仓「零调用方 = 删」处理，一并删掉：
+    //   · `UserService.getUserInfo` / `UserServiceImpl` / `UserServiceFallback` 的实现
+    //   · `UserServiceImplTest.testGetUserInfo` / `testGetUserInfo_notFound`
+    //   · `sentinel-rules.json` 里那条 `"/auth/info/{userId}"` 限流规则（为一条
+    //     @GetMapping 配的规则**从未生效** —— Sentinel 资源名默认按 @SentinelResource 或
+    //     URL 注册，纯 @GetMapping 不会自动成为资源）
+    //   · `AuthControllerTest.testGetUserInfo_Success`
+    // 被拒形状：修后已认证打 `/auth/info/*` 是 **404（已认证但无映射）**，
+    // 匿名仍是 **403 空体**（Spring Security 拦在映射之前）—— 两者不是同一种，别只断言"非 200"。
 
     /**
      * 用户登出

@@ -7,14 +7,5 @@
     "strategy": 0,
     "controlBehavior": 0,
     "clusterMode": false
-  },
-  {
-    "resource": "/auth/info/{userId}",
-    "limitApp": "default",
-    "grade": 1,
-    "count": 30,
-    "strategy": 0,
-    "controlBehavior": 0,
-    "clusterMode": false
   }
 ]

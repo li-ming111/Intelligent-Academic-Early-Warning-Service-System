@@ -563,28 +563,6 @@ public class UserServiceImpl implements UserService {
     }
 
     @Override
-    public Object getUserInfo(Long userId) {
-        try {
-            log.info("Get user info: {}", userId);
-            User user = getById(userId);
-            if (user != null) {
-                Map<String, Object> result = new HashMap<>();
-                result.put("id", user.getId());
-                result.put("username", user.getUsername());
-                result.put("name", user.getName());
-                result.put("role", user.getRole());
-                result.put("status", user.getStatus());
-                result.put("createdAt", user.getCreatedAt());
-                return result;
-            }
-            return null;
-        } catch (Exception e) {
-            log.error("Get user info failed: {}", e.getMessage());
-            throw e;
-        }
-    }
-
-    @Override
     public Object logout(Long userId, String role) {
         try {
             log.info("User logout: userId={}, role={}", userId, role);

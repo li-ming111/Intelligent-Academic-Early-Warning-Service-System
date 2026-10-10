@@ -184,23 +184,4 @@ class AuthControllerTest {
         verify(userService, times(1)).register(maliciousBody, 1);
         verify(userService, never()).register(maliciousBody, 4);
     }
-    
-    @Test
-    void testGetUserInfo_Success() {
-        // 准备测试数据
-        Long userId = 1L;
-        Object userInfo = new Object();
-        
-        // 模拟行为
-        when(userService.getUserInfo(userId)).thenReturn(userInfo);
-        
-        // 执行测试
-        ApiResponse<Object> result = authController.getUserInfo(userId);
-        
-        // 验证结果
-        assertNotNull(result);
-        
-        // 验证调用
-        verify(userService, times(1)).getUserInfo(userId);
-    }
 }

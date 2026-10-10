@@ -93,11 +93,6 @@ public interface UserService {
     String register(Object request, Integer role);
 
     /**
-     * 获取用户信息
-     */
-    Object getUserInfo(Long userId);
-
-    /**
      * 用户登出
      */
     Object logout(Long userId, String role);
