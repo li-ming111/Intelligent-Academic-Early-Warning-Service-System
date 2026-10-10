@@ -24,9 +24,18 @@ class AuthControllerTest {
     @Mock
     private CaptchaService captchaService;
 
+    /** W37：直连场景下从 Bearer token 解请求者 userId。 */
+    @Mock
+    private com.academic.util.JwtUtil jwtUtil;
+
     @InjectMocks
     private AuthController authController;
 
+    /**
+     * ⚠️ 造请求时**默认把两个头都桩成 null** —— Mockito 的 {@code mock()} 对未桩的
+     * {@code getHeader()} 本来就回 null，但显式写出来是为了让"直连（无网关头）"这件事
+     * 在用例里看得见，而不是靠 Mockito 的默认行为。
+     */
     @BeforeEach
     void setUp() {
         MockitoAnnotations.openMocks(this);
@@ -154,6 +163,98 @@ class AuthControllerTest {
         assertEquals(200, result.getCode());
         assertEquals("id-1", result.getData().get("captchaId"));
         assertEquals("A2C4", result.getData().get("captchaText"));
+    }
+
+    // ==================== 改密码的归属（W37，2026-10-10） ====================
+    //
+    // 此前这条路**没有任何单测**，而它有一个真洞：`X-User-Id` 头缺失时（=绕过网关直连 :8082）
+    // 直接**回落到请求体里的 `userId`** ⇒ 谁都能指定"改谁的密码"。演示库口令统一 123456，
+    // 连旧口令校验都过。现在身份只认两处：网关的头，或 Bearer token 自己的 `userId` 声明。
+    //
+    // 判据一律成对：**不只断言返回码，还要 `verify(..., never())` 证明没落到改密动作上** ——
+    // 只断言 code != 200 的话，"改了但返回失败"照样绿。
+
+    private static Map<String, Object> cpBody(Long userId) {
+        Map<String, Object> b = new HashMap<>();
+        b.put("userId", userId);
+        b.put("oldPassword", "123456");
+        b.put("newPassword", "123456");
+        return b;
+    }
+
+    /** 正常入口：网关注入 `X-User-Id`，改自己的 ⇒ 放行。 */
+    @Test
+    void testChangePassword_selfViaGatewayHeader_passes() {
+        jakarta.servlet.http.HttpServletRequest req = mock(jakarta.servlet.http.HttpServletRequest.class);
+        when(req.getHeader("X-User-Id")).thenReturn("27");
+
+        ApiResponse<String> result = authController.changePassword(cpBody(27L), req);
+
+        assertEquals(200, result.getCode());
+        verify(userService, times(1)).changePassword(27L, "123456", "123456");
+    }
+
+    /** 网关在 ⇒ 拿别人的 id 也拒（这条是老行为，一并钉住）。 */
+    @Test
+    void testChangePassword_otherViaGatewayHeader_forbidden() {
+        jakarta.servlet.http.HttpServletRequest req = mock(jakarta.servlet.http.HttpServletRequest.class);
+        when(req.getHeader("X-User-Id")).thenReturn("27");
+
+        ApiResponse<String> result = authController.changePassword(cpBody(18L), req);
+
+        assertEquals(403, result.getCode());
+        verify(userService, never()).changePassword(any(), any(), any());
+    }
+
+    /**
+     * ⭐ **本条是这个洞的回归钉子**：直连（无 `X-User-Id`）而请求体指定**别人**的 userId。
+     * 修前这里会拿 18 去改密（回 200）；修后必须拒绝且一次都没碰 userService。
+     */
+    @Test
+    void testChangePassword_directConnect_cannotTargetAnotherUserViaBody() {
+        jakarta.servlet.http.HttpServletRequest req = mock(jakarta.servlet.http.HttpServletRequest.class);
+        // 直连：没有网关注入的头；带一个**身份是 27** 的 token
+        when(req.getHeader("X-User-Id")).thenReturn(null);
+        when(req.getHeader("Authorization")).thenReturn("Bearer tok27");
+        when(jwtUtil.getUserIdFromToken("tok27")).thenReturn(27L);
+
+        ApiResponse<String> result = authController.changePassword(cpBody(18L), req);
+
+        assertNotEquals(200, result.getCode(), "直连时用请求体指定别人的 userId 必须被拒");
+        verify(userService, never()).changePassword(any(), any(), any());
+    }
+
+    /**
+     * 直连、带 token、请求体就是本人 ⇒ 放行，且用的是 **token 里的 27**，
+     * 不是请求体（两者恰好相等，所以另断言传下去的参数）。
+     */
+    @Test
+    void testChangePassword_directConnect_tokenIdentityIsUsed() {
+        jakarta.servlet.http.HttpServletRequest req = mock(jakarta.servlet.http.HttpServletRequest.class);
+        when(req.getHeader("X-User-Id")).thenReturn(null);
+        when(req.getHeader("Authorization")).thenReturn("Bearer tok27");
+        when(jwtUtil.getUserIdFromToken("tok27")).thenReturn(27L);
+
+        ApiResponse<String> result = authController.changePassword(cpBody(27L), req);
+
+        assertEquals(200, result.getCode());
+        verify(userService, times(1)).changePassword(27L, "123456", "123456");
+    }
+
+    /**
+     * 直连、**连 token 都没有**（真匿名）⇒ 拒绝。
+     * 这条是"身份定不出来时 fail-closed"的钉子：绝不能回落到请求体。
+     */
+    @Test
+    void testChangePassword_noIdentityAtAll_isRejected() {
+        jakarta.servlet.http.HttpServletRequest req = mock(jakarta.servlet.http.HttpServletRequest.class);
+        when(req.getHeader("X-User-Id")).thenReturn(null);
+        when(req.getHeader("Authorization")).thenReturn(null);
+
+        ApiResponse<String> result = authController.changePassword(cpBody(18L), req);
+
+        assertNotEquals(200, result.getCode());
+        verify(userService, never()).changePassword(any(), any(), any());
     }
 
     // ==================== 这里原有 `testRegister_Success`（2026-10-01 删） ====================

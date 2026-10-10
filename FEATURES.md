@@ -873,5 +873,46 @@ public Object registerStudent(Object request) {
 
 ---
 
+### 8.10 `/auth/change-password` 的「直连兜底」是个真洞（2026-10-10 W37）
+
+**洞**：`user-service` 的 `POST /auth/change-password` 归属校验是「网关注入的 `X-User-Id`
+与请求体 `userId` 不一致就拒」。但**直连服务时没有 `X-User-Id`** ⇒ 原实现**回落到信任请求体里的
+`userId`**（那段注释把兜底写成"给无网关场景本地脚本用"）。
+
+后果：**绕过网关直连 `:8082` 时改密接口不判归属**；又因演示库全部账号口令统一为 `123456`，
+`oldPassword` 校验也过 ⇒ **任意已认证用户可改任意账号的口令**。
+（2026-10-10 W34 实测：学生 token 直连打 `body.userId=18` 时**真写库、改掉了刘教授的密码**，已恢复。）
+经网关时 `X-User-Id` 在、闸生效 ⇒ 这是**"网关是唯一防线"**的又一例（本仓红线：**网关不是网络边界**）。
+
+**改法（fail-closed，身份只认两处、永不回落请求体）**，新方法 `resolveCallerId(request)`：
+
+1. 先读 `X-User-Id`（网关验签后注入，正常入口）；
+2. 没有则读 `Authorization: Bearer <token>`，用本服务密钥 `JwtUtil.getUserIdFromToken` 自解
+   —— **直连场景**（`JwtAuthenticationFilter` 也是这么验的）；
+3. 两处都拿不到 ⇒ `unauthorized("无法确定请求者身份")`，**绝不回落到请求体**。
+
+请求体里的 `userId` 从此**只当被检查对象**：非 null 且 ≠ callerId ⇒ `forbidden("只能修改本人的密码")`。
+
+| 场景 | 改前 | 改后 |
+|---|---|---|
+| 网关入口，改自己（头 27 + body 27） | 200 | 200（`changePassword(27,…)`） |
+| 网关入口，改别人（头 27 + body 18） | 403 | 403 |
+| **直连，带 token(27)，body 指定别人(18)** | ⚠️ **200，真改掉别人密码** | **拒绝** |
+| 直连，带 token(27)，body 是本人(27) | 200 | 200（用 token 里的 27） |
+| 直连，无头也无 token | ⚠️ 回落 body | **401** |
+
+**判据**：+5 单测（`AuthControllerTest`，user-service 69→74），一律**成对**
+（不只断言返回码，还要 `verify(..., never())` 证明没落到改密动作上）；
+其中 `directConnect_cannotTargetAnotherUserViaBody` 是这个洞的**回归钉子**。
+**反向打靶两个方向**：M1（只留头、拆掉 token 分支）⇒ 直连本人那条红；
+M2（改回原始"无头就信 body"逻辑）⇒ 钉子的两条红。
+全量 reactor **632 例 / 0 失败**。
+
+> ⚠️ `AuthController.java` **在盘上是 CRLF**（行尾敏感的批量替换要用编辑工具，别用 python 文本模式）。
+> ⚠️ 打靶中途那次"全绿"是**上一轮遗留的 `target/surefire-reports` 陈旧报告**（编译失败时 surefire 不跑、报告还在）
+> ⇒ 看结果要同时看 mvn 输出里有没有 `Tests run:`。
+
+---
+
 > **文档维护者：** 系统自动生成  
-> **最后更新：** 2026-10-10（W36）
+> **最后更新：** 2026-10-10（W37）

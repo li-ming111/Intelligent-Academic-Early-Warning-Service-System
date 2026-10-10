@@ -3,6 +3,7 @@ package com.academic.controller;
 import com.academic.common.dto.ApiResponse;
 import com.academic.service.CaptchaService;
 import com.academic.service.UserService;
+import com.academic.util.JwtUtil;
 import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -38,13 +39,17 @@ public class AuthController {
     /** 登录验证码的签发与校验（W1.12，2026-10-02）。 */
     private final CaptchaService captchaService;
 
+    /** 直连场景（无网关注入的 X-User-Id 头）下，从 Bearer token 里解出请求者 userId。 */
+    private final JwtUtil jwtUtil;
+
     /**
      * 构造函数
      * @param userService 用户服务
      */
-    public AuthController(UserService userService, CaptchaService captchaService) {
+    public AuthController(UserService userService, CaptchaService captchaService, JwtUtil jwtUtil) {
         this.userService = userService;
         this.captchaService = captchaService;
+        this.jwtUtil = jwtUtil;
     }
 
     /**
@@ -284,21 +289,17 @@ public class AuthController {
                 return ApiResponse.error("参数不完整");
             }
 
-            Long headerUserId = getRequestUserId(httpRequest);
-            Long userId;
-            if (headerUserId != null) {
-                if (bodyUserId != null && !bodyUserId.equals(headerUserId)) {
-                    log.warn("拒绝越权改密: 调用者={}, 请求体目标={}", headerUserId, bodyUserId);
-                    return ApiResponse.forbidden("只能修改本人的密码");
-                }
-                userId = headerUserId;
-            } else {
-                log.warn("change-password 缺少 X-User-Id（未经网关），回落到请求体 userId={}", bodyUserId);
-                userId = bodyUserId;
+            Long callerId = resolveCallerId(httpRequest);
+            if (callerId == null) {
+                // 拿不到"你是谁"就拒绝。**不回落到请求体的 `userId`** ——
+                // 那是调用方自己填的，用它就等于没有闸。
+                return ApiResponse.unauthorized("无法确定请求者身份");
             }
-            if (userId == null) {
-                return ApiResponse.error("参数不完整");
+            if (bodyUserId != null && !bodyUserId.equals(callerId)) {
+                log.warn("拒绝越权改密: 调用者={}, 请求体目标={}", callerId, bodyUserId);
+                return ApiResponse.forbidden("只能修改本人的密码");
             }
+            Long userId = callerId;
 
             userService.changePassword(userId, oldPassword, newPassword);
             return ApiResponse.success("密码修改成功");
@@ -316,6 +317,43 @@ public class AuthController {
      */
     private static String str(Object v) {
         return v == null ? null : String.valueOf(v).trim();
+    }
+
+    /**
+     * 取请求者 userId —— <b>身份只认两处，都不来自请求体</b>。
+     *
+     * <ol>
+     *   <li>{@code X-User-Id} 头：网关验签后注入的，是正常入口；</li>
+     *   <li>没有该头时，从 {@code Authorization: Bearer <token>} 自己解出
+     *       {@link JwtUtil#getUserIdFromToken} —— 直连场景。token 由本服务的密钥签发，
+     *       改了它验签就过（{@code JwtAuthenticationFilter} 也是这么做的）。</li>
+     * </ol>
+     *
+     * <p><b>2026-10-10（W37）</b>：此前这里没有第 ② 步 —— 缺头时直接 <b>回落到请求体的
+     * {@code userId}</b>（注释还把它写成"给无网关场景的本地脚本用"）。后果：绕过网关直连
+     * {@code :8082} 时，改密接口不判归属，而演示库口令统一 123456 ⇒
+     * <b>任意已认证用户可改任意账号的口令</b>。经网关有闸，所以这是"网关是唯一防线"的又一例
+     * （本仓红线：网关不是网络边界）。现在**身份永远取自 token/头，请求体里的 userId
+     * 只当"被检查对象"**。
+     */
+    private Long resolveCallerId(HttpServletRequest request) {
+        Long fromHeader = getRequestUserId(request);
+        if (fromHeader != null) {
+            return fromHeader;
+        }
+        String authHeader = request.getHeader("Authorization");
+        if (authHeader != null && authHeader.startsWith("Bearer ")) {
+            try {
+                Long fromToken = jwtUtil.getUserIdFromToken(authHeader.substring(7));
+                if (fromToken != null) {
+                    log.debug("change-password 无 X-User-Id 头，改用 token 内 userId={}", fromToken);
+                    return fromToken;
+                }
+            } catch (Exception e) {
+                log.warn("change-password 解析 token 取 userId 失败: {}", e.getMessage());
+            }
+        }
+        return null;
     }
 
     /** 从网关注入的头取请求者 userId，与消息服务里的同名方法保持同一解析口径。 */
