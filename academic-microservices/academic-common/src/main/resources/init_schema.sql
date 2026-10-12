@@ -489,34 +489,14 @@ CREATE TABLE IF NOT EXISTS `scores` (
     CONSTRAINT `fk_scores_student_id` FOREIGN KEY (`student_id`) REFERENCES `student_profile` (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
-CREATE TABLE IF NOT EXISTS `score_record` (
-    `id` bigint NOT NULL AUTO_INCREMENT,
-    `course_id` bigint NOT NULL,
-    `student_id` bigint NOT NULL,
-    `teacher_id` bigint NOT NULL,
-    `student_name` varchar(100) DEFAULT NULL,
-    `class_name` varchar(100) DEFAULT NULL,
-    `score` decimal(5,2) DEFAULT NULL,
-    `score_level` int DEFAULT NULL,
-    `semester` varchar(20) DEFAULT NULL COMMENT '学期',
-    `year` int DEFAULT NULL COMMENT '学年',
-    `remark` varchar(500) DEFAULT NULL,
-    `create_time` datetime DEFAULT CURRENT_TIMESTAMP,
-    `update_time` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    `regular_score` decimal(5,2) DEFAULT NULL,
-    `final_score` decimal(5,2) DEFAULT NULL,
-    `score_total` decimal(5,2) DEFAULT NULL,
-    `grade` varchar(20) DEFAULT NULL,
-    `grade_point` decimal(3,2) DEFAULT NULL,
-    `reason_for_change` varchar(500) DEFAULT NULL,
-    `modified_by` bigint DEFAULT NULL,
-    `created_at` datetime DEFAULT NULL,
-    `updated_at` datetime DEFAULT NULL,
-    PRIMARY KEY (`id`),
-    KEY `idx_course_id` (`course_id`),
-    KEY `idx_student_id` (`student_id`),
-    KEY `idx_teacher_id` (`teacher_id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci comment '成绩记录表';
+-- ⚠️ 这里原来有 `score_record`（教师录入暂存表）的建表语句。
+-- 2026-10-12（W39）**整表删除**，因为 W36/W38 把成绩链路全量迁到权威表 `scores` 之后，
+-- 全仓对它已 **零读零写**（判据：SQL 层 grep 零命中 + 无 mapper XML + 无 `BaseMapper<ScoreRecord>`
+-- + 活库无触发器/视图/存储过程引用）。活库那 246 行历史数据已 mysqldump 到
+-- `db_backups/score_record_drop_20261012_rollback.sql`（可逐字节还原）。
+-- 唯一还叫 "ScoreRecord" 的是 `academic-common` 里那个**只读投影类**
+-- （`ScoreRecordMapper` 的 SQL 全部 `FROM scores`，名字是历史残留），与这张表无关。
+-- 详见 FEATURES.md §8.15 与 db_backups/score_record_drop_20261012_apply.sql 的头部说明。
 
 CREATE TABLE IF NOT EXISTS `score_appeals` (
     `id` bigint NOT NULL AUTO_INCREMENT,
@@ -609,6 +589,48 @@ CREATE TABLE IF NOT EXISTS `academic_warning` (
     KEY `idx_academic_warning_student_id` (`student_id`),
     CONSTRAINT `fk_academic_warning_student_id` FOREIGN KEY (`student_id`) REFERENCES `student_profile` (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 2026-10-12（W39）加：一条预警「由哪几门课的挂科构成」。
+--
+-- **为什么是子表而不是给 academic_warning 加一列 course_id**：一条预警是学生级的聚合
+-- （`warning_rules` 的 4 条规则全是"入学以来累计挂科 N 门"，见 statistic_cycle=full_program），
+-- 司明一条预警就由 3 门课构成。单列存不下，只留"最低分那门"等于把另外两门继续丢掉。
+--
+-- 在此之前，「挂了哪几门课」**只以散文形式**躺在 academic_warning.description 里
+-- （"…（操作系统 40分、计算机基础 47分、高等数学 56.5分）…"），于是：
+--   · 教师端只能按**班级**过滤预警（classes.teacher_id），与"我在教哪门课"
+--     （courses.teacher_id）是两条不相交的路 —— 班主任看到的预警里点名的课多半不是他的课；
+--   · PC 学生端 Warnings.vue 只好用正则从 description 里**抠**出课程名（extractCourseName）。
+-- 本表把那个关系变成可查、可回读的。
+--
+-- 写作方：只有 `WarningScheduledTask.createWarning`（扫描生成预警时）。与 academic_warning
+-- 同属一次写入，由 `WarningWriter` 的 @Transactional 包住。
+-- 读取方：见 `com.academic.mapper.AcademicWarningCourseMapper`（academic-common，12 个服务共用）。
+--
+-- ⚠️ 本表是**派生数据**，只在生成预警那一刻写一次。成绩后来变了（补考通过、改分）
+--    本表**不会**跟着改 —— 那种情况下 `releaseRecoveredWarnings` 会把整条预警标成
+--    status=2（已解除），本表随之失去意义。要做"成绩回滚时重算子表"属预警重算范畴，本表不管。
+-- ⚠️ 正文 `description` 最多罗列 5 门（`MAX_COURSE_DETAIL`，超出以"等"省略），本表存**全部**
+--    挂科课 —— 本表比正文更完整，这是有意的。
+--
+-- 刻意**不加**到 courses 的外键：与同族子表 warning_release_records 一致（它连
+--    warning_id 都没有外键）。加了 FK 会让"删课"在历史预警上失败，而这是可重算的派生记录，
+--    悬空的 course_id 无害：读端用 COALESCE(courses.name, 本表 course_name) 取名字。
+CREATE TABLE IF NOT EXISTS `academic_warning_course` (
+    `id` bigint NOT NULL AUTO_INCREMENT,
+    `warning_id` bigint NOT NULL COMMENT '关联 academic_warning.id',
+    `course_id` bigint NOT NULL COMMENT '关联 courses.id（不加外键，见上方说明）',
+    -- 快照：课程被删后正文仍读得出名字。课程还在时读端以 courses.name 为准。
+    `course_name` varchar(100) DEFAULT NULL COMMENT '生成时的课程名快照',
+    -- 生成预警那一刻的 score_total，与 academic_warning.trigger_score 同一口径（ScoreCaliber）。
+    `score_total` decimal(5,2) DEFAULT NULL COMMENT '生成预警时的总评成绩',
+    `semester` int DEFAULT NULL COMMENT '该门挂科成绩所属学期',
+    `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    -- 保证重扫重写幂等（同一预警同一门课只有一行）。
+    UNIQUE KEY `uk_awc_warning_course` (`warning_id`,`course_id`),
+    KEY `idx_awc_course_id` (`course_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci comment '预警关联挂科课程明细表';
 
 CREATE TABLE IF NOT EXISTS `warning_release_records` (
     `id` bigint NOT NULL AUTO_INCREMENT,

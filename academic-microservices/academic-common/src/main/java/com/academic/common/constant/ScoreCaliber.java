@@ -186,6 +186,31 @@ public final class ScoreCaliber {
           + "  GROUP BY v.student_id)";
 
     /**
+     * 每名学生在**指定学期**的学分加权 GPA。参数：{@code #{semester}}（全局学期序号）。
+     * 列：student_id / gpa / graded_credits / course_count —— 与 {@link #STUDENT_GPA} 同一个
+     * 表达式，只是一个限定学期、一个不限定。
+     *
+     * <p><b>2026-10-10（W38）</b>：`benchmark` 的班级/专业排名端点一直收着 `semester`
+     * 参数却只回显、不参与计算（排名其实是累计 GPA）—— 参数说谎（W15 一族）。补这个常量
+     * 后，传了 `semester` 就真的按学期过滤。
+     *
+     * <p>⚠️ 与 {@link #STUDENT_GPA} 的两点差别都是刻意的：
+     * <ul>
+     *   <li>直接用 {@code FROM scores v}（不是 {@code LATEST_VALID_SCORE}）：学期是显式条件，
+     *       同一门课在该学期只会有一行，不需要再按"每门课取最新"去重；</li>
+     *   <li>只算 {@code final_score IS NOT NULL}（期末已录入），与 {@link #GPA_EXPR} 在
+     *       趋势图里的口径一致 —— "期末未录入"的行不该参与学期绩点。</li>
+     * </ul>
+     */
+    public static final String SEMESTER_STUDENT_GPA =
+            "(SELECT v.student_id, " + GPA_EXPR + " AS gpa, "
+          + "        " + GPA_DEN + " AS graded_credits, COUNT(*) AS course_count "
+          + "   FROM scores v "
+          + "   LEFT JOIN courses c ON c.id = v.course_id "
+          + "  WHERE v.semester = #{semester} AND v.final_score IS NOT NULL "
+          + "  GROUP BY v.student_id)";
+
+    /**
      * 单名学生的成绩汇总：门数、挂科门数、已修学分、GPA。
      * 参数：{@code #{studentId}}（student_profile.id）。列：totalCourses / failedCourses /
      * completedCredits / gpa / gradedCredits。

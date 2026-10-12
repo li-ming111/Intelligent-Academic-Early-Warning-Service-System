@@ -134,6 +134,36 @@ public interface ScoreMapper extends BaseMapper<Score> {
           + " ORDER BY g.gpa DESC, sp.id")
     List<Map<String, Object>> selectMajorGpaRanking(@Param("majorId") Long majorId);
 
+    /**
+     * 班级 GPA 排行榜 —— **限定学期**版。
+     *
+     * <p>2026-10-10（W38）：`/students/benchmark/{uid}/class-ranking` 与
+     * `/students/benchmark/class/{id}/comparison` 一直收 `semester` 却只回显，
+     * 排名取自累计口径（{@link #selectClassGpaRanking}）。传了学期就走这里，
+     * 数据源换 {@link com.academic.common.constant.ScoreCaliber#SEMESTER_STUDENT_GPA}。
+     * 字段与 {@link #selectClassGpaRanking} 逐列一致（前端与 {@code maskPeerPrivacy} 都按同一形状取）。
+     */
+    @Select("SELECT g.student_id AS profileId, sp.student_id AS studentNo, sp.name AS studentName, "
+          + "       sp.class_name AS className, g.gpa AS gpa, g.graded_credits AS gradedCredits, "
+          + "       sp.privacy_level AS privacyLevel "
+          + "  FROM " + ScoreCaliber.SEMESTER_STUDENT_GPA + " g "
+          + "  JOIN student_profile sp ON sp.id = g.student_id "
+          + " WHERE sp.class_id = #{classId} AND g.gpa IS NOT NULL "
+          + " ORDER BY g.gpa DESC, sp.id")
+    List<Map<String, Object>> selectSemesterClassGpaRanking(@Param("classId") Long classId,
+                                                           @Param("semester") Integer semester);
+
+    /** 专业 GPA 排行榜 —— 限定学期版。字段与口径同 {@link #selectSemesterClassGpaRanking}。 */
+    @Select("SELECT g.student_id AS profileId, sp.student_id AS studentNo, sp.name AS studentName, "
+          + "       sp.class_name AS className, g.gpa AS gpa, g.graded_credits AS gradedCredits, "
+          + "       sp.privacy_level AS privacyLevel "
+          + "  FROM " + ScoreCaliber.SEMESTER_STUDENT_GPA + " g "
+          + "  JOIN student_profile sp ON sp.id = g.student_id "
+          + " WHERE sp.major_id = #{majorId} AND g.gpa IS NOT NULL "
+          + " ORDER BY g.gpa DESC, sp.id")
+    List<Map<String, Object>> selectSemesterMajorGpaRanking(@Param("majorId") Long majorId,
+                                                           @Param("semester") Integer semester);
+
     /** 专业排名：GPA 高于该生的同专业同学数 + 1。 */
     @Select("SELECT COUNT(*) + 1 FROM " + ScoreCaliber.STUDENT_GPA + " g "
           + " JOIN student_profile sp ON sp.id = g.student_id "

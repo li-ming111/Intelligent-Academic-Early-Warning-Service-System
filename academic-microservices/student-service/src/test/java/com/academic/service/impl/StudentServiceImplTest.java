@@ -296,6 +296,97 @@ class StudentServiceImplTest {
     }
 
     // ==========================================================================
+    // W38：benchmark 的 semester 参数「收下不用」⇒ 让排名真的按学期过滤
+    //
+    // 四条端点过去都只把 semester 回显、排名取自**累计** GPA（参数说谎，W15 一族）。
+    // 现在非空学期走 selectSemester{Class,Major}GpaRanking，为空仍走累计（向后兼容）。
+    // 判据：传 1 与传 2 命中**不同**的 mapper 方法且结果不同；不传 ⇒ 累计方法。
+    // ==========================================================================
+
+    /** 排行榜行（可变 —— `maskPeerPrivacy` 会就地 put `gpaHidden`）。 */
+    private static Map<String, Object> row(long profileId, double gpa) {
+        Map<String, Object> m = new java.util.HashMap<>();
+        m.put("profileId", profileId);
+        m.put("gpa", gpa);
+        m.put("privacyLevel", 0);
+        return m;
+    }
+
+    @Test
+    void classRanking_withSemester_usesSemesterScopedQuery() {
+        StudentProfile sp = new StudentProfile();
+        sp.setId(3L);
+        sp.setUserId(27L);
+        sp.setStudentId("2023020616");
+        sp.setClassId(1L);
+        when(studentProfileMapper.selectByUserId(27L)).thenReturn(sp);
+        when(studentProfileMapper.selectById(3L)).thenReturn(sp);
+
+        // semester=1 与 semester=2 命中的是同一个 mapper 方法、但**不同的学期参数** ⇒ 结果不同
+        // 行必须可变：rankingResult 里的 maskPeerPrivacy 会往每行 put("gpaHidden", ...)。
+        List<Map<String, Object>> sem1 = List.of(row(3L, 2.0));
+        List<Map<String, Object>> sem2 = List.of(row(3L, 1.5), row(4L, 3.0));
+        when(scoreMapper.selectSemesterClassGpaRanking(1L, 1)).thenReturn(sem1);
+        when(scoreMapper.selectSemesterClassGpaRanking(1L, 2)).thenReturn(sem2);
+
+        Map<String, Object> r1 = (Map<String, Object>) service.getBenchmarkClassRanking(27L, 1L, "1");
+        Map<String, Object> r2 = (Map<String, Object>) service.getBenchmarkClassRanking(27L, 1L, "2");
+
+        assertEquals(1, r1.get("total"));
+        assertEquals(2, r2.get("total"));
+        verify(scoreMapper).selectSemesterClassGpaRanking(1L, 1);
+        verify(scoreMapper).selectSemesterClassGpaRanking(1L, 2);
+        verify(scoreMapper, never()).selectClassGpaRanking(anyLong());
+    }
+
+    /** 不传 semester ⇒ 保持累计口径（两个前端当前都不传，这条钉住向后兼容）。 */
+    @Test
+    void classRanking_withoutSemester_keepsCumulativeQuery() {
+        StudentProfile sp = new StudentProfile();
+        sp.setId(3L);
+        sp.setUserId(27L);
+        sp.setStudentId("2023020616");
+        sp.setClassId(1L);
+        when(studentProfileMapper.selectByUserId(27L)).thenReturn(sp);
+        when(studentProfileMapper.selectById(3L)).thenReturn(sp);
+        when(scoreMapper.selectClassGpaRanking(1L)).thenReturn(List.of(row(3L, 2.0)));
+
+        service.getBenchmarkClassRanking(27L, 1L, null);
+
+        verify(scoreMapper).selectClassGpaRanking(1L);
+        verify(scoreMapper, never()).selectSemesterClassGpaRanking(anyLong(), anyInt());
+    }
+
+    @Test
+    void majorRanking_withSemester_usesSemesterScopedQuery() {
+        StudentProfile sp = new StudentProfile();
+        sp.setId(3L);
+        sp.setUserId(27L);
+        sp.setStudentId("2023020616");
+        sp.setMajorId(2L);
+        when(studentProfileMapper.selectByUserId(27L)).thenReturn(sp);
+        when(studentProfileMapper.selectById(3L)).thenReturn(sp);
+        when(scoreMapper.selectSemesterMajorGpaRanking(2L, 4)).thenReturn(List.of(row(3L, 2.0)));
+
+        service.getBenchmarkMajorRanking(27L, 2L, "4");
+
+        verify(scoreMapper).selectSemesterMajorGpaRanking(2L, 4);
+        verify(scoreMapper, never()).selectMajorGpaRanking(anyLong());
+    }
+
+    @Test
+    void classComparison_withSemester_usesSemesterScopedQuery() {
+        when(scoreMapper.selectSemesterClassGpaRanking(1L, 2))
+                .thenReturn(List.of(Map.of("profileId", 3L, "gpa", 2.0)));
+
+        Map<String, Object> r = (Map<String, Object>) service.getClassBenchmarkComparison(1L, "2");
+
+        assertEquals(1, r.get("count"));
+        verify(scoreMapper).selectSemesterClassGpaRanking(1L, 2);
+        verify(scoreMapper, never()).selectClassGpaRanking(anyLong());
+    }
+
+    // ==========================================================================
     // 第四十三轮 W9：申诉指向**具体哪一次成绩**
     //
     // 守三件事：① `scoreId` 非空时 courseId 由成绩行**回填**（不再让调用方各传一个）；

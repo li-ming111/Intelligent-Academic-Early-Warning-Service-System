@@ -116,8 +116,14 @@ public class IntelligentWarningServiceImpl implements IntelligentWarningService 
                 .setCreatedAt(LocalDateTime.now())
                 .setUpdatedAt(LocalDateTime.now());
 
+        // 2026-10-12（W39）：这条路**不落** academic_warning_course 明细。
+        // 不是漏了 —— 它的契约只收 studentId/ruleId/warningLevel/warningMessage，
+        // 没有课程入参，收到的正文是自由文本、无从解析出课程。扫描那条路
+        // （WarningScheduledTask.createWarning）才是课程明细的写入方，因为只有它手里
+        // 有 ScoreCaliber.FAIL_DETAIL_BY_STUDENT 的 courseId。
+        // 这条路前端零调用方，且 fail_count 也是有意留空的（见上），性质相同。
         academicWarningMapper.insert(warning);
-        
+
         Map<String, Object> result = new HashMap<>();
         result.put("warningId", warning.getId());
         result.put("warningLevel", warning.getWarningLevel());

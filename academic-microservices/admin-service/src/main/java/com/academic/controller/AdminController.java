@@ -11,7 +11,6 @@ import com.academic.common.entity.CounselorProfile;
 import com.academic.common.entity.CollegeAdminProfile;
 import com.academic.common.entity.AcademicWarning;
 import com.academic.common.entity.Score;
-import com.academic.common.entity.ScoreRecord;
 import com.academic.common.util.ExcelUploadErrors;
 import com.academic.common.util.UpdateBodyGuard;
 import com.academic.entity.*;
@@ -24,7 +23,6 @@ import com.academic.service.CounselorService;
 import com.academic.service.UserService;
 import com.academic.service.WarningRuleService;
 import com.academic.service.StudentProfileService;
-import com.academic.service.ScoreRecordService;
 import com.academic.service.ReportTemplateService;
 import com.academic.service.StudentImportService;
 import com.academic.mapper.ClassesMapper;
@@ -33,7 +31,6 @@ import com.academic.mapper.ExportHistoryMapper;
 import com.academic.mapper.StudentProfileMapper;
 import com.academic.mapper.CounselorProfileMapper;
 import com.academic.mapper.CollegeAdminProfileMapper;
-import com.academic.mapper.ScoreRecordMapper;
 import com.academic.mapper.AcademicWarningMapper;
 import com.academic.mapper.ScoreStatMapper;
 import com.academic.mapper.UserMapper;
@@ -216,9 +213,6 @@ public class AdminController {
 
 
     @Autowired
-    private ScoreRecordMapper scoreRecordMapper;
-
-    @Autowired
     private com.academic.mapper.ScoreMapper scoreMapper;
 
     /** 成绩聚合统计（按课程/按班级）。与 {@code CollegeAdminController} 共用同一个 mapper，
@@ -226,55 +220,63 @@ public class AdminController {
     @Autowired
     private ScoreStatMapper scoreStatMapper;
 
-    @Autowired
-    private ScoreRecordService scoreRecordService;
-
     /**
-     * 把一条录入记录同步进 {@code scores}（权威成绩源）。
+     * 按 (学生, 课程, 学期) 三元组把一行成绩写进**权威表 {@code scores}**。
      *
-     * <p>查重键是 (student_id, course_id, semester) —— 带学期才能让重修成为新的一行，
-     * 而不是覆盖旧学期成绩。学期未提供时兜底为该生已有的最大学期序号，
+     * <p><b>2026-10-10（W38）：本方法取代了原来的 {@code syncToScores(ScoreRecord)}。</b>
+     * 此前管理员导入先写 {@code score_record}（教师录入暂存表）、再二跳同步进
+     * {@code scores} —— W36 已把教师端、辅导员端、导出全部迁到 {@code scores}，这是
+     * "两套成绩口径"最后一个写方。现在一步到位：两张表不可能再分叉，中间那次批量
+     * INSERT 失败也不再需要靠"顺序"来避免半截写。
+     *
+     * <p>查重键 {@code (student_id, course_id, semester)} —— 带学期才能让重修成为新的
+     * 一行，而不是覆盖旧学期成绩。学期未提供时兜底为该生已有的最大学期序号，
      * 避免新记录比历史记录更旧而被"取最新一次成绩"的口径丢弃。
      *
-     * <p>只覆盖调用方明确提供的字段。{@code final_score} 缺失时用总评成绩补齐：
-     * 该列为空会被"期末未录入"口径整体排除，导入的成绩就永远不会参与预警。
+     * <p>折算走 {@link com.academic.common.util.ScoreSyncSupport#applyToAuthoritative}，
+     * 与教师端录入共用同一份实现（等级/绩点的重算**永远**执行，不再被
+     * {@code if (grade == null)} 挡在门外）。
      *
-     * <p>折算部分走 {@link com.academic.common.util.ScoreSyncSupport#applyToAuthoritative}，
-     * 与教师端录入共用同一份实现。此前这里自己写了一份，并且把等级/绩点的重算
-     * 包在 {@code if (score.getGrade() == null)} 里 —— 更新一条已有成绩时旧值非空
-     * 就会跳过重算，于是导入一个修正后的分数，{@code score_total} 变了、
-     * {@code grade}/{@code grade_point} 还停在旧值上，
-     * 把已经统一好的口径重新写歪。
+     * @param modifiedBy 记到 {@code scores.modified_by} 的"改动人"（该课的任课教师）
+     * @return {@code true} 表示这是新增的一行，{@code false} 表示更新了已有行
      */
-    private void syncToScores(ScoreRecord sr) {
-        if (sr.getStudentId() == null || sr.getCourseId() == null) return;
-
-        String semester = sr.getSemester();
+    private boolean upsertScore(Long studentId, Long courseId, String semester,
+                                Double score, Double regularScore, Double finalScore,
+                                String remark, Integer year, Long modifiedBy) {
+        if (studentId == null || courseId == null) {
+            return false;
+        }
         if (semester == null || semester.trim().isEmpty()) {
-            Integer max = scoreMapper.selectMaxSemester(sr.getStudentId());
+            Integer max = scoreMapper.selectMaxSemester(studentId);
             semester = String.valueOf(max != null ? max : 1);
         }
 
-        Score existing = scoreMapper.selectByStudentCourseSemester(
-                sr.getStudentId(), sr.getCourseId(), semester);
+        Score existing = scoreMapper.selectByStudentCourseSemester(studentId, courseId, semester);
         boolean isNew = existing == null;
-        Score score = isNew ? new Score() : existing;
-        score.setStudentId(sr.getStudentId());
-        score.setCourseId(sr.getCourseId());
-        score.setSemester(semester);
-
+        Score target = isNew ? new Score() : existing;
+        target.setStudentId(studentId);
+        target.setCourseId(courseId);
+        target.setSemester(semester);
+        // 折算（总评→等级/绩点，并镜像 final_score）。
         com.academic.common.util.ScoreSyncSupport.applyToAuthoritative(
-                score, sr.getScore(), sr.getRegularScore(), sr.getFinalScore());
-        if (sr.getYear() != null) {
-            score.setYear(sr.getYear());
+                target, score, regularScore, finalScore);
+        if (remark != null) {
+            target.setRemark(remark);
+        }
+        if (year != null) {
+            target.setYear(year);
+        }
+        if (modifiedBy != null) {
+            target.setModifiedBy(modifiedBy);
         }
 
         if (isNew) {
-            score.setCreatedAt(LocalDateTime.now());
-            scoreMapper.insert(score);
+            target.setCreatedAt(LocalDateTime.now());
+            scoreMapper.insert(target);
         } else {
-            scoreMapper.updateById(score);
+            scoreMapper.updateById(target);
         }
+        return isNew;
     }
 
 
@@ -286,6 +288,11 @@ public class AdminController {
 
     @Autowired
     private ReportTemplateService reportTemplateService;
+
+    // 预警的「挂科课程明细」（W39）。共用实现放在 academic-common 的 com.academic.mapper 包，
+    // 12 个服务的 @MapperScan 都覆盖到，无需额外配置。
+    @Autowired
+    private com.academic.mapper.AcademicWarningCourseMapper academicWarningCourseMapper;
 
     @Value("${export.dir:./exports}")
     private String exportDir;
@@ -2051,9 +2058,29 @@ public class AdminController {
         }
     }
 
+    /**
+     * 全校预警列表（管理员）。
+     *
+     * <p><b>2026-10-12（W39）起返回 Map 而不是裸实体</b>，每条补三个此前在管理端
+     * **不存在**的字段：
+     * <ul>
+     *   <li>{@code className} —— 该预警所属班级。此前返回的是 {@code AcademicWarning}
+     *       裸实体，而该实体**没有 className 字段**，于是 PC
+     *       {@code AdminWarnings.vue:43} 的 {@code {{ w.className || '--' }}} 恒显示
+     *       {@code --}（同一条预警在教师端却显示得出班级）。</li>
+     *   <li>{@code courses} —— 这条预警由哪几门课的挂科构成（课程名/分数/学期/任课教师），
+     *       来自 {@code academic_warning_course}。</li>
+     *   <li>{@code courseNames} —— 上面课程名的"、"拼接，给卡片一行显示。</li>
+     * </ul>
+     *
+     * <p>⚠️ 返回类型从 {@code ApiResponse<List<AcademicWarning>>} 改成
+     * {@code ApiResponse<List<Map<String,Object>>>}：字段是<b>运行时补</b>的，
+     * 无法塞进那个实体。使用方只有小程序 {@code admin/warnings.vue} 与 PC
+     * {@code AdminWarnings.vue}，两边都按字段名读，不依赖类型。
+     */
     @GetMapping("/warnings")
     @SentinelResource(value = "adminApi:getWarnings", fallback = "getWarningsFallback")
-    public ApiResponse<List<AcademicWarning>> getWarnings() {
+    public ApiResponse<List<Map<String, Object>>> getWarnings() {
         try {
             // 这里原来先走 Feign（warning-service 的 /warnings/list），失败再兜底查本地库。
             // 实测：Feign 那一支**从来没成功过** —— 它返回的 data 是
@@ -2068,20 +2095,141 @@ public class AdminController {
             // （Map 里的 LocalDateTime 需要 Spring 的 ObjectMapper 才能转回实体），
             // 在那之前，留一个装样子的跨服务调用只会掩盖真实数据来源。
             List<AcademicWarning> warnings = academicWarningMapper.selectList(null);
-            return ApiResponse.success(warnings);
+
+            // 批量补班级：student_profile.class_id → classes.name。不逐行查询。
+            // （buildStudentWarningRows 里已有同款批量化做法，这里对齐它。）
+            Set<Long> profileIds = warnings.stream()
+                    .map(AcademicWarning::getStudentId)
+                    .filter(Objects::nonNull)
+                    .collect(Collectors.toSet());
+            Map<Long, StudentProfile> profileById = profileIds.isEmpty()
+                    ? Collections.emptyMap()
+                    : studentProfileMapper.selectBatchIds(profileIds).stream()
+                            .collect(Collectors.toMap(StudentProfile::getId, p -> p, (a, b) -> a));
+            Set<Long> classIds = profileById.values().stream()
+                    .map(StudentProfile::getClassId)
+                    .filter(Objects::nonNull)
+                    .collect(Collectors.toSet());
+            Map<Long, String> classNameById = classIds.isEmpty()
+                    ? Collections.emptyMap()
+                    : classesMapper.selectBatchIds(classIds).stream()
+                            .collect(Collectors.toMap(Classes::getId, c -> nz(c.getName()), (a, b) -> a));
+
+            // 批量补挂科课程明细。
+            List<Long> warningIds = warnings.stream()
+                    .map(AcademicWarning::getId)
+                    .filter(Objects::nonNull)
+                    .collect(Collectors.toList());
+            Map<Long, List<Map<String, Object>>> coursesByWarningId = new HashMap<>();
+            if (!warningIds.isEmpty()) {
+                for (Map<String, Object> row : academicWarningCourseMapper.selectByWarningIds(warningIds)) {
+                    Object wid = row.get("warningId");
+                    if (wid == null) {
+                        continue;
+                    }
+                    coursesByWarningId.computeIfAbsent(toLongValue(wid), k -> new ArrayList<>()).add(row);
+                }
+            }
+
+            List<Map<String, Object>> result = new ArrayList<>();
+            for (AcademicWarning w : warnings) {
+                StudentProfile p = w.getStudentId() == null ? null : profileById.get(w.getStudentId());
+                String className = (p != null && p.getClassId() != null)
+                        ? classNameById.get(p.getClassId())
+                        : null;
+                List<Map<String, Object>> courses =
+                        coursesByWarningId.getOrDefault(w.getId(), Collections.emptyList());
+                result.add(toWarningPayload(w, className, courses));
+            }
+            return ApiResponse.success(result);
         } catch (Exception e) {
             log.error("Get warnings failed: {}", e.getMessage());
             return ApiResponse.error(e.getMessage());
         }
     }
 
-    public ApiResponse<List<AcademicWarning>> getWarningsFallback(Throwable t) {
+    public ApiResponse<List<Map<String, Object>>> getWarningsFallback(Throwable t) {
         log.warn("adminApi:getWarnings API is degraded: {}", t.getMessage());
         return ApiResponse.error("adminApi:getWarnings API is degraded: " + t.getMessage());
     }
 
+    /** {@code Number}/{@code String} 混着的 mapper 返回值 → {@code Long}；认不出返回 null。 */
+    private static Long toLongValue(Object v) {
+        if (v == null) {
+            return null;
+        }
+        if (v instanceof Number n) {
+            return n.longValue();
+        }
+        try {
+            return Long.parseLong(String.valueOf(v).trim());
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    /**
+     * 预警实体的对外载荷（W39）。**列表与详情必须共用这一个方法** ——
+     * 两者曾各拼一份：列表带 {@code className/courses}，详情回裸实体，
+     * 于是小程序点开一条预警时用详情响应覆盖列表行，刚补上的两样东西又没了。
+     *
+     * <p>字段名与原先逐行拼的那份完全一致，不新增也不改名，避免前端两处口径。
+     */
+    private Map<String, Object> toWarningPayload(AcademicWarning w,
+                                                 String className,
+                                                 List<Map<String, Object>> courses) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("id", w.getId());
+        m.put("studentId", w.getStudentId());
+        m.put("studentName", w.getStudentName());
+        m.put("ruleId", w.getRuleId());
+        m.put("type", w.getType());
+        m.put("title", w.getTitle());
+        m.put("description", w.getDescription());
+        m.put("warningLevel", w.getWarningLevel());
+        m.put("warningMessage", w.getWarningMessage());
+        m.put("triggerScore", w.getTriggerScore());
+        m.put("failCount", w.getFailCount());
+        m.put("gpaBefore", w.getGpaBefore());
+        m.put("gpaAfter", w.getGpaAfter());
+        m.put("status", w.getStatus());
+        m.put("appealStatus", w.getAppealStatus());
+        m.put("handledBy", w.getHandledBy());
+        m.put("handleResult", w.getHandleResult());
+        m.put("handledAt", w.getHandledAt());
+        m.put("createdAt", w.getCreatedAt());
+        m.put("updatedAt", w.getUpdatedAt());
+        // W39 新增的三样。
+        m.put("className", className);
+        m.put("courses", courses);
+        m.put("courseNames", courses.stream()
+                .map(c -> c.get("courseName"))
+                .filter(Objects::nonNull)
+                .map(String::valueOf)
+                .collect(Collectors.joining("、")));
+        return m;
+    }
+
+    /** 单条预警走 {@link #toWarningPayload}：同一套补全逻辑，只是当场查一次班级与课程明细。 */
+    private Map<String, Object> enrichWarning(AcademicWarning w) {
+        String className = null;
+        if (w.getStudentId() != null) {
+            StudentProfile p = studentProfileMapper.selectById(w.getStudentId());
+            if (p != null && p.getClassId() != null) {
+                Classes c = classesMapper.selectById(p.getClassId());
+                if (c != null) {
+                    className = nz(c.getName());
+                }
+            }
+        }
+        List<Map<String, Object>> courses = w.getId() == null
+                ? Collections.emptyList()
+                : academicWarningCourseMapper.selectByWarningIds(List.of(w.getId()));
+        return toWarningPayload(w, className, courses);
+    }
+
     @GetMapping("/warnings/{id}")
-    public ApiResponse<AcademicWarning> getWarningById(@PathVariable Long id) {
+    public ApiResponse<Map<String, Object>> getWarningById(@PathVariable Long id) {
         try {
             // 原实现同上：把 /warnings/list 的 Map 载荷强转成 List 再循环找 id，
             // 因为这个接口**没有兜底分支**，强转异常直接变成 HTTP 200 + code:500
@@ -2089,7 +2237,7 @@ public class AdminController {
             // 按主键查本地库即可，与列表同一个数据源，天然一致。
             AcademicWarning warning = academicWarningMapper.selectById(id);
             if (warning != null) {
-                return ApiResponse.success(warning);
+                return ApiResponse.success(enrichWarning(warning));
             }
             return ApiResponse.notFound("Warning not found");
         } catch (Exception e) {
@@ -2870,31 +3018,14 @@ public class AdminController {
     }
 
     /** 逐行处理一批成绩行（键：studentId=学号、courseName、score、semester 及可选列）。 */
+    @Transactional(rollbackFor = Exception.class)
     private ApiResponse<Map<String, Object>> applyScoreRows(List<Map<String, Object>> data) {
         Map<String, Object> result = new HashMap<>();
-        int successCount = 0, skipCount = 0, updateCount = 0, syncedCount = 0, syncFailCount = 0;
+        int successCount = 0, skipCount = 0, updateCount = 0, insertCount = 0;
         List<Map<String, Object>> errors = new ArrayList<>();
-        List<ScoreRecord> batchToInsert = new ArrayList<>();
-        // 待同步到 scores 权威表的行；**插入成功之后**才同步（见循环后面的说明）。
-        List<ScoreRecord> toSync = new ArrayList<>();
 
         try {
             log.info("Import scores request, total rows: {}", data.size());
-
-            // 动态字段映射表：Excel列名 → ScoreRecord setter
-            Map<String, java.util.function.BiConsumer<ScoreRecord, String>> fieldMapping = new HashMap<>();
-            fieldMapping.put("studentName",   (sr, v) -> sr.setStudentName(v));
-            fieldMapping.put("className",     (sr, v) -> sr.setClassName(v));
-            fieldMapping.put("score",         (sr, v) -> { if (isNumber(v)) sr.setScore(Double.parseDouble(v)); });
-            fieldMapping.put("scoreLevel",    (sr, v) -> { if (isNumber(v)) sr.setScoreLevel(Integer.parseInt(v)); });
-            fieldMapping.put("semester",      (sr, v) -> sr.setSemester(v));
-            fieldMapping.put("remark",        (sr, v) -> sr.setRemark(v));
-            fieldMapping.put("regularScore",  (sr, v) -> { if (isNumber(v)) sr.setRegularScore(Double.parseDouble(v)); });
-            fieldMapping.put("finalScore",    (sr, v) -> { if (isNumber(v)) sr.setFinalScore(Double.parseDouble(v)); });
-            fieldMapping.put("grade",         (sr, v) -> sr.setGrade(v));
-            fieldMapping.put("gradePoint",    (sr, v) -> { if (isNumber(v)) sr.setGradePoint(Double.parseDouble(v)); });
-            fieldMapping.put("year",          (sr, v) -> { if (isNumber(v)) sr.setYear(Integer.parseInt(v)); });
-            fieldMapping.put("reasonForChange",(sr, v) -> sr.setReasonForChange(v));
 
             // 缓存
             Map<String, com.academic.entity.StudentProfile> profileCache = new HashMap<>();
@@ -2902,7 +3033,7 @@ public class AdminController {
 
             for (int i = 0; i < data.size(); i++) {
                 Map<String, Object> item = data.get(i);
-                // Excel 入口带了真实行号（见 importScores）；JSON 入口没有再按下标推。
+                // Excel 入口带了真实行号（见 importScores）；其它入口还没有。
                 Object excelRow = item.get("__row");
                 int rowNum = excelRow instanceof Number ? ((Number) excelRow).intValue() : i + 2;
                 String studentNo = getStr(item, "studentId");
@@ -2917,6 +3048,16 @@ public class AdminController {
                 }
                 if (scoreVal == null) {
                     errors.add(Map.of("row", rowNum, "reason", "分数为空")); skipCount++; continue;
+                }
+                // scores.semester 是 int NOT NULL；score_record.semester 是 varchar。
+                // 表头允许学期是 "2025-2026-1" 这种学年串，scores 只认 1~20 的整数，
+                // 解析不出来就如实记错，**不**把 "abc" 塞进去撞 Incorrect integer value。
+                String semesterText = getStr(item, "semester");
+                Integer semester = parseSemesterIndex(semesterText);
+                if (semesterText != null && !semesterText.isEmpty() && semester == null) {
+                    errors.add(Map.of("row", rowNum,
+                            "reason", "学期必须是 1~20 的数字（或 2025-2026-1 这种学年格式）：" + semesterText));
+                    skipCount++; continue;
                 }
 
                 // 查学生（缓存）
@@ -2935,7 +3076,8 @@ public class AdminController {
                 if (course == null) {
                     course = courseService.getOne(new QueryWrapper<Course>().eq("name", courseName));
                     if (course == null) {
-                        List<Course> like = courseService.list(new QueryWrapper<Course>().like("name", courseName));
+                        List<Course> like = courseService.list(
+                                new QueryWrapper<Course>().like("name", courseName));
                         course = like.isEmpty() ? null : like.get(0);
                     }
                     if (course != null) courseCache.put(courseName, course);
@@ -2944,111 +3086,141 @@ public class AdminController {
                     errors.add(Map.of("row", rowNum, "reason", "课程不存在: " + courseName)); skipCount++; continue;
                 }
 
-                // 查重：带上学期。不带的话重修会覆盖旧学期记录，
-                // 使 score_record 与 scores 两表的行数对不上。
-                String rowSemester = getStr(item, "semester");
-                QueryWrapper<ScoreRecord> dupQuery = new QueryWrapper<ScoreRecord>()
-                        .eq("student_id", profile.getId())
-                        .eq("course_id", course.getId());
-                if (rowSemester != null && !rowSemester.trim().isEmpty()) {
-                    dupQuery.eq("semester", rowSemester.trim());
+                // 分数：数值列直接用；文本单元格里也认数字
+                Double score = toDoubleOrNull(scoreVal);
+                if (score == null) {
+                    errors.add(Map.of("row", rowNum, "reason", "分数不是数字: " + scoreVal)); skipCount++; continue;
                 }
-                ScoreRecord existing = scoreRecordMapper.selectOne(dupQuery);
+                Double regularScore = toDoubleOrNull(item.get("regularScore"));
+                Double finalScore = toDoubleOrNull(item.get("finalScore"));
 
-                ScoreRecord sr = existing != null ? existing : new ScoreRecord();
-                sr.setStudentId(profile.getId());
-                sr.setCourseId(course.getId());
-                // score_record.teacher_id 是 NOT NULL 且**没有默认值** —— 不补的话整批 INSERT
-                // 会以 "Field 'teacher_id' doesn't have a default value" 失败。
-                // 这不是本轮换契约才引入的：JSON 那条入口同样从不设它，所以这个端点在
-                // 两个意义上都是坏的（前端发不进来 + 就算发进来也写不进去）。W19 实测确认。
-                // 记成**这门课的任课教师**，与写进 course_id 的成绩归属一致；
-                // 已有行保留它原来的录入人，不覆盖。
-                if (sr.getTeacherId() == null) {
-                    sr.setTeacherId(course.getTeacherId());
-                }
-                // 默认值从profile补
-                if (sr.getStudentName() == null) sr.setStudentName(profile.getName());
-                if (sr.getClassName() == null) sr.setClassName(profile.getClassName());
-
-                // 动态映射所有Excel列 → ScoreRecord字段
-                for (Map.Entry<String, Object> col : item.entrySet()) {
-                    String key = col.getKey();
-                    Object value = col.getValue();
-                    if (value == null) continue;
-                    if ("studentId".equals(key) || "courseName".equals(key)) continue;
-                    java.util.function.BiConsumer<ScoreRecord, String> setter = fieldMapping.get(key);
-                    if (setter != null) setter.accept(sr, String.valueOf(value));
-                }
-
-                // 分数等级自动算（未手动指定时）
-                //
-                // 等级/绩点/总评原来只算 score_level 这一个 —— 实测导入出来的行
-                // score_record.grade 是 NULL，而 scores.grade 是 "A-"：同一份成绩
-                // 在暂存表和权威表里各说各话。折算口径统一走 ScoreSyncSupport，
-                // 与 ScoreRecordService.applyDerived 是同一份实现（不另写一套）。
-                if (sr.getScore() != null) {
-                    double s = sr.getScore();
-                    if (sr.getScoreLevel() == null) {
-                        sr.setScoreLevel(com.academic.common.util.ScoreSyncSupport.scoreToLevel(s));
-                    }
-                    if (sr.getScoreTotal() == null) sr.setScoreTotal(s);
-                    if (sr.getGrade() == null) {
-                        sr.setGrade(com.academic.common.util.ScoreSyncSupport.scoreToGrade(s));
-                    }
-                    if (sr.getGradePoint() == null) {
-                        sr.setGradePoint(com.academic.common.util.ScoreSyncSupport.scoreToGpa(s).doubleValue());
+                // 学年优先用表里给的，其次由 (学号前四位 + 学期) 推算，推不出来就留空
+                Integer year = toIntOrNull(item.get("year"));
+                if (year == null) {
+                    year = entranceYear(profile.getStudentId());
+                    if (year != null && semester != null && semester >= 1) {
+                        year = year + (semester - 1) / 2;
+                    } else {
+                        year = null;
                     }
                 }
 
-                if (existing != null) {
-                    sr.setUpdatedAt(LocalDateTime.now());
-                    scoreRecordService.updateById(sr);
-                    updateCount++;
+                // 直写权威表 scores：查重键 (学生, 课程, 学期)，新增/更新一次判定。
+                // 这一步取代了原来"先写 score_record、再 syncToScores"的两跳
+                // （W38），于是两张表不可能再分叉，半截写的问题从根上消失。
+                boolean isNew = upsertScore(profile.getId(), course.getId(),
+                        semester == null ? null : String.valueOf(semester),
+                        score, regularScore, finalScore, getStr(item, "remark"), year,
+                        course.getTeacherId());
+                if (isNew) {
+                    insertCount++;
                 } else {
-                    sr.setCreatedAt(LocalDateTime.now());
-                    sr.setUpdatedAt(LocalDateTime.now());
-                    batchToInsert.add(sr);
+                    updateCount++;
                 }
                 successCount++;
-                toSync.add(sr);
             }
 
-            if (!batchToInsert.isEmpty()) scoreRecordService.saveBatch(batchToInsert);
-
-            // 同步到 scores 表（权威成绩源）。不写这一步，导入的成绩在预警引擎和
-            // 学生端统计里就等于不存在。
-            //
-            // ⚠️ **必须放在 saveBatch 之后**（W19 改）。原实现把它放在循环里、saveBatch 之前，
-            // 于是批量 INSERT 一旦整体失败（实测正是 teacher_id 那次），scores 里已经留下
-            // 一批权威成绩行、score_record 却一行都没有 —— 半截写：学生的成绩单上凭空多出
-            // 几门课，而"录入记录"里查无此行。顺序倒过来，插入失败时两表都干净。
-            for (ScoreRecord sr : toSync) {
-                try {
-                    syncToScores(sr);
-                    syncedCount++;
-                } catch (Exception e) {
-                    log.warn("同步成绩到 scores 表失败: studentId={}, courseId={}: {}",
-                            sr.getStudentId(), sr.getCourseId(), e.getMessage());
-                    syncFailCount++;
-                }
-            }
-
-            result.put("synced", syncedCount);
-            result.put("syncFailed", syncFailCount);
             result.put("total", data.size());
             result.put("success", successCount);
-            result.put("inserted", batchToInsert.size());
+            result.put("inserted", insertCount);
             result.put("updated", updateCount);
             result.put("skipped", skipCount);
             result.put("errors", errors);
-            log.info("Import finished: total={}, insert={}, update={}, skip={}", data.size(), batchToInsert.size(), updateCount, skipCount);
+            log.info("Import finished: total={}, insert={}, update={}, skip={}",
+                    data.size(), insertCount, updateCount, skipCount);
             return ApiResponse.success(result);
 
         } catch (Exception e) {
             log.error("Import scores failed", e);
             result.put("success", successCount);
             return ApiResponse.error("导入异常: " + e.getMessage());
+        }
+    }
+
+    /**
+     * 学期索引统一解析。{@code scores.semester} 是 {@code int NOT NULL}，只认 1~20 的序号；
+     * {@code score_record.semester} 是 varchar，历史上管理员填过各种写法，所以这里要宽容地认：
+     * <ul>
+     *   <li>{@code "5"} / {@code " 5 "} ⇒ 5</li>
+     *   <li>{@code "2023-2024第一学期"} / {@code "2023-2024-1"} ⇒ 末段的 {@code 1}</li>
+     *   <li>{@code "2024-2025第二学期"} ⇒ 2（中文数字也认，模板里给的就是这种样例）</li>
+     * </ul>
+     * 认不出来（如 {@code "abc"}、{@code "第一学期"} 没有学年前缀）⇒ {@code null}，
+     * 由调用方记成该行的错误，**不**把非数字塞进 int 列撞 {@code Incorrect integer value}。
+     */
+    private static Integer parseSemesterIndex(String semester) {
+        if (semester == null) {
+            return null;
+        }
+        String s = semester.trim();
+        if (s.isEmpty()) {
+            return null;
+        }
+        // 直接是整数（或 "2023-2024-1" 这种学年-序号写法）
+        int dash = s.lastIndexOf('-');
+        String tail = dash >= 0 ? s.substring(dash + 1).trim() : s;
+        Integer v = toIntOrNull(tail);
+        if (v != null) {
+            return (v >= 1 && v <= 20) ? v : null;
+        }
+        // 中文数字写法："2023-2024第一学期" ⇒ 1、"第二学期" ⇒ 2
+        Integer cn = chineseSemesterNo(s);
+        return (cn != null && cn >= 1 && cn <= 20) ? cn : null;
+    }
+
+    /** 从 "…第一学期/…第二学期/…第N学期" 里取那个序号；取不到返回 null。 */
+    private static Integer chineseSemesterNo(String text) {
+        int idx = text.lastIndexOf("第");
+        if (idx < 0 || idx + 1 >= text.length()) {
+            return null;
+        }
+        char c = text.charAt(idx + 1);
+        return switch (c) {
+            case '一' -> 1;
+            case '二' -> 2;
+            case '三' -> 3;
+            case '四' -> 4;
+            case '五' -> 5;
+            case '六' -> 6;
+            case '七' -> 7;
+            case '八' -> 8;
+            case '九' -> 9;
+            case '十' -> 10;
+            default -> toIntOrNull(String.valueOf(c));
+        };
+    }
+
+    /** 学号前四位即入学年；不是四位数字、或不在合理年份区间时返回 null。 */
+    private static Integer entranceYear(String studentNo) {
+        if (studentNo == null || studentNo.length() < 4) {
+            return null;
+        }
+        Integer y = toIntOrNull(studentNo.substring(0, 4));
+        return (y != null && y >= 1900 && y <= 2100) ? y : null;
+    }
+
+    private static Double toDoubleOrNull(Object value) {
+        if (value == null) {
+            return null;
+        }
+        try {
+            return Double.parseDouble(String.valueOf(value).trim());
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    private static Integer toIntOrNull(Object value) {
+        if (value == null) {
+            return null;
+        }
+        if (value instanceof Number n) {
+            return n.intValue();
+        }
+        try {
+            return Integer.parseInt(String.valueOf(value).trim());
+        } catch (NumberFormatException e) {
+            return null;
         }
     }
 

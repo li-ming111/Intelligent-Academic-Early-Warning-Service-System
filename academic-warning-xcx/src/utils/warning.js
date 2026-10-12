@@ -134,7 +134,15 @@ export function normalizeWarning(raw) {
     isHandled: warningStatus(statusRaw) === WARNING_STATUS.HANDLED,
     isDispelled: warningStatus(statusRaw) === WARNING_STATUS.DISPELLED,
     createdDate: formatDate(pick('createdAt', 'created_at'), true),
-    handledDate: formatDate(pick('handledAt', 'handled_at'), true)
+    handledDate: formatDate(pick('handledAt', 'handled_at'), true),
+    // W39 挂科课程明细（academic_warning_course）。此前预警只有一句散文正文，
+    // 「挂了哪几门课」无处可读；后端现在回 courses（数组）+ courseNames（拼串）。
+    // 缺失时归成空数组/空串，页面 v-if 判长度即可，不用自己兜 null。
+    className: pick('className', 'class_name') || '',
+    courses: Array.isArray(row.courses) ? row.courses : [],
+    courseNames: pick('courseNames', 'course_names') || '',
+    // 只有教师端那条路会回它；其余角色的载荷里没有这个键 ⇒ 恒 false，不影响。
+    involvesMyCourse: row.involvesMyCourse === true
   }
 }
 

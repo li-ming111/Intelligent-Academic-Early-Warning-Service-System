@@ -3,7 +3,6 @@ package com.academic.common.config;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.CommandLineRunner;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.io.ClassPathResource;
@@ -55,7 +54,10 @@ public class DataInitializer {
         EXPECTED_COLUMNS.put("student_profile", 13);
         EXPECTED_COLUMNS.put("teacher_profile", 8);
         EXPECTED_COLUMNS.put("counselor_profiles", 21);
-        EXPECTED_COLUMNS.put("colleges", 9);
+        // 2026-10-12（W39）：9 → 7。这一条**本来就写错了**（活库与 init_schema.sql 都是 7 列），
+        // 于是每个服务每次启动都把它报成一处"漂移"。同一个自检已经把 3 处过期基线一直报着红色，
+        // 报久了就没人看 —— 而它正是本仓用来逮 schema 变更的机制。三处一起订正（见下）。
+        EXPECTED_COLUMNS.put("colleges", 7);
         EXPECTED_COLUMNS.put("majors", 9);
         EXPECTED_COLUMNS.put("classes", 8);
         EXPECTED_COLUMNS.put("courses", 11);
@@ -63,15 +65,34 @@ public class DataInitializer {
         // 判据是"相等"，加了列不改这行 ⇒ 每个服务启动都会 ERROR 报"少列"，
         // 那声警报本身是对的（它逮到了这次 schema 变更），不更新就等于把自己的自检喂瞎。
         EXPECTED_COLUMNS.put("scores", 15);
-        EXPECTED_COLUMNS.put("score_record", 22);
+        // 2026-10-12（W39）：`score_record` 整条基线**移除**（原为 22）。
+        // W36/W38 把成绩链路全量迁到权威表 scores 后，这张表全仓零读零写，
+        // 已随 db_backups/score_record_drop_20261012_apply.sql 从活库与 init_schema.sql 一并删掉。
+        // 基线留着的话，每个服务每次启动都会报 `score_record(表不存在)` —— 一声永远修不掉的假警报。
         EXPECTED_COLUMNS.put("warning_rules", 24);
-        EXPECTED_COLUMNS.put("academic_warning", 21);
-        EXPECTED_COLUMNS.put("assistance_plans", 8);
+        // 2026-10-12（W39）：21 → 22。这一条**本来就写错了**（活库与 init_schema.sql 都是 22 列，
+        // 那 22 列里含 fail_count）。基线写 21 与上一条 9→7 是同一种过期，一并订正。
+        EXPECTED_COLUMNS.put("academic_warning", 22);
+        // 2026-10-12（W39）：8 → 9。同上，活库与 init_schema.sql 都是 9 列（多 progress / progress_note）。
+        EXPECTED_COLUMNS.put("assistance_plans", 9);
         EXPECTED_COLUMNS.put("subscription_preferences", 13);
     }
 
+    /**
+     * ⚠️ <b>这里曾经有个 {@code @ConditionalOnBean(DataSource.class)}（2026-07-17 加入，2026-10-12 W39 删除），
+     * 它让整个组件一次都没跑过。</b>
+     *
+     * <p>机制：{@code @ConditionalOnBean} 只在<b>用户自己声明</b>的 bean 上可靠。
+     * 不写 {@code @Bean DataSource} 时它是**竞态**的 —— 评估这个条件时，自动配置的数据源
+     * 可能还没注册，于是条件判假、本 bean 被静默跳过。后果不是报错，而是
+     * "建库 + 种子数据 + 结构自检"**全部不发**：{@code logs/} 里 {@code 结构自检} 零命中即是证据。
+     *
+     * <p>把条件去掉是安全的：11 个依赖本模块的服务（除 gateway 外）都配了 {@code spring.datasource}，
+     * 各自都会有一个 {@code DataSource}；而 gateway 根本不依赖 academic-common（已核 pom）。
+     * 万一将来真有服务引了本模块又没配数据源，Spring 会在启动时**明确报错**
+     * （"required a bean of type 'javax.sql.DataSource'"）—— 这比"静默不跑"好得多。
+     */
     @Bean
-    @ConditionalOnBean(DataSource.class)
     public CommandLineRunner initDatabase(DataSource dataSource) {
         return args -> {
             try (Connection conn = dataSource.getConnection();
@@ -156,7 +177,8 @@ public class DataInitializer {
         } else {
             log.error("[DataInit] 结构自检发现 {} 处漂移：{}。"
                     + "init_schema.sql 已与线上库脱节，或线上库被手工改过列；"
-                    + "请以线上库为准重建该文件（见 db_backups/rebuild_schema.py）。",
+                    + "三处要一起改：init_schema.sql、活库、本表 EXPECTED_COLUMNS"
+                    + "（⚠️ 别跑 db_backups/rebuild_schema.py —— 它从静态 dump 重建 init_schema.sql，会把新表/新列抹掉）。",
                     drift.size(), String.join(", ", drift));
         }
     }

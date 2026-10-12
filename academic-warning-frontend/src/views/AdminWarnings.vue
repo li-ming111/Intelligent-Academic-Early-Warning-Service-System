@@ -39,7 +39,15 @@
             <span class="awcb-sts" :class="warningStatusKey(w.status)">{{ warningStatusText(w.status) }}</span>
           </div>
           <p class="awcb-title">{{ w.title || w.warningMessage || w.description }}</p>
+          <!-- W39：挂科课程明细。此前管理员端只有一句散文正文，还得靠正则从里面抠课程名。 -->
+          <div class="awcb-courses" v-if="(w.courses || []).length">
+            <span v-for="c in w.courses" :key="c.courseId" class="awcb-course">
+              {{ c.courseName }}<b>{{ fmtScore(c.scoreTotal) }}</b>
+            </span>
+          </div>
           <div class="awcb-meta">
+            <!-- W39：此前 /admin/warnings 直接回裸实体、没有 className，这一列**恒为 '--'**。
+                 后端现在批量补了（与教师端同一条预警能显示的班级终于一致）。 -->
             <span>{{ w.className || '--' }}</span>
             <span>{{ fmtTime(w.createdAt) }}</span>
           </div>
@@ -113,6 +121,7 @@ const paged = computed(() => filtered.value.slice((page.value - 1) * pageSize.va
 const totalPages = computed(() => Math.ceil(filtered.value.length / pageSize.value))
 
 function levelLabel(l) { return l >= 3 ? '严重' : l === 2 ? '中度' : '轻度' }
+function fmtScore(s) { if (s === null || s === undefined) return '--'; return String(Number(s)) }
 function fmtTime(t) { if (!t) return ''; const d = new Date(t); return d.toLocaleDateString('zh-CN') + ' ' + d.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) }
 
 function quickProcess(w) { processTarget.value = w; processNote.value = ''; dialogVisible.value = true }
@@ -247,6 +256,10 @@ function aiAnalyzeWarning () {
 .awcb-sts.dispelled { background: #f3f4f6; color: #6b7280; }
 .awcb-title { margin: 4px 0; font-size: 12px; color: #64748b; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 360px; }
 .awcb-meta { display: flex; gap: 10px; font-size: 11px; color: #94a3b8; }
+/* W39 挂科课程明细 */
+.awcb-courses { display: flex; flex-wrap: wrap; gap: 6px; margin: 5px 0; }
+.awcb-course { font-size: 11px; color: #64748b; background: #f1f5f9; border: 1px solid #e2e8f0; border-radius: 5px; padding: 1px 7px; display: inline-flex; align-items: center; gap: 4px; }
+.awcb-course b { color: #ef4444; font-weight: 600; }
 .awc-btn { padding: 5px 14px; border-radius: 6px; border: 1px solid #93c5fd; background: #eff6ff; color: #2563eb; font-size: 12px; cursor: pointer; transition: all .2s; flex-shrink: 0; }
 .awc-btn:hover { background: #2563eb; color: #fff; }
 .awc-done { font-size: 12px; color: #16a34a; flex-shrink: 0; }

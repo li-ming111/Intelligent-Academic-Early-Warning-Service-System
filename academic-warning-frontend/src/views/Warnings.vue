@@ -170,10 +170,13 @@ async function loadWarnings() {
     const uid = getUserId()
     const res = await studentAPI.getWarnings(uid)
     if (Array.isArray(res)) {
+      // W39：`courseName` 原来是用正则从 description 散文里**抠**出来的（见已删除的
+      // extractCourseName），抠不出来就空着、抠错了就是编造。后端现在回真实明细
+      // `courses`（academic_warning_course）与拼好的 `courseNames`，直接用。
       allWarnings.value = res.map(w => ({
         ...w,
         warningLevel: translateLevel(w.warningLevel),
-        courseName: extractCourseName(w.description)
+        courseName: w.courseNames || ''
       }))
     }
   } catch (e) { console.error('加载预警失败', e) }
@@ -231,17 +234,6 @@ function appealStatusType(s) {
   if (s === 3) return 'info'
   return 'warning'
 }
-function extractCourseName(desc) {
-  if (!desc) return ''
-  // 去掉 "第X学期" 前缀
-  let text = desc.replace(/第\d+学期/g, '')
-  // 匹配格式: 课程名(分数分) 如 "大学英语不及格(51分)" → "大学英语"
-  // 使用懒匹配 {2,6}? 避免把 "不及格" 当作课程名的一部分
-  const match = text.match(/([\u4e00-\u9fa5]{2,6}?)[(（]?\d+\.?\d*分?/)
-  if (match) return match[1].replace(/不及格$/, '')
-  return ''
-}
-
 function viewDetails(row) { selectedWarning.value = row; detailVisible.value = true }
 function openAppealDialog(row) {
   appealForm.value = { warningId: row.id, courseName: row.courseName || '', warningTitle: row.title || '学业预警', appealReason: '', appealDesc: '' }

@@ -8,6 +8,7 @@ import com.academic.mapper.ScoreReadMapper;
 import com.academic.mapper.WarningReleaseRecordMapper;
 import com.academic.mapper.WarningRuleMapper;
 import com.academic.notify.WarningNotifier;
+import com.academic.service.WarningWriter;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.EnableScheduling;
@@ -85,17 +86,20 @@ public class WarningScheduledTask {
     private final WarningRuleMapper warningRuleMapper;
     private final WarningReleaseRecordMapper warningReleaseRecordMapper;
     private final WarningNotifier warningNotifier;
+    private final WarningWriter warningWriter;
 
     public WarningScheduledTask(ScoreReadMapper scoreReadMapper,
                                 AcademicWarningMapper academicWarningMapper,
                                 WarningRuleMapper warningRuleMapper,
                                 WarningReleaseRecordMapper warningReleaseRecordMapper,
-                                WarningNotifier warningNotifier) {
+                                WarningNotifier warningNotifier,
+                                WarningWriter warningWriter) {
         this.scoreReadMapper = scoreReadMapper;
         this.academicWarningMapper = academicWarningMapper;
         this.warningRuleMapper = warningRuleMapper;
         this.warningReleaseRecordMapper = warningReleaseRecordMapper;
         this.warningNotifier = warningNotifier;
+        this.warningWriter = warningWriter;
     }
 
     /** 每天凌晨 2:00 全量扫描。 */
@@ -434,10 +438,14 @@ public class WarningScheduledTask {
                 .setFailCount(failCount)
                 .setStatus(0)
                 .setCreatedAt(LocalDateTime.now());
-        academicWarningMapper.insert(warning);
+        // 2026-10-12（W39）：改由 WarningWriter 落库 —— 除了父行，还要为 detail 里
+        // **每一门**挂科课写一行 academic_warning_course。两处写必须原子（半截数据会让
+        // 教师端"这条预警涉不涉及我教的课"得出错答案），而 @Transactional 不能加在本类的
+        // 私有方法上（同类自调用不过代理，是假事务），所以抽到了那个 bean 里。
+        warningWriter.insertWarningWithCourses(warning, detail);
 
-        log.info("生成预警：学生 {}（{}）挂科 {} 门，命中规则「{}」，等级 {}",
-                studentName, studentId, failCount, rule.rule().getRuleName(),
+        log.info("生成预警：学生 {}（{}）挂科 {} 门，涉及 {} 门课程，命中规则「{}」，等级 {}",
+                studentName, studentId, failCount, detail.size(), rule.rule().getRuleName(),
                 rule.rule().getWarningLevel());
 
         warningNotifier.notifyNewWarning(warning);

@@ -5,6 +5,9 @@
     <view class="filter-wrap">
       <filter-bar v-model="statusFilter" :options="statusOptions" />
       <filter-bar v-model="levelFilter" :options="levelOptions" />
+      <!-- W39：这条预警涉不涉及我教的课，此前在教师端完全看不出来。
+           《高等数学》的于凤海打开司明的预警，正文点名三门课，其中两门是别的老师的。 -->
+      <filter-bar v-model="mineFilter" :options="mineOptions" />
     </view>
 
     <view class="page-body page-body--tabbar">
@@ -47,11 +50,21 @@
                 <text class="wrow__class">{{ w.className }}</text>
               </view>
               <text class="wrow__desc">{{ w.description || '暂无说明' }}</text>
+              <!-- W39：挂科课程明细（库里真实的关系）+ 哪几门是我教的 -->
+              <view v-if="w.courses.length" class="wrow__courses">
+                <text
+                  v-for="c in w.courses"
+                  :key="c.courseId"
+                  class="course-chip"
+                  :class="{ 'course-chip--mine': c.courseTeacherId === userId }"
+                >{{ c.courseName }} {{ fmtScore(c.scoreTotal) }}</text>
+              </view>
               <text class="wrow__time">{{ w.createdDate }}</text>
             </view>
             <view class="wrow__right">
               <warning-tag :level="w.level" />
               <text class="tag" :class="warningStatusTagClass(w.status)">{{ w.statusText }}</text>
+              <text v-if="w.involvesMyCourse" class="tag tag--mine">我教的课</text>
             </view>
           </view>
         </view>
@@ -82,6 +95,23 @@
           <view class="kv__row">
             <text class="kv__k">生成时间</text>
             <text class="kv__v">{{ current.createdDate || '--' }}</text>
+          </view>
+        </view>
+
+        <view v-if="current.courses && current.courses.length" class="kv">
+          <view class="kv__row">
+            <text class="kv__k">挂科课程</text>
+            <text class="kv__v">{{ current.courses.length }} 门</text>
+          </view>
+          <view
+            v-for="c in current.courses"
+            :key="c.courseId"
+            class="detail__course"
+          >
+            <text class="detail__course-name">{{ c.courseName }}</text>
+            <text class="detail__course-score">{{ fmtScore(c.scoreTotal) }} 分</text>
+            <text v-if="c.semester" class="detail__course-sem">第 {{ c.semester }} 学期</text>
+            <text v-if="c.courseTeacherId === userId" class="tag tag--mine">我教的课</text>
           </view>
         </view>
 
@@ -139,6 +169,14 @@ const levelOptions = [
   { label: '轻度', value: 'low' }
 ]
 
+/** W39 课程归属筛选。和上两个一样是**客户端过滤**（数据量几十条），
+ *  所以取值直接对 `involvesMyCourse` 这个布尔，不走 onlyMine 请求参数。 */
+const mineFilter = ref('all')
+const mineOptions = [
+  { label: '全部课程', value: 'all' },
+  { label: '仅涉及我教的课', value: 'mine' }
+]
+
 const pendingCount = computed(() => warnings.value.filter(w => w.isPending).length)
 const criticalCount = computed(() => warnings.value.filter(w => w.level === 3).length)
 
@@ -153,6 +191,7 @@ const filtered = computed(() => warnings.value.filter((w) => {
   // 于是"已解除"永远筛不出来）
   if (statusFilter.value !== 'all' && w.statusKey !== statusFilter.value) return false
   if (levelFilter.value !== 'all' && w.levelKey !== levelFilter.value) return false
+  if (mineFilter.value === 'mine' && !w.involvesMyCourse) return false
   return true
 }))
 
@@ -172,6 +211,12 @@ async function load() {
   } finally {
     loading.value = false
   }
+}
+
+/** 分数可能是 56.5 也可能是整数 40 —— 后者别显示成 "40.0"。 */
+function fmtScore(s) {
+  if (s === null || s === undefined) return '--'
+  return String(Number(s))
 }
 
 function openDetail(w) {
@@ -307,6 +352,29 @@ function goPrediction() {
   color: $color-text-hint;
 }
 
+/* W39 挂科课程明细 */
+.wrow__courses {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8rpx;
+  margin-top: 8rpx;
+}
+
+.course-chip {
+  font-size: $font-xs;
+  color: $color-text-secondary;
+  background: $color-divider;
+  border-radius: $radius-sm;
+  padding: 4rpx 12rpx;
+}
+
+/* 我教的课：加一圈琥珀色边，扫一眼就能挑出来 */
+.course-chip--mine {
+  color: #92400e;
+  background: #fffbeb;
+  border: 1rpx solid $color-warning;
+}
+
 .wrow__right {
   flex-shrink: 0;
   display: flex;
@@ -316,6 +384,37 @@ function goPrediction() {
 
 .wrow__right .tag {
   margin-top: $spacing-xs;
+}
+
+.tag--mine {
+  background: rgba(245, 158, 11, 0.14);
+  color: #92400e;
+}
+
+.detail__course {
+  display: flex;
+  align-items: center;
+  gap: $spacing-sm;
+  padding: 12rpx 0;
+  border-bottom: 1rpx solid $color-divider;
+}
+
+.detail__course-name {
+  flex: 1;
+  min-width: 0;
+  font-size: $font-sm;
+  color: $color-text;
+}
+
+.detail__course-score {
+  font-size: $font-sm;
+  color: $color-danger;
+  font-weight: 600;
+}
+
+.detail__course-sem {
+  font-size: $font-xs;
+  color: $color-text-hint;
 }
 
 /* ---------- 详情 ---------- */

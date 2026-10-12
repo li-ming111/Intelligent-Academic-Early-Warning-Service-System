@@ -2,12 +2,10 @@ package com.academic.controller;
 
 import com.academic.common.dto.ApiResponse;
 import com.academic.common.entity.Course;
-import com.academic.common.entity.ScoreRecord;
+import com.academic.common.entity.Score;
 import com.academic.common.util.ExcelUploadErrors;
 import com.academic.entity.StudentProfile;
-import com.academic.mapper.ScoreRecordMapper;
 import com.academic.service.CourseService;
-import com.academic.service.ScoreRecordService;
 import org.apache.poi.hssf.usermodel.HSSFWorkbook;
 import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Sheet;
@@ -32,25 +30,31 @@ import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 /**
- * 管理员端成绩导入（{@code POST /admin/import/scores}）换成 multipart 之后的判据
- * （W19，2026-10-04）。
+ * 管理员端成绩导入（{@code POST /admin/import/scores}）的判据。
  *
- * <p><b>修之前是什么样</b>：端点收 {@code @RequestBody List<Map>}，而前端
+ * <p><b>W19（2026-10-04）</b>：端点原收 {@code @RequestBody List<Map>}，而前端
  * {@code AdminDataExport.vue} 发的是一个 {@code el-upload} 的 {@code UploadFile}
  * 对象（{@code {name,url,status,raw}} —— 不是文件内容）。两边从第一天起就对不上，
- * 这个按钮一次都没成功过。同页的「导入学生」本来就是 multipart + POI，可作对照。
+ * 这个按钮一次都没成功过。改成 multipart + POI 之后，端到端才露出三个真 bug。
  *
- * <p>这里钉住的是**解析层**新增的判断：表头缺列要明确报错、学号/课程名要真的换算成
- * 库里的 id、以及「平时成绩/期末成绩/成绩」三列同时存在时**别取错列**。
- * 逐行落库的那段实现没有改动，行处理逻辑仍由既有的服务测试覆盖。
+ * <p><b>W38（2026-10-10）</b>：<b>落库目标由 {@code score_record}（暂存表）改为
+ * 权威表 {@code scores}</b>。W36 已把教师端、辅导员端、导出全部迁到 {@code scores}，
+ * 这里是"两套成绩口径"最后一个写方。从此：
+ * <ul>
+ *   <li>不再有"先写暂存表、再二跳同步"的顺序问题 —— 两张表不可能再分叉；</li>
+ *   <li>{@code inserted}/{@code updated} 直接由 {@code scores} 的 (学生,课程,学期)
+ *       查重结果决定；结果里不再有 {@code synced}/{@code syncFailed}
+ *       （前端只读 {@code success/skipped/errors}，安全）。</li>
+ * </ul>
+ *
+ * <p>所以本类的判据从"捕获 {@code List<ScoreRecord>}喂给 {@code saveBatch}"改成
+ * "<b>捕获 {@code Score} 看 {@code scoreMapper.insert/updateById}</b>"。
  */
 @ExtendWith(MockitoExtension.class)
-@DisplayName("AdminController 成绩导入（multipart，W19）")
+@DisplayName("AdminController 成绩导入（multipart → scores，W19/W38）")
 class AdminControllerImportScoresTest {
 
     @Mock private CourseService courseService;
-    @Mock private ScoreRecordService scoreRecordService;
-    @Mock private ScoreRecordMapper scoreRecordMapper;
     @Mock private com.academic.mapper.ScoreMapper scoreMapper;
     @Mock private com.academic.mapper.StudentProfileMapper studentProfileMapper;
 
@@ -110,6 +114,21 @@ class AdminControllerImportScoresTest {
         }
     }
 
+    private void oneStudentAndCourse() {
+        StudentProfile profile = new StudentProfile();
+        profile.setId(PROFILE_ID);
+        profile.setStudentId(STUDENT_NO);
+        profile.setName("司明");
+        profile.setClassName("计科2306班");
+        when(studentProfileMapper.selectOne(any())).thenReturn(profile);
+
+        Course course = new Course();
+        course.setId(COURSE_ID);
+        course.setName("高等数学");
+        course.setTeacherId(COURSE_TEACHER);
+        when(courseService.getOne(any())).thenReturn(course);
+    }
+
     // ================================================== 文件与表头
 
     @Test
@@ -120,7 +139,7 @@ class AdminControllerImportScoresTest {
         ApiResponse<Map<String, Object>> res = controller.importScores(empty);
 
         assertTrue(String.valueOf(res.getMessage()).contains("文件为空"), "实际：" + res.getMessage());
-        verifyNoInteractions(scoreRecordService, scoreRecordMapper, studentProfileMapper);
+        verifyNoInteractions(studentProfileMapper, scoreMapper);
     }
 
     @Test
@@ -131,7 +150,7 @@ class AdminControllerImportScoresTest {
         ApiResponse<Map<String, Object>> res = controller.importScores(txt);
 
         assertTrue(String.valueOf(res.getMessage()).contains("仅支持"), "实际：" + res.getMessage());
-        verifyNoInteractions(scoreRecordService, scoreRecordMapper, studentProfileMapper);
+        verifyNoInteractions(studentProfileMapper, scoreMapper);
     }
 
     @Test
@@ -142,7 +161,7 @@ class AdminControllerImportScoresTest {
         ApiResponse<Map<String, Object>> res = controller.importScores(file);
 
         assertTrue(String.valueOf(res.getMessage()).contains("「学号」列"), "实际：" + res.getMessage());
-        verifyNoInteractions(scoreRecordService, scoreRecordMapper, studentProfileMapper);
+        verifyNoInteractions(studentProfileMapper, scoreMapper);
     }
 
     // ================================================== 坏文件：回中文，不回 POI 英文（W22）
@@ -163,24 +182,13 @@ class AdminControllerImportScoresTest {
         assertEquals(ExcelUploadErrors.UNREADABLE, res.getMessage(), "实际：" + res.getMessage());
         assertFalse(String.valueOf(res.getMessage()).contains("unsupported file type"),
                 "POI 的英文原文不许出现在给用户的文案里");
-        verifyNoInteractions(scoreRecordService, scoreRecordMapper, studentProfileMapper);
+        verifyNoInteractions(studentProfileMapper, scoreMapper);
     }
 
     @Test
     @DisplayName("★ 真 .xls（HSSF）现在真的能导进来 —— 扩展名闸那句「或 .xls」不再是空话（W22）")
     void realXlsIsAcceptedNotRejected() throws Exception {
-        StudentProfile profile = new StudentProfile();
-        profile.setId(PROFILE_ID);
-        profile.setName("司明");
-        profile.setClassName("计科2306班");
-        when(studentProfileMapper.selectOne(any())).thenReturn(profile);
-
-        Course course = new Course();
-        course.setId(COURSE_ID);
-        course.setName("高等数学");
-        course.setTeacherId(COURSE_TEACHER);
-        when(courseService.getOne(any())).thenReturn(course);
-        when(scoreRecordMapper.selectOne(any())).thenReturn(null);
+        oneStudentAndCourse();
         when(scoreMapper.selectByStudentCourseSemester(any(), any(), any())).thenReturn(null);
 
         MultipartFile file = xls(new String[]{"学号", "课程名称", "成绩"},
@@ -188,11 +196,11 @@ class AdminControllerImportScoresTest {
 
         ApiResponse<Map<String, Object>> res = controller.importScores(file);
 
-        // 换 WorkbookFactory 之前，真 .xls 会抛 OLE2NotOfficeXmlFileException，
+        // 换 WorkbookFactory 之前，真 .xls 会抛 OLE2NotOfficeXmlFormatException，
         // 用户看到的是 "…appears to be in the OLE2 Format…" 和一句"导入失败"。
         assertEquals(1, res.getData().get("success"),
                 "真 .xls 应当能读进来；实际：" + res.getMessage());
-        verify(scoreRecordService).saveBatch(any());
+        verify(scoreMapper).insert(any(Score.class));
     }
 
     @Test
@@ -203,7 +211,7 @@ class AdminControllerImportScoresTest {
         ApiResponse<Map<String, Object>> res = controller.importScores(file);
 
         assertTrue(String.valueOf(res.getMessage()).contains("「课程名称」列"), "实际：" + res.getMessage());
-        verifyNoInteractions(scoreRecordService, scoreRecordMapper, studentProfileMapper);
+        verifyNoInteractions(studentProfileMapper, scoreMapper);
     }
 
     // ================================================== 逐行
@@ -220,76 +228,116 @@ class AdminControllerImportScoresTest {
         assertEquals(1, res.getData().get("skipped"));
         assertEquals(0, res.getData().get("success"));
         assertTrue(String.valueOf(res.getData().get("errors")).contains("学号不存在"));
-        verify(scoreRecordService, never()).saveBatch(any());
         verify(scoreMapper, never()).insert(any());
+        verify(scoreMapper, never()).updateById(any());
     }
 
     @Test
-    @DisplayName("★ 合法行 ⇒ 学号/课程名换成库里的 id 后落库（studentId 必须是 profile id，不是学号）")
+    @DisplayName("★ 合法行 ⇒ 学号/课程名换成库里的 id 后**直写 scores**（studentId 必须是 profile id，不是学号）")
     void validRowResolvesIds() throws Exception {
-        StudentProfile profile = new StudentProfile();
-        profile.setId(PROFILE_ID);
-        profile.setName("司明");
-        profile.setClassName("计科2306班");
-        when(studentProfileMapper.selectOne(any())).thenReturn(profile);
-
-        Course course = new Course();
-        course.setId(COURSE_ID);
-        course.setName("高等数学");
-        course.setTeacherId(COURSE_TEACHER);
-        when(courseService.getOne(any())).thenReturn(course);
-
-        when(scoreRecordMapper.selectOne(any())).thenReturn(null);          // 没查到重复 → 走新增
-        when(scoreMapper.selectByStudentCourseSemester(any(), any(), any())).thenReturn(null);
+        oneStudentAndCourse();
+        when(scoreMapper.selectByStudentCourseSemester(any(), any(), any())).thenReturn(null);   // 没查到 → 新增
 
         // 学号写成**数字**单元格：POI 读出来是 double，按 long 输出才是 "2023020616" 而不是 "…616.0"
-        MultipartFile file = xlsx(new String[]{"学号(必填)", "课程名称(必填)", "成绩", "学期"},
-                new Object[][]{{Double.parseDouble(STUDENT_NO), "高等数学", 88.5, "5"}});
+        MultipartFile file = xlsx(new String[]{"学号(必填)", "课程名称(必填)", "成绩", "学期", "备注"},
+                new Object[][]{{Double.parseDouble(STUDENT_NO), "高等数学", 88.5, "5", "补录"}});
 
         ApiResponse<Map<String, Object>> res = controller.importScores(file);
 
         assertEquals(200, res.getCode(), "实际：" + res.getMessage());
         assertEquals(1, res.getData().get("success"));
         assertEquals(1, res.getData().get("inserted"));
-        assertEquals(1, res.getData().get("synced"), "必须同步到 scores 权威表");
+        assertEquals(0, res.getData().get("updated"));
+        // 两跳同步没了 ⇒ 结果里**不该**再有 synced/syncFailed 这两个键
+        assertFalse(res.getData().containsKey("synced"), "落库已一步到位，不应再报 synced");
+        assertFalse(res.getData().containsKey("syncFailed"));
 
-        @SuppressWarnings("unchecked")
-        ArgumentCaptor<List<ScoreRecord>> captor = ArgumentCaptor.forClass(List.class);
-        verify(scoreRecordService).saveBatch(captor.capture());
+        ArgumentCaptor<Score> captor = ArgumentCaptor.forClass(Score.class);
+        verify(scoreMapper).insert(captor.capture());
+        verify(scoreMapper, never()).updateById(any());
 
-        ScoreRecord saved = captor.getValue().get(0);
+        Score saved = captor.getValue();
         assertEquals(PROFILE_ID, saved.getStudentId().longValue(),
                 "落库的必须是 student_profile.id（" + PROFILE_ID + "），不是学号 " + STUDENT_NO);
         assertEquals(COURSE_ID, saved.getCourseId().longValue());
-        assertEquals(88.5, saved.getScore(), 1e-9);
-        assertEquals("司明", saved.getStudentName(), "学生没给姓名时应从档案补");
-        assertEquals("计科2306班", saved.getClassName());
-        assertEquals("5", saved.getSemester());
-        // score_record.teacher_id 是 NOT NULL 且无默认值：不补整批 INSERT 就整体失败
-        // （实测 "Field 'teacher_id' doesn't have a default value"）。补的是**任课教师**。
-        assertEquals(COURSE_TEACHER, saved.getTeacherId().longValue(),
-                "teacher_id 必须从课程补上，否则整批 INSERT 会因 NOT NULL 失败");
-        // 派生列要与权威表一致：原来只算了 score_level，grade/grade_point/score_total
-        // 留在 NULL 上，而同步过去的 scores 行是 "A-" —— 同一份成绩两表各说各话。
-        assertEquals("A-", saved.getGrade(), "等级必须与 scores 表算出来的一致");
-        assertEquals(3.7, saved.getGradePoint(), 1e-9);
-        assertEquals(88.5, saved.getScoreTotal(), 1e-9);
+        assertEquals("5", saved.getSemester(), "scores.semester 是 int NOT NULL，落库要归一成序号串");
+        assertEquals(0, saved.getScoreTotal().compareTo(new java.math.BigDecimal("88.5")));
+        assertEquals(0, saved.getFinalScore().compareTo(new java.math.BigDecimal("88.5")),
+                "final_score 为空会被「期末未录入」口径整体排除，导入的成绩就永远不会参与预警");
+        assertEquals("补录", saved.getRemark(), "scores.remark 有列，不写就是静默丢字段");
+        // 派生列：等级/绩点必须与教师端录入算出来的一致
+        assertEquals("A-", saved.getGrade());
+        assertEquals(0, saved.getGradePoint().compareTo(new java.math.BigDecimal("3.7")));
+        assertEquals(2025, saved.getYear().intValue(), "入学年 2023 + (学期 5 - 1)/2 = 2025");
+        assertEquals(COURSE_TEACHER, saved.getModifiedBy().longValue(), "改动人记该课的任课教师");
+    }
+
+    @Test
+    @DisplayName("★ 结果键里 inserted/updated 由 scores 的查重决定：已有行 ⇒ updateById，不 insert")
+    void existingRowGoesThroughUpdate() throws Exception {
+        oneStudentAndCourse();
+        Score existing = new Score();
+        existing.setId(77L);
+        existing.setStudentId(PROFILE_ID);
+        existing.setCourseId(COURSE_ID);
+        existing.setSemester("5");
+        when(scoreMapper.selectByStudentCourseSemester(PROFILE_ID, COURSE_ID, "5")).thenReturn(existing);
+
+        MultipartFile file = xlsx(new String[]{"学号", "课程名称", "成绩", "学期"},
+                new Object[][]{{STUDENT_NO, "高等数学", 91, "5"}});
+
+        ApiResponse<Map<String, Object>> res = controller.importScores(file);
+
+        assertEquals(1, res.getData().get("success"));
+        assertEquals(0, res.getData().get("inserted"));
+        assertEquals(1, res.getData().get("updated"));
+        verify(scoreMapper, never()).insert(any());
+
+        ArgumentCaptor<Score> captor = ArgumentCaptor.forClass(Score.class);
+        verify(scoreMapper).updateById(captor.capture());
+        assertEquals(77L, captor.getValue().getId().longValue(), "更新的是原来那一行");
+        assertEquals("A", captor.getValue().getGrade(), "91 分 ⇒ A（旧值 88.5 的 A- 必须被重算覆盖）");
+    }
+
+    @Test
+    @DisplayName("★ 不写学期 ⇒ 退到该生已有最大学期序号（不是硬编码 1）")
+    void missingSemesterFallsBackToMax() throws Exception {
+        oneStudentAndCourse();
+        when(scoreMapper.selectMaxSemester(PROFILE_ID)).thenReturn(6);
+        when(scoreMapper.selectByStudentCourseSemester(PROFILE_ID, COURSE_ID, "6")).thenReturn(null);
+
+        MultipartFile file = xlsx(new String[]{"学号", "课程名称", "成绩"},
+                new Object[][]{{STUDENT_NO, "高等数学", 88}});
+
+        controller.importScores(file);
+
+        ArgumentCaptor<Score> captor = ArgumentCaptor.forClass(Score.class);
+        verify(scoreMapper).insert(captor.capture());
+        assertEquals("6", captor.getValue().getSemester(),
+                "没给学期时不能比历史记录更旧，否则在「每门课取最新一次」口径下会被直接丢弃");
+    }
+
+    @Test
+    @DisplayName("★ 学期不是数字 ⇒ 该行如实报错且不写库（不是把 'abc' 塞进 int 列撞 SQL 错）")
+    void nonNumericSemesterRejectedPerRow() throws Exception {
+        // 刻意**不**喂学生/课程：学期校验在查学生之前，报错理由必须是"学期"而不是"学号不存在"。
+        MultipartFile file = xlsx(new String[]{"学号", "课程名称", "成绩", "学期"},
+                new Object[][]{{STUDENT_NO, "高等数学", 88, "abc"}});
+
+        ApiResponse<Map<String, Object>> res = controller.importScores(file);
+
+        assertEquals(1, res.getData().get("skipped"));
+        assertEquals(0, res.getData().get("success"));
+        assertTrue(String.valueOf(res.getData().get("errors")).contains("学期必须是"),
+                "实际：" + res.getData().get("errors"));
+        verify(scoreMapper, never()).insert(any());
+        verify(scoreMapper, never()).selectByStudentCourseSemester(any(), any(), any());
     }
 
     @Test
     @DisplayName("★ 「平时/期末/成绩」三列同时存在 ⇒ score 取的是「成绩」那一列，不是先出现的「平时成绩」")
     void scoreColumnNotStolenByRegularScore() throws Exception {
-        StudentProfile profile = new StudentProfile();
-        profile.setId(PROFILE_ID);
-        profile.setName("司明");
-        when(studentProfileMapper.selectOne(any())).thenReturn(profile);
-
-        Course course = new Course();
-        course.setId(COURSE_ID);
-        course.setName("高等数学");
-        when(courseService.getOne(any())).thenReturn(course);
-
-        when(scoreRecordMapper.selectOne(any())).thenReturn(null);
+        oneStudentAndCourse();
         when(scoreMapper.selectByStudentCourseSemester(any(), any(), any())).thenReturn(null);
 
         MultipartFile file = xlsx(new String[]{"学号", "课程名称", "平时成绩", "期末成绩", "成绩"},
@@ -297,14 +345,14 @@ class AdminControllerImportScoresTest {
 
         controller.importScores(file);
 
-        @SuppressWarnings("unchecked")
-        ArgumentCaptor<List<ScoreRecord>> captor = ArgumentCaptor.forClass(List.class);
-        verify(scoreRecordService).saveBatch(captor.capture());
+        ArgumentCaptor<Score> captor = ArgumentCaptor.forClass(Score.class);
+        verify(scoreMapper).insert(captor.capture());
 
-        ScoreRecord saved = captor.getValue().get(0);
-        assertEquals(95.0, saved.getScore(), 1e-9,
+        Score saved = captor.getValue();
+        assertEquals(0, saved.getScoreTotal().compareTo(new java.math.BigDecimal("95")),
                 "「成绩」列是 95，却被「平时成绩」（70）抢先匹配了");
-        assertEquals(70.0, saved.getRegularScore(), 1e-9);
-        assertEquals(80.0, saved.getFinalScore(), 1e-9);
+        assertEquals(0, saved.getRegularScore().compareTo(new java.math.BigDecimal("70")));
+        assertEquals(0, saved.getFinalScore().compareTo(new java.math.BigDecimal("80")));
+        assertEquals("A", saved.getGrade());
     }
 }

@@ -259,6 +259,17 @@ public class AuthController {
             log.info("Refresh token request");
             String refreshToken = request.get("refreshToken") != null ? request.get("refreshToken").toString() : null;
             Object response = userService.refreshToken(refreshToken);
+            // ⚠️ 2026-10-10（W38）：`userService.refreshToken` 在令牌无效/过期时**不抛异常**，
+            // 而是回一个 `{status:"error", message:"..."}` 的 map。此前这里无脑 `success(...)`
+            // ⇒ 失败被包成 **HTTP 200 + code 200** 的成功信封，调用方得去读 `data.status`
+            // 才知道没换成新令牌（W24/W28「假成功」同族）。现在按 status 分开报。
+            // 全仓零前端调用方（PC/小程序只有注释提到），改信封无兼容风险。
+            if (response instanceof Map<?, ?> map
+                    && "error".equals(String.valueOf(map.get("status")))) {
+                String msg = map.get("message") == null ? "令牌刷新失败" : String.valueOf(map.get("message"));
+                log.warn("Refresh token rejected: {}", msg);
+                return ApiResponse.unauthorized(msg);
+            }
             return ApiResponse.success(response);
         } catch (Exception e) {
             log.error("Refresh token failed: {}", e.getMessage());

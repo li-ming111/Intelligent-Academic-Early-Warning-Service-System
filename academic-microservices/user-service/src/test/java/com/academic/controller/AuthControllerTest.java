@@ -257,6 +257,45 @@ class AuthControllerTest {
         verify(userService, never()).changePassword(any(), any(), any());
     }
 
+    // ==================== 刷新令牌：失败不许包成成功信封（W38，2026-10-10） ====================
+    //
+    // `userService.refreshToken` 令牌无效时**不抛异常**，回 `{status:"error", message:"无效的刷新令牌"}`；
+    // 控制器此前无脑 `success(...)` ⇒ 失败也是 HTTP 200 + code 200，只有读 `data.status` 才知道。
+    // 现在按 status 回 401。判据：伪造串 code != 200 且 message 透出来；合法串 code == 200 带上新令牌。
+
+    @Test
+    void testRefreshToken_invalidToken_isNotWrappedAsSuccess() {
+        Map<String, Object> body = new HashMap<>();
+        body.put("refreshToken", "bogus");
+        Map<String, Object> failure = new HashMap<>();
+        failure.put("status", "error");
+        failure.put("message", "无效的刷新令牌");
+        when(userService.refreshToken("bogus")).thenReturn(failure);
+
+        ApiResponse<Object> result = authController.refreshToken(body);
+
+        assertNotEquals(200, result.getCode());
+        assertTrue(result.getMessage() != null && result.getMessage().contains("无效"),
+                "失败原因应透出来，实际: " + result.getMessage());
+    }
+
+    /** 正对照：合法刷新令牌仍按成功返回，且带回新令牌。 */
+    @Test
+    void testRefreshToken_validToken_returnsNewToken() {
+        Map<String, Object> body = new HashMap<>();
+        body.put("refreshToken", "good");
+        Map<String, Object> ok = new HashMap<>();
+        ok.put("status", "success");
+        ok.put("token", "new-access");
+        ok.put("refreshToken", "new-refresh");
+        when(userService.refreshToken("good")).thenReturn(ok);
+
+        ApiResponse<Object> result = authController.refreshToken(body);
+
+        assertEquals(200, result.getCode());
+        assertEquals("new-access", ((Map<?, ?>) result.getData()).get("token"));
+    }
+
     // ==================== 这里原有 `testRegister_Success`（2026-10-01 删） ====================
     //
     // 它测的是裸的 `POST /register`（调 `authController.register(request)`）。那个端点

@@ -24,6 +24,7 @@ import java.io.IOException;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.*;
+import java.util.stream.Collectors;
 
 @Slf4j
 @Service
@@ -39,6 +40,9 @@ public class StudentServiceImpl implements StudentService {
     private final AssistanceEvaluationMapper assistanceEvaluationMapper;
     private final AssistancePlanMapper assistancePlanMapper;
     private final UserSettingsMapper userSettingsMapper;
+    // 预警的「挂科课程明细」（W39）。shared 的接口在 academic-common 的
+    // com.academic.mapper 包，本服务的 @MapperScan 已覆盖。
+    private final com.academic.mapper.AcademicWarningCourseMapper academicWarningCourseMapper;
 
     public StudentServiceImpl(StudentProfileMapper studentProfileMapper,
                               ScoreMapper scoreMapper,
@@ -48,7 +52,8 @@ public class StudentServiceImpl implements StudentService {
                               SubscriptionPreferenceMapper subscriptionPreferenceMapper,
                               AssistanceEvaluationMapper assistanceEvaluationMapper,
                               AssistancePlanMapper assistancePlanMapper,
-                              UserSettingsMapper userSettingsMapper) {
+                              UserSettingsMapper userSettingsMapper,
+                              com.academic.mapper.AcademicWarningCourseMapper academicWarningCourseMapper) {
         this.studentProfileMapper = studentProfileMapper;
         this.scoreMapper = scoreMapper;
         this.academicWarningMapper = academicWarningMapper;
@@ -57,6 +62,7 @@ public class StudentServiceImpl implements StudentService {
         this.subscriptionPreferenceMapper = subscriptionPreferenceMapper;
         this.assistanceEvaluationMapper = assistanceEvaluationMapper;
         this.assistancePlanMapper = assistancePlanMapper;
+        this.academicWarningCourseMapper = academicWarningCourseMapper;
         this.userSettingsMapper = userSettingsMapper;
     }
 
@@ -275,12 +281,90 @@ public class StudentServiceImpl implements StudentService {
     }
 
     // ==================== 预警 ====================
+    /**
+     * 学生本人的预警记录。
+     *
+     * <p><b>2026-10-12（W39）：</b>此前直接回 {@code academic_warning} 裸实体，
+     * "挂了哪几门课"只能从 {@code description} 正文里读 —— 而 PC 端
+     * {@code Warnings.vue} 正是用正则从正文里<b>抠</b>课程名的
+     * （{@code extractCourseName}）∶全仓唯一一处前端编造。现在由后端按
+     * {@code academic_warning_course} 补两个字段，前端不必再猜：
+     * <ul>
+     *   <li>{@code courses} —— 每门挂科课程（课程名/分数/学期）；</li>
+     *   <li>{@code courseNames} —— 课程名的"、"拼接。</li>
+     * </ul>
+     * 返回类型由 {@code Object}（实际是 List&lt;AcademicWarning&gt;）改成
+     * {@code List<Map<String,Object>>}，因为字段是运行时补的，塞不进那个实体。
+     */
     @Override
     public Object getStudentWarnings(Long studentId) {
         log.info("获取学生预警: userId={}", studentId);
         StudentProfile sp = studentProfileMapper.selectByUserId(studentId);
         if (sp == null) return Collections.emptyList();
-        return academicWarningMapper.selectByStudentId(sp.getId().toString());
+        List<AcademicWarning> warnings = academicWarningMapper.selectByStudentId(sp.getId().toString());
+        if (warnings.isEmpty()) {
+            return Collections.emptyList();
+        }
+
+        List<Long> warningIds = warnings.stream()
+                .map(AcademicWarning::getId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toList());
+        Map<Long, List<Map<String, Object>>> coursesByWarningId = new HashMap<>();
+        if (!warningIds.isEmpty()) {
+            for (Map<String, Object> row : academicWarningCourseMapper.selectByWarningIds(warningIds)) {
+                Long wid = toLongValue(row.get("warningId"));
+                if (wid == null) continue;
+                coursesByWarningId.computeIfAbsent(wid, k -> new ArrayList<>()).add(row);
+            }
+        }
+
+        List<Map<String, Object>> result = new ArrayList<>();
+        for (AcademicWarning w : warnings) {
+            List<Map<String, Object>> courses =
+                    coursesByWarningId.getOrDefault(w.getId(), Collections.emptyList());
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("id", w.getId());
+            m.put("studentId", w.getStudentId());
+            m.put("studentName", w.getStudentName());
+            m.put("ruleId", w.getRuleId());
+            m.put("type", w.getType());
+            m.put("title", w.getTitle());
+            m.put("description", w.getDescription());
+            m.put("warningLevel", w.getWarningLevel());
+            m.put("warningMessage", w.getWarningMessage());
+            m.put("triggerScore", w.getTriggerScore());
+            m.put("failCount", w.getFailCount());
+            m.put("status", w.getStatus());
+            m.put("appealStatus", w.getAppealStatus());
+            m.put("handledBy", w.getHandledBy());
+            m.put("handleResult", w.getHandleResult());
+            m.put("handledAt", w.getHandledAt());
+            m.put("createdAt", w.getCreatedAt());
+            m.put("courses", courses);
+            m.put("courseNames", courses.stream()
+                    .map(c -> c.get("courseName"))
+                    .filter(Objects::nonNull)
+                    .map(String::valueOf)
+                    .collect(Collectors.joining("、")));
+            result.add(m);
+        }
+        return result;
+    }
+
+    /** {@code Number}/{@code String} 混着的 mapper 返回值 → {@code Long}；认不出返回 null。 */
+    private static Long toLongValue(Object v) {
+        if (v == null) {
+            return null;
+        }
+        if (v instanceof Number n) {
+            return n.longValue();
+        }
+        try {
+            return Long.parseLong(String.valueOf(v).trim());
+        } catch (NumberFormatException e) {
+            return null;
+        }
     }
 
     // ==================== 学生信息 ====================
@@ -587,7 +671,11 @@ public class StudentServiceImpl implements StudentService {
         if (classId == null) {
             return Collections.emptyMap();
         }
-        List<Map<String, Object>> list = scoreMapper.selectClassGpaRanking(classId);
+        // 传了学期 ⇒ 真按学期过滤；没传 ⇒ 维持累计口径（向后兼容，两个前端当前都不传）。
+        Integer semIndex = parseSemesterIndex(semester, sp != null ? sp.getStudentId() : null);
+        List<Map<String, Object>> list = semIndex == null
+                ? scoreMapper.selectClassGpaRanking(classId)
+                : scoreMapper.selectSemesterClassGpaRanking(classId, semIndex);
         return rankingResult(list, profileId, "classId", classId, semester);
     }
 
@@ -606,7 +694,10 @@ public class StudentServiceImpl implements StudentService {
         if (majorId == null) {
             return Collections.emptyMap();
         }
-        List<Map<String, Object>> list = scoreMapper.selectMajorGpaRanking(majorId);
+        Integer semIndex = parseSemesterIndex(semester, sp != null ? sp.getStudentId() : null);
+        List<Map<String, Object>> list = semIndex == null
+                ? scoreMapper.selectMajorGpaRanking(majorId)
+                : scoreMapper.selectSemesterMajorGpaRanking(majorId, semIndex);
         return rankingResult(list, profileId, "majorId", majorId, semester);
     }
 
@@ -704,16 +795,29 @@ public class StudentServiceImpl implements StudentService {
     @Override
     public Object getClassBenchmarkComparison(Long classId, String semester) {
         log.info("获取班级对标对比: classId={}, semester={}", classId, semester);
-        return comparisonResult("classId", classId, semester,
-                classId == null ? Collections.emptyList() : scoreMapper.selectClassGpaRanking(classId));
+        if (classId == null) {
+            return comparisonResult("classId", null, semester, Collections.emptyList());
+        }
+        // 这两个端点没有 studentId，学期只能用数字序号（getComparison 的前端调用当前都不传 semester）。
+        Integer semIndex = parseSemesterIndex(semester, null);
+        List<Map<String, Object>> ranking = semIndex == null
+                ? scoreMapper.selectClassGpaRanking(classId)
+                : scoreMapper.selectSemesterClassGpaRanking(classId, semIndex);
+        return comparisonResult("classId", classId, semester, ranking);
     }
 
     /** 专业 GPA 对标。口径同 {@link #getClassBenchmarkComparison}。 */
     @Override
     public Object getMajorBenchmarkComparison(Long majorId, String semester) {
         log.info("获取专业对标对比: majorId={}, semester={}", majorId, semester);
-        return comparisonResult("majorId", majorId, semester,
-                majorId == null ? Collections.emptyList() : scoreMapper.selectMajorGpaRanking(majorId));
+        if (majorId == null) {
+            return comparisonResult("majorId", null, semester, Collections.emptyList());
+        }
+        Integer semIndex = parseSemesterIndex(semester, null);
+        List<Map<String, Object>> ranking = semIndex == null
+                ? scoreMapper.selectMajorGpaRanking(majorId)
+                : scoreMapper.selectSemesterMajorGpaRanking(majorId, semIndex);
+        return comparisonResult("majorId", majorId, semester, ranking);
     }
 
     /** 把 GPA 排行包成对标响应，平均分直接由排行列表求得，保证两者同源。 */

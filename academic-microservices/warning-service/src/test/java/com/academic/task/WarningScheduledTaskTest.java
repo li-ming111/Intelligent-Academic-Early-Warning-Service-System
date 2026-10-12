@@ -1,18 +1,22 @@
 package com.academic.task;
 
 import com.academic.common.entity.AcademicWarning;
+import com.academic.common.entity.AcademicWarningCourse;
 import com.academic.entity.WarningRule;
+import com.academic.mapper.AcademicWarningCourseMapper;
 import com.academic.mapper.AcademicWarningMapper;
 import com.academic.mapper.ScoreReadMapper;
 import com.academic.mapper.WarningReleaseRecordMapper;
 import com.academic.mapper.WarningRuleMapper;
 import com.academic.notify.WarningNotifier;
+import com.academic.service.WarningWriter;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.math.BigDecimal;
@@ -57,6 +61,30 @@ class WarningScheduledTaskTest {
 
     @Mock
     private WarningNotifier warningNotifier;
+
+    @Mock
+    private AcademicWarningCourseMapper academicWarningCourseMapper;
+
+    /**
+     * 真实的 {@link WarningWriter}（W39），不是 mock —— 本类原有 18 处断言依赖
+     * {@code academicWarningMapper.insert(...)} 真被调到（{@code captureSingleInsert}），
+     * 而那个调用现在发生在 {@code WarningWriter} 里面。用真实现 + mock 掉它内部的
+     * 两个 mapper，那些断言继续成立，不必逐条改写。
+     *
+     * <p>⚠️ 在 {@code @BeforeEach} 里构造，不能用字段初始化表达式：字段初始化在实例构造时
+     * 就跑了，比 Mockito 往 {@code @Mock} 字段里塞对象更早，那时两个 mapper 还是 null。
+     *
+     * <p>⚠️ 这样测的是"扫描任务确实把 detail 交给了 writer"，<b>不覆盖</b>
+     * writer 的 {@code @Transactional} 真的生效（那要有 Spring 代理）。
+     * 事务语义由 {@code WarningWriterTest} 单独覆盖到"异常不被吞"这一层。
+     */
+    private WarningWriter warningWriter;
+
+    @org.junit.jupiter.api.BeforeEach
+    void wireRealWarningWriter() {
+        warningWriter = new WarningWriter(academicWarningMapper, academicWarningCourseMapper);
+        org.springframework.test.util.ReflectionTestUtils.setField(scheduledTask, "warningWriter", warningWriter);
+    }
 
     @InjectMocks
     private WarningScheduledTask scheduledTask;

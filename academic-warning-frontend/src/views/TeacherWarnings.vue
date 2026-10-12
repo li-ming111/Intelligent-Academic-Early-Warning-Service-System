@@ -35,6 +35,9 @@
         <el-option label="中度" value="中度" />
         <el-option label="轻度" value="轻度" />
       </el-select>
+      <!-- W39：教师端原本只看得到「班上学生的预警」，看不出这条预警涉不涉及自己教的课。
+           《高等数学》的于凤海打开司明的预警，正文点名三门课，其中两门是别的老师的。 -->
+      <el-switch v-model="onlyMine" active-text="仅看我教的课" @change="loadWarnings" />
     </div>
 
     <!-- 预警卡片 -->
@@ -48,9 +51,19 @@
             </div>
             <div class="twc-title">{{ w.title || '学业预警' }}</div>
             <div class="twc-desc">{{ w.description }}</div>
+            <!-- W39：挂科课程是库里真实的明细（academic_warning_course），不再是正文里抠出来的。
+                 involvesMyCourse 标出哪几门是自己教的，省得老师逐门去猜。 -->
+            <div class="twc-courses" v-if="(w.courses || []).length">
+              <span v-for="c in w.courses" :key="c.courseId" class="twc-course"
+                    :class="{ mine: c.courseTeacherId === myId }">
+                {{ c.courseName }} <b>{{ fmtScore(c.scoreTotal) }}</b>
+                <em v-if="c.courseTeacherId === myId">我教的</em>
+              </span>
+            </div>
             <div class="twc-meta">
               <span>{{ w.className }}</span>
               <span>{{ fmtDate(w.createdAt) }}</span>
+              <el-tag v-if="w.involvesMyCourse" size="small" type="warning" effect="dark">涉及我教的课</el-tag>
               <el-tag size="small" :type="warningStatusTagType(w.status)">{{ warningStatusText(w.status) }}</el-tag>
             </div>
           </div>
@@ -74,6 +87,17 @@
         <div class="det-grid">
           <div class="dg"><label>预警标题</label><span>{{ detailRow.title }}</span></div>
           <div class="dg"><label>创建时间</label><span>{{ fmtDate(detailRow.createdAt) }}</span></div>
+          <div class="dg full" v-if="(detailRow.courses || []).length">
+            <label>挂科课程（{{ detailRow.courses.length }} 门）</label>
+            <ul class="det-courses">
+              <li v-for="c in detailRow.courses" :key="c.courseId">
+                <span class="dc-name">{{ c.courseName }}</span>
+                <span class="dc-score">{{ fmtScore(c.scoreTotal) }} 分</span>
+                <span class="dc-sem" v-if="c.semester">第 {{ c.semester }} 学期</span>
+                <el-tag v-if="c.courseTeacherId === myId" size="small" type="warning" effect="dark">我教的课</el-tag>
+              </li>
+            </ul>
+          </div>
           <div class="dg full"><label>详细说明</label><span>{{ detailRow.description }}</span></div>
         </div>
         <div class="det-tip">
@@ -123,11 +147,16 @@ import { warningStatusText, warningStatusKey, warningStatusTagType, isPendingWar
 
 const warnings = ref([])
 const filterLevel = ref('')
+const onlyMine = ref(false)
 const detailVisible = ref(false)
 const handleVisible = ref(false)
 const detailRow = ref(null)
 const handleRow = ref(null)
 const handleForm = ref({ measure: '', communication: '' })
+
+// 用于把"这门课是不是我教的"直接从课程明细上判出来，不必等后端那个布尔。
+// 与后端同源：都是 users.id 空间（getTeacherId() 返回的也是 users.id）。
+const myId = getTeacherId()
 
 const filtered = computed(() => {
   if (!filterLevel.value) return warnings.value
@@ -138,15 +167,17 @@ onMounted(() => loadWarnings())
 
 async function loadWarnings() {
   try {
-    const tid = getTeacherId()
+    const tid = myId
     if (!tid) { console.warn('[TeacherWarnings] 未获取到登录用户 ID，跳过加载'); return }
-    const res = await teacherAPI.getWarnings(tid)
+    const res = await teacherAPI.getWarnings(tid, undefined, onlyMine.value || undefined)
     if (Array.isArray(res)) warnings.value = res
   } catch (e) { console.error('加载预警失败', e) }
 }
 
 function lvlKey(l) { if (l === '严重') return 'danger'; if (l === '中度') return 'warning'; return 'info' }
 function fmtDate(d) { if (!d) return '--'; return String(d).replace('T', ' ').substring(0, 16) }
+// 分数可能是 56.5，也可能是整数 40 —— 后者别显示成 "40.0"。
+function fmtScore(s) { if (s === null || s === undefined) return '--'; return String(Number(s)) }
 const colors = ['#7c3aed','#2563eb','#16a34a','#f59e0b','#ef4444','#8b5cf6','#db2777','#ea580c']
 function grad(id) {
   const c = colors[(id || 1) % colors.length]
@@ -208,6 +239,13 @@ async function submitHandle() {
 .twc-badge.bg-info { background: #eff6ff; color: #3b82f6; }
 .twc-title { font-size: 13px; color: #52525b; margin-bottom: 2px; }
 .twc-desc { font-size: 12px; color: #a1a1aa; line-height: 1.4; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+/* W39 挂科课程明细 */
+.twc-courses { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.twc-course { font-size: 12px; color: #52525b; background: #f4f4f5; border: 1px solid #e4e4e7; border-radius: 6px; padding: 1px 8px; display: inline-flex; align-items: center; gap: 5px; }
+.twc-course b { color: #ef4444; font-weight: 600; }
+.twc-course.mine { background: #fffbeb; border-color: #fcd34d; color: #92400e; }
+.twc-course.mine b { color: #b45309; }
+.twc-course em { font-style: normal; font-size: 10px; background: #f59e0b; color: #fff; border-radius: 8px; padding: 0 5px; }
 .twc-meta { display: flex; gap: 12px; align-items: center; margin-top: 6px; font-size: 12px; color: #a1a1aa; }
 .twc-right { flex-shrink: 0; display: flex; gap: 8px; }
 
@@ -228,6 +266,11 @@ async function submitHandle() {
 .dg.full { grid-column: span 2; }
 .dg label { display: block; font-size: 12px; color: #a1a1aa; margin-bottom: 2px; }
 .dg span { font-size: 14px; color: #3f3f46; }
+.det-courses { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.det-courses li { display: flex; align-items: center; gap: 10px; font-size: 13px; background: #fafafa; border-radius: 6px; padding: 6px 10px; }
+.dc-name { color: #3f3f46; font-weight: 500; }
+.dc-score { color: #ef4444; font-weight: 600; }
+.dc-sem { color: #a1a1aa; font-size: 12px; }
 .det-tip { margin-top: 16px; background: #fffbeb; border-radius: 8px; padding: 12px 14px; display: flex; align-items: center; gap: 8px; font-size: 13px; color: #92400e; }
 
 .hdr-info { display: flex; align-items: center; gap: 12px; padding: 12px; background: #f5f5f5; border-radius: 8px; font-size: 15px; font-weight: 600; }

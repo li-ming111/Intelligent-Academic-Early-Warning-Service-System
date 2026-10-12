@@ -39,8 +39,18 @@
               </text>
             </view>
             <text class="warn__desc">{{ w.description || w.warningMessage || '无说明' }}</text>
+            <!-- W39：挂科课程明细 + 班级（此前 /admin/warnings 直接回裸实体，
+                 没有 className，学院管理端那一列只能是空）。 -->
+            <view v-if="(w.courses || []).length" class="warn__courses">
+              <text
+                v-for="c in w.courses"
+                :key="c.courseId"
+                class="course-chip"
+              >{{ c.courseName }} {{ fmtScore(c.scoreTotal) }}</text>
+            </view>
             <view class="warn__foot">
               <text class="warn__rule">{{ ruleName(w.ruleId) }}</text>
+              <text v-if="w.className" class="warn__class">{{ w.className }}</text>
               <text class="warn__time">{{ formatDate(w.createdAt, true) }}</text>
             </view>
           </view>
@@ -96,6 +106,14 @@
           <view class="facts__row">
             <text class="facts__k">预警前/后 GPA</text>
             <text class="facts__v">{{ gpaText(current) }}</text>
+          </view>
+          <view v-if="current.className" class="facts__row">
+            <text class="facts__k">班级</text>
+            <text class="facts__v">{{ current.className }}</text>
+          </view>
+          <view v-if="current.courses && current.courses.length" class="facts__row">
+            <text class="facts__k">挂科课程</text>
+            <text class="facts__v">{{ current.courses.length }} 门：{{ current.courseNames }}</text>
           </view>
         </view>
 
@@ -280,6 +298,12 @@ function ruleName(ruleId) {
   return r ? `${r.ruleName}（${r.ruleCode || '无编码'}）` : `未匹配的规则 id ${ruleId}`
 }
 
+/** 分数可能是 56.5 也可能是整数 40 —— 后者别显示成 "40.0"。 */
+function fmtScore(s) {
+  if (s === null || s === undefined) return '--'
+  return String(Number(s))
+}
+
 function toast(msg, ms = 2600) {
   uni.showToast({ title: String(msg || ''), icon: 'none', duration: ms })
 }
@@ -449,6 +473,29 @@ async function submitHandle() {
   color: $color-text-secondary;
   line-height: 1.6;
   @include ellipsis-multi(2);
+}
+
+/* W39 挂科课程明细 */
+.warn__courses {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8rpx;
+  margin-top: $spacing-sm;
+}
+
+.course-chip {
+  font-size: $font-xs;
+  color: $color-text-secondary;
+  background: $color-divider;
+  border-radius: $radius-sm;
+  padding: 4rpx 12rpx;
+}
+
+.warn__class {
+  flex-shrink: 0;
+  margin-left: $spacing-sm;
+  font-size: $font-xs;
+  color: $color-text-secondary;
 }
 
 .warn__foot {

@@ -48,6 +48,8 @@ class WarningScheduledTaskScanGuardTest {
     @Mock private WarningRuleMapper warningRuleMapper;
     @Mock private WarningReleaseRecordMapper warningReleaseRecordMapper;
     @Mock private WarningNotifier warningNotifier;
+    /** W39 起扫描任务经它落库。本类只关心互斥，writer 用 mock 即可。 */
+    @Mock private com.academic.service.WarningWriter warningWriter;
 
     @InjectMocks private WarningScheduledTask scheduledTask;
 

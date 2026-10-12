@@ -406,8 +406,10 @@ export const teacherAPI = {
   getMyRecommendations: () => {
     return apiClient.get(`/teachers/courses/recommendations`)
   },
-  getWarnings: (teacherId, status) => {
-    return apiClient.get(`/teachers/warnings/${teacherId}`, { params: { status } })
+  // W39：后端每条预警新增 courses / courseNames / involvesMyCourse 三个键；
+  // onlyMine=true 只回「涉及我教的课」的预警。此处透传，不传则后端默认全班级范围。
+  getWarnings: (teacherId, status, onlyMine) => {
+    return apiClient.get(`/teachers/warnings/${teacherId}`, { params: { status, onlyMine } })
   },
   processWarning: (warningId, data) => {
     return apiClient.post(`/teachers/warnings/${warningId}/process`, data)

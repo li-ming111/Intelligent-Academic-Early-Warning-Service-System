@@ -89,12 +89,22 @@ public class CounselorNotificationServiceImpl implements CounselorNotificationSe
                 scopes.add(s);
             }
         }
-        List<Object> explicitIds = new ArrayList<>();
-        for (String key : new String[]{"student_ids", "studentIds", "studentId", "student_id", "userIds", "user_ids"}) {
-            explicitIds.addAll(asList(payload.get(key)));
+        // ⚠️ 两套 id 空间**分开收**（W38，2026-10-10）。`student_ids` 一族语义是
+        // `student_profile.id`（名册/成绩页聚合出来的就是它）；`userIds`/`user_ids` 语义是
+        // `users.id`（学生名册页发送框传的就是它）。此前两者混进一个列表，再靠
+        // `findStudent` "先按 profile.id 查、查不到再按 user_id 查"兜底 —— 只因活库
+        // `student_profile.id ≤ 26 < users.id ∈ [27,52]` 恰好不重叠才对；一旦重叠就会
+        // **静默发给另一个学生**。现在按声明的键各查各的空间。
+        List<Object> profileIds = new ArrayList<>();
+        for (String key : new String[]{"student_ids", "studentIds", "studentId", "student_id"}) {
+            profileIds.addAll(asList(payload.get(key)));
+        }
+        List<Object> userIds = new ArrayList<>();
+        for (String key : new String[]{"userIds", "user_ids"}) {
+            userIds.addAll(asList(payload.get(key)));
         }
 
-        Resolution res = resolve(counselorId, scopes, explicitIds);
+        Resolution res = resolve(counselorId, scopes, profileIds, userIds);
         if (res.students.isEmpty()) {
             String why = res.skipped.isEmpty()
                     ? "请求体里没有任何接收人（receivers/student_ids 都是空的）"
@@ -274,13 +284,17 @@ public class CounselorNotificationServiceImpl implements CounselorNotificationSe
         final List<String> skipped = new ArrayList<>();
     }
 
-    private Resolution resolve(Long counselorId, List<String> scopes, List<Object> explicitIds) {
+    private Resolution resolve(Long counselorId, List<String> scopes,
+                               List<Object> profileIds, List<Object> userIds) {
         Resolution res = new Resolution();
         Set<Long> seen = new HashSet<>();
 
         boolean wantsAll = false;
         boolean wantsWarning = false;
-        List<Long> wantedIds = new ArrayList<>();
+        // scopes 里的裸数字 id 与两个显式列表同族，历史上一律按"哪个空间都试"解析；
+        // 保留这条宽松口径（recipients 是老的自由文本入口，无 key 可依）。见下面的
+        // studentByIdEitherSpace。
+        List<Long> scopeIds = new ArrayList<>();
         for (String scope : scopes) {
             if (KEY_ALL.equalsIgnoreCase(scope)) {
                 wantsAll = true;
@@ -291,19 +305,8 @@ public class CounselorNotificationServiceImpl implements CounselorNotificationSe
                 if (id == null) {
                     res.skipped.add("无法识别的接收范围：" + scope);
                 } else {
-                    wantedIds.add(id);
+                    scopeIds.add(id);
                 }
-            }
-        }
-        for (Object raw : explicitIds) {
-            Long id = toLong(raw);
-            if (id == null) {
-                String s = text(raw);
-                if (!s.isEmpty()) {
-                    res.skipped.add("不是合法 id 的接收人：" + s);
-                }
-            } else {
-                wantedIds.add(id);
             }
         }
 
@@ -329,19 +332,52 @@ public class CounselorNotificationServiceImpl implements CounselorNotificationSe
             }
         }
 
-        for (Long id : wantedIds) {
-            Student s = findStudent(id);
-            if (s == null) {
-                res.skipped.add("找不到学生：" + id);
+        // ⚠️ 三个来源**各查各的空间**（W38）：`student_ids` ⇒ student_profile.id，
+        // `userIds`/`user_ids` ⇒ users.id，裸 scope 数字 ⇒ 两套都试（老的宽松入口）。
+        // 别再把它们合并去查 —— 那正是 id 空间靠"顺序侥幸"的病根。
+        for (Object raw : profileIds) {
+            Long pid = toLong(raw);
+            if (pid == null) {
+                res.skipped.add("不是合法 id 的接收人：" + text(raw));
                 continue;
             }
-            if (roster != null && roster.stream().noneMatch(x -> x.getId().equals(s.getId()))) {
-                res.skipped.add("学生 " + s.getId() + "(" + s.getName() + ") 不在该辅导员名下，已跳过");
+            addWanted(res, seen, roster, pid, Space.PROFILE);
+        }
+        for (Object raw : userIds) {
+            Long uid = toLong(raw);
+            if (uid == null) {
+                res.skipped.add("不是合法 id 的接收人：" + text(raw));
                 continue;
             }
-            addStudent(res, seen, s);
+            addWanted(res, seen, roster, uid, Space.USER);
+        }
+        for (Long id : scopeIds) {
+            addWanted(res, seen, roster, id, Space.EITHER);
         }
         return res;
+    }
+
+    /** 显式 id 的 id 空间 —— 由它来自哪个键决定，不再靠"兜底顺序"猜。 */
+    private enum Space { PROFILE, USER, EITHER }
+
+    /** 按声明的 id 空间查人、做名册过滤、加入结果（三处 explicit 来源共用这一份）。 */
+    private void addWanted(Resolution res, Set<Long> seen, List<Student> roster, Long id, Space space) {
+        Student s = switch (space) {
+            case PROFILE -> findByProfileId(id);
+            case USER -> findByUserId(id);
+            case EITHER -> findStudent(id);
+        };
+        if (s == null) {
+            String how = space == Space.PROFILE ? "student_profile.id"
+                    : space == Space.USER ? "users.id" : "student_profile.id / users.id";
+            res.skipped.add("找不到学生（按 " + how + "）：" + id);
+            return;
+        }
+        if (roster != null && roster.stream().noneMatch(x -> x.getId().equals(s.getId()))) {
+            res.skipped.add("学生 " + s.getId() + "(" + s.getName() + ") 不在该辅导员名下，已跳过");
+            return;
+        }
+        addStudent(res, seen, s);
     }
 
     private void addStudent(Resolution res, Set<Long> seen, Student s) {
@@ -351,19 +387,29 @@ public class CounselorNotificationServiceImpl implements CounselorNotificationSe
         res.students.add(s);
     }
 
-    /**
-     * 按 id 找学生。两个 ID 空间都试：先当 {@code student_profile.id}，再当 {@code users.id}。
-     * 两个页面的发送框传的不是同一套 id（名册页传 {@code row.userId}），不这么找就会写错人。
-     */
-    private Student findStudent(Long id) {
-        Student byProfileId = studentMapper.selectById(id);
-        if (byProfileId != null) {
-            return byProfileId;
-        }
+    /** 按 {@code student_profile.id} 找（{@code student_ids} 一族声明的空间）。 */
+    private Student findByProfileId(Long profileId) {
+        return studentMapper.selectById(profileId);
+    }
+
+    /** 按 {@code users.id} 找（{@code userIds}/{@code user_ids} 声明的空间）。 */
+    private Student findByUserId(Long userId) {
         LambdaQueryWrapper<Student> wrapper = new LambdaQueryWrapper<>();
-        wrapper.eq(Student::getUserId, id).last("LIMIT 1");
+        wrapper.eq(Student::getUserId, userId).last("LIMIT 1");
         List<Student> byUserId = studentMapper.selectList(wrapper);
         return byUserId.isEmpty() ? null : byUserId.get(0);
+    }
+
+    /**
+     * 两套空间都试（先 profile.id、再 users.id）——**只给裸 scope 数字用**。
+     *
+     * <p>W38 前这是**所有**显式接收人共用的解析，于是 `student_ids` 与 `userIds`
+     * 混在一起也"能不碰巧发错人"只是活库两个 id 空间不重叠的运气。现在只有
+     * {@code recipients:[<裸数字>]}` 这个没有 key 可依的老入口还走它。
+     */
+    private Student findStudent(Long id) {
+        Student byProfileId = findByProfileId(id);
+        return byProfileId != null ? byProfileId : findByUserId(id);
     }
 
     private Set<Long> pendingWarningStudentIds(List<Student> roster) {

@@ -151,7 +151,9 @@ class TeacherControllerReadOwnershipTest {
     void otherTeacherAllReadsRejected() {
         assertEquals(403, controller.getDashboard(String.valueOf(OTHER), as(ME)).getCode());
         assertEquals(403, controller.getStudents(String.valueOf(OTHER), as(ME)).getCode());
-        assertEquals(403, controller.getWarnings(String.valueOf(OTHER), null, as(ME)).getCode());
+        // W39 起多一个 onlyMine 参数；归属闸与它无关，两种取值都必须 403。
+        assertEquals(403, controller.getWarnings(String.valueOf(OTHER), null, false, as(ME)).getCode());
+        assertEquals(403, controller.getWarnings(String.valueOf(OTHER), null, true, as(ME)).getCode());
         assertEquals(403, controller.getTodos(String.valueOf(OTHER), as(ME)).getCode());
         assertEquals(403, controller.getAuditLogs(String.valueOf(OTHER), 1, 20, as(ME)).getCode());
         assertEquals(403, controller.getScoreLogs(String.valueOf(OTHER), 1, 20, as(ME)).getCode());
@@ -161,6 +163,67 @@ class TeacherControllerReadOwnershipTest {
         verify(teacherService, never()).getByUserId(anyLong());
         verify(classInfoService, never()).getClassesByTeacherId(anyLong());
         verify(feedbackService, never()).getFeedbacks(anyLong(), any());
+    }
+
+    // ---------------------------------------------------------- W39 onlyMine
+
+    @Mock private com.academic.mapper.AcademicWarningMapper academicWarningMapper;
+    @Mock private com.academic.mapper.AcademicWarningCourseMapper academicWarningCourseMapper;
+
+    private static com.academic.common.entity.AcademicWarning warning(long id, String studentName) {
+        com.academic.common.entity.AcademicWarning w = new com.academic.common.entity.AcademicWarning();
+        w.setId(id);
+        w.setStudentName(studentName);
+        w.setWarningLevel(2);
+        w.setStatus(0);
+        return w;
+    }
+
+    private static java.util.Map<String, Object> courseRow(long warningId, long courseId, long teacherId) {
+        java.util.Map<String, Object> m = new java.util.HashMap<>();
+        m.put("warningId", warningId);
+        m.put("courseId", courseId);
+        m.put("courseName", "课程" + courseId);
+        m.put("scoreTotal", 50.0);
+        m.put("courseTeacherId", teacherId);
+        return m;
+    }
+
+    @Test
+    @DisplayName("★ onlyMine=true 只留「涉及我教的课」的预警；false 时两条都在")
+    @SuppressWarnings("unchecked")
+    void onlyMineFiltersToWarningsTouchingMyCourses() {
+        // 老师 29 是 1 号班的班主任，班上有两条预警：
+        //   501 —— 挂的课全是他自己教的；
+        //   502 —— 挂的课是老师 22 教的（他看不到课，只是班是他的）。
+        // 活库演示数据里**没有**这个形状（每位有预警的班主任恰好也教那些课），
+        // 所以这条分支只能在这里钉住。
+        long me = 29L;
+        lenient().when(classInfoService.getClassesByTeacherId(me))
+                .thenReturn(new ArrayList<>(List.of(java.util.Map.of("id", 1L, "name", "计科2306班"))));
+        when(academicWarningMapper.findByClassId(1L))
+                .thenReturn(List.of(warning(501L, "司明"), warning(502L, "韩坤")));
+        when(academicWarningCourseMapper.selectByWarningIds(anyCollection()))
+                .thenReturn(List.of(courseRow(501L, 1L, me), courseRow(502L, 6L, 22L)));
+        // 归属过滤直连库：只有 501 的课程里出现了 me。
+        when(academicWarningCourseMapper.selectWarningIdsInvolvingTeacher(eq(me), anyCollection()))
+                .thenReturn(List.of(501L));
+
+        ApiResponse<Object> all = controller.getWarnings(String.valueOf(me), null, false, as(me));
+        assertEquals(200, all.getCode());
+        List<java.util.Map<String, Object>> allRows = (List<java.util.Map<String, Object>>) all.getData();
+        assertEquals(2, allRows.size(), "不筛时必须保留原有班级范围（W39 没有收窄可见面）");
+        assertEquals(Boolean.TRUE, allRows.stream()
+                .filter(r -> Long.valueOf(501L).equals(r.get("id"))).findFirst().orElseThrow().get("involvesMyCourse"));
+        assertEquals(Boolean.FALSE, allRows.stream()
+                .filter(r -> Long.valueOf(502L).equals(r.get("id"))).findFirst().orElseThrow().get("involvesMyCourse"));
+
+        ApiResponse<Object> mine = controller.getWarnings(String.valueOf(me), null, true, as(me));
+        List<java.util.Map<String, Object>> mineRows = (List<java.util.Map<String, Object>>) mine.getData();
+        assertEquals(1, mineRows.size(), "onlyMine=true 只剩 501");
+        assertEquals(501L, mineRows.get(0).get("id"));
+        // 放行面必须断言行数 > 0：否则"参数没对上"和"闸生效"在输出里长得一样。
+        assertEquals("课程1", mineRows.get(0).get("courseNames"));
     }
 
     @Test
@@ -370,5 +433,62 @@ class TeacherControllerReadOwnershipTest {
         assertEquals(200, controller.getScoresByClass(OTHERS_CLASS_NAME, null, asAdmin(4L)).getCode());
 
         verify(classInfoMapper, never()).countClassesNamedAndOwned(anyString(), anyLong());
+    }
+
+    // ======================================================================
+    // W38（2026-10-10）：`GET /teachers/{id}` 之前**零闸** —— 任意教师可读他人档案
+    // （name/title/collegeId）。路径参数是 `teacher_profile.id`，所以闸必须是
+    // isSelfProfile（会先把调用者 users.id 换成本人 profile.id），用 isSelf 直接比
+    // 会把教师本人也拦掉（于凤海 users.id=29 / profile.id=1）。
+    // 被拒形状：HTTP 200 + body code:403（控制器业务拒绝）。
+    // ======================================================================
+
+    /** 本人 profile.id ⇒ 200（这条是"别把教师自己拦了"的钉子）。 */
+    @Test
+    @DisplayName("GET /teachers/{id}：读本人档案 ⇒ 放行")
+    void teacherInfoSelfAllowed() {
+        TeacherProfile mine = new TeacherProfile();
+        mine.setId(1L);
+        mine.setUserId(ME);
+        mine.setName("刘教授");
+        when(teacherService.getByUserId(ME)).thenReturn(mine);
+        when(teacherService.getById(1L)).thenReturn(mine);
+
+        assertEquals(200, controller.getTeacherInfo(1L, as(ME)).getCode());
+        verify(teacherService).getById(1L);
+    }
+
+    /** 别人的 profile.id ⇒ 403，且**一次都没读到那条档案**。 */
+    @Test
+    @DisplayName("GET /teachers/{id}：读他人档案 ⇒ 403 且不查库")
+    void teacherInfoOtherDenied() {
+        TeacherProfile mine = new TeacherProfile();
+        mine.setId(1L);
+        mine.setUserId(ME);
+        when(teacherService.getByUserId(ME)).thenReturn(mine);
+
+        ApiResponse<TeacherProfile> r = controller.getTeacherInfo(2L, as(ME));
+
+        assertEquals(403, r.getCode());
+        verify(teacherService, never()).getById(anyLong());
+    }
+
+    /** 管理员旁路。 */
+    @Test
+    @DisplayName("GET /teachers/{id}：管理员 ⇒ 旁路放行")
+    void teacherInfoAdminBypass() {
+        when(teacherService.getById(2L)).thenReturn(new TeacherProfile());
+
+        assertEquals(200, controller.getTeacherInfo(2L, asAdmin(4L)).getCode());
+        verify(teacherService).getById(2L);
+        verify(teacherService, never()).getByUserId(anyLong());
+    }
+
+    /** 无注入头的裸请求 ⇒ fail-closed 403。 */
+    @Test
+    @DisplayName("GET /teachers/{id}：匿名 ⇒ 403 且不查库")
+    void teacherInfoAnonymousDenied() {
+        assertEquals(403, controller.getTeacherInfo(1L, anonymous()).getCode());
+        verify(teacherService, never()).getById(anyLong());
     }
 }

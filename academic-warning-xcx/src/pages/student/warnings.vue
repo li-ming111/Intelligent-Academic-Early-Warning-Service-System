@@ -41,6 +41,15 @@
 
             <text class="warn-card__desc">{{ w.description || w.title || '暂无说明' }}</text>
 
+            <!-- W39：挂科课程明细（库里真实的关系，不再靠正则从正文里抠） -->
+            <view v-if="w.courses.length" class="warn-card__courses">
+              <text
+                v-for="c in w.courses"
+                :key="c.courseId"
+                class="course-chip"
+              >{{ c.courseName }} {{ fmtScore(c.scoreTotal) }}</text>
+            </view>
+
             <view class="warn-card__meta">
               <view v-if="w.triggerScore !== null" class="warn-card__meta-item">
                 <text class="warn-card__meta-label">触发分数</text>
@@ -81,6 +90,18 @@
         <view v-if="detail.triggerScore !== null" class="detail__row">
           <text class="detail__label">触发分数</text>
           <score-cell :score="detail.triggerScore" />
+        </view>
+        <view v-if="detail.courses && detail.courses.length" class="detail__block">
+          <text class="detail__label">挂科课程（{{ detail.courses.length }} 门）</text>
+          <view
+            v-for="c in detail.courses"
+            :key="c.courseId"
+            class="detail__course"
+          >
+            <text class="detail__course-name">{{ c.courseName }}</text>
+            <text class="detail__course-score">{{ fmtScore(c.scoreTotal) }} 分</text>
+            <text v-if="c.semester" class="detail__course-sem">第 {{ c.semester }} 学期</text>
+          </view>
         </view>
         <view class="detail__block">
           <text class="detail__label">预警说明</text>
@@ -168,6 +189,12 @@ function openDetail(w) {
   detailOpen.value = true
 }
 
+/** 分数可能是 56.5 也可能是整数 40 —— 后者别显示成 "40.0"。 */
+function fmtScore(s) {
+  if (s === null || s === undefined) return '--'
+  return String(Number(s))
+}
+
 onMounted(load)
 
 async function load() {
@@ -202,6 +229,47 @@ async function load() {
   /* 左侧色条按等级走：一眼扫过去就知道哪几条更急 */
   border-left: 6rpx solid $color-pending;
   @include card;
+}
+
+.warn-card__courses {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10rpx;
+  margin-top: $spacing-sm;
+}
+
+.course-chip {
+  font-size: $font-xs;
+  color: $color-text-secondary;
+  background: $color-divider;
+  border-radius: $radius-sm;
+  padding: 4rpx 12rpx;
+}
+
+.detail__course {
+  display: flex;
+  align-items: center;
+  gap: $spacing-md;
+  padding: 10rpx 0;
+  border-bottom: 1rpx solid $color-border;
+}
+
+.detail__course-name {
+  flex: 1;
+  min-width: 0;
+  font-size: $font-sm;
+  color: $color-text;
+}
+
+.detail__course-score {
+  font-size: $font-sm;
+  color: $color-danger;
+  font-weight: 600;
+}
+
+.detail__course-sem {
+  font-size: $font-xs;
+  color: $color-text-hint;
 }
 
 .warn-card--level-1 { border-left-color: $level-1; }

@@ -42,10 +42,14 @@ import java.io.IOException;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * 教师控制器
@@ -105,6 +109,11 @@ public class TeacherController {
     @Autowired
     private com.academic.mapper.CourseRecommendationMapper courseRecommendationMapper;
 
+    // 预警的「挂科课程明细」（W39）。共用实现放在 academic-common 的 com.academic.mapper 包，
+    // 12 个服务的 @MapperScan 都覆盖到，无需额外配置。
+    @Autowired
+    private com.academic.mapper.AcademicWarningCourseMapper academicWarningCourseMapper;
+
     // ==================== 注册（已删，2026-10-08 W27） ====================
     // 这里原来有一条 `POST /teachers/register`：它只往 `teacher_profile` 插一行档案，
     // **不建账号、不设口令、不经 `userService.register`** —— 而 `teacher_profile.user_id`
@@ -113,9 +122,18 @@ public class TeacherController {
     // `POST /api/auth/register/teacher`（`TeacherRegister.vue` 走的就是它），直接删。
     /**
      * 获取教师信息
+     *
+     * <p><b>2026-10-10（W38）</b>：补读侧归属闸。<b>路径参数 {@code id} 是
+     * {@code teacher_profile.id}</b>（不是 {@code users.id}）—— 小程序
+     * {@code pages/teacher/profile.vue} 正是用 {@code mine.id}（profile.id）调它，
+     * 所以必须用 {@link #isSelfProfile}（它会把调用者的 users.id 换成本人 profile.id 再比），
+     * 用 {@link #isSelf} 直接比会**把教师本人也拦掉**。管理员旁路；其余人 403。
      */
     @GetMapping("/{id}")
-    public ApiResponse<TeacherProfile> getTeacherInfo(@PathVariable Long id) {
+    public ApiResponse<TeacherProfile> getTeacherInfo(@PathVariable Long id, HttpServletRequest request) {
+        if (!isSelfProfile(id, request)) {
+            return forbidden("只能查看本人的资料");
+        }
         try {
             TeacherProfile teacher = teacherService.getById(id);
             if (teacher != null) {
@@ -1137,10 +1155,33 @@ public class TeacherController {
     }
 
     /**
-     * 获取预警信息
+     * 获取预警信息。
+     *
+     * <p><b>范围口径（2026-10-12 W39 起明确）：</b>本端点返回的是<b>「我当班主任的班」里
+     * 全部学生的预警</b>（{@code classes.teacher_id} → 该班学生 → 全部预警），
+     * <b>不是</b>"我在教的那些课的预警"。两条路的关联键不同：
+     * <ul>
+     *   <li>本端点：{@code classes.teacher_id}（= {@code users.id}）；</li>
+     *   <li>"我的课程"（{@code GET /courses?teacher_id=}）：{@code courses.teacher_id}。</li>
+     * </ul>
+     * 二者不相交，所以一位老师完全可能看到"预警里点名的课不是我教的"。这不是 bug
+     * （班主任确实要管全班），但此前界面上**一个课程字段都没有**，老师无从判断，
+     * 看起来就像预警与课程对不上。
+     *
+     * <p>W39 起每条预警补三个字段把关系说清楚（数据来自 {@code academic_warning_course}）：
+     * <ul>
+     *   <li>{@code courses} —— 这条预警由哪几门课的挂科构成（课程名/分数/学期/任课教师）；</li>
+     *   <li>{@code courseNames} —— 上面那些课程名的"、"拼接，给卡片一行显示；</li>
+     *   <li>{@code involvesMyCourse} —— 其中有没有**我教的**课
+     *       （判据 {@code courses.teacher_id} = 我，{@code users.id} 空间）。</li>
+     * </ul>
+     *
+     * @param onlyMine 可选。{@code true} 时只返回 {@code involvesMyCourse=true} 的预警 ——
+     *                 老师从"我全班的情况"切到"我只关心我教的课"。
      */
     @GetMapping("/warnings/{teacherId}")
     public ApiResponse<Object> getWarnings(@PathVariable String teacherId, @RequestParam(required = false) String status,
+                                           @RequestParam(required = false, defaultValue = "false") boolean onlyMine,
                                            HttpServletRequest request) {
         // W11 读侧归属闸：users.id 空间。
         if (!isSelf(Long.parseLong(teacherId), request)) {
@@ -1149,32 +1190,85 @@ public class TeacherController {
         try {
             Long tid = Long.parseLong(teacherId);
             List<Map<String, Object>> result = new ArrayList<>();
+            // 先把本班全部预警收齐（保持原有班级范围），再一次性补课程明细 —— 不做逐行查询。
+            List<com.academic.common.entity.AcademicWarning> all = new ArrayList<>();
+            Map<Long, String> classNameByWarningId = new HashMap<>();
             List<Map<String, Object>> classes = classInfoService.getClassesByTeacherId(tid);
             for (Map<String, Object> clazz : classes) {
                 Long classId = (Long) clazz.get("id");
                 if (classId == null) continue;
-                List<com.academic.common.entity.AcademicWarning> wlist = academicWarningMapper.findByClassId(classId);
-                for (com.academic.common.entity.AcademicWarning w : wlist) {
-                    Map<String, Object> m = new HashMap<>();
-                    m.put("id", w.getId());
-                    m.put("studentId", w.getStudentId());
-                    m.put("studentName", w.getStudentName());
-                    m.put("warningLevel", w.getWarningLevel() != null ? (w.getWarningLevel() >= 3 ? "严重" : w.getWarningLevel() == 2 ? "中度" : "轻度") : "轻度");
-                    m.put("title", w.getTitle());
-                    m.put("description", w.getDescription());
-                    m.put("type", w.getType());
-                    // 2026-10-02（W1.6）：原来是两态 `status == 0 ? "待处理" : "已处理"`，
-                    // 于是 status=2（已解除）被翻成"已处理"—— 与同一个类里另一处翻成"待处理"**相反**。
-                    // 收敛到 WarningStatus.text()，三处共用一份。
-                    m.put("status", WarningStatus.text(w.getStatus()));
-                    m.put("className", clazz.get("name"));
-                    m.put("createdAt", w.getCreatedAt());
-                    result.add(m);
+                for (com.academic.common.entity.AcademicWarning w : academicWarningMapper.findByClassId(classId)) {
+                    all.add(w);
+                    // 同一条预警只会属一个班（学生只在一个班），不会被后面的班覆盖。
+                    classNameByWarningId.put(w.getId(), (String) clazz.get("name"));
                 }
+            }
+
+            // 批量取课程明细 + "涉及我教的课"的那批 id。
+            List<Long> warningIds = all.stream()
+                    .map(com.academic.common.entity.AcademicWarning::getId)
+                    .filter(Objects::nonNull)
+                    .collect(Collectors.toList());
+            Map<Long, List<Map<String, Object>>> coursesByWarningId = new HashMap<>();
+            Set<Long> involvingMine = new HashSet<>();
+            if (!warningIds.isEmpty()) {
+                for (Map<String, Object> row : academicWarningCourseMapper.selectByWarningIds(warningIds)) {
+                    Long wid = toLongValue(row.get("warningId"));
+                    if (wid == null) continue;
+                    coursesByWarningId.computeIfAbsent(wid, k -> new ArrayList<>()).add(row);
+                }
+                involvingMine.addAll(academicWarningCourseMapper.selectWarningIdsInvolvingTeacher(tid, warningIds));
+            }
+
+            for (com.academic.common.entity.AcademicWarning w : all) {
+                boolean mine = involvingMine.contains(w.getId());
+                if (onlyMine && !mine) {
+                    continue;
+                }
+                List<Map<String, Object>> courses =
+                        coursesByWarningId.getOrDefault(w.getId(), Collections.emptyList());
+                Map<String, Object> m = new HashMap<>();
+                m.put("id", w.getId());
+                m.put("studentId", w.getStudentId());
+                m.put("studentName", w.getStudentName());
+                m.put("warningLevel", w.getWarningLevel() != null ? (w.getWarningLevel() >= 3 ? "严重" : w.getWarningLevel() == 2 ? "中度" : "轻度") : "轻度");
+                m.put("title", w.getTitle());
+                m.put("description", w.getDescription());
+                m.put("type", w.getType());
+                // 2026-10-02（W1.6）：原来是两态 `status == 0 ? "待处理" : "已处理"`，
+                // 于是 status=2（已解除）被翻成"已处理"—— 与同一个类里另一处翻成"待处理"**相反**。
+                // 收敛到 WarningStatus.text()，三处共用一份。
+                m.put("status", WarningStatus.text(w.getStatus()));
+                m.put("className", classNameByWarningId.get(w.getId()));
+                m.put("createdAt", w.getCreatedAt());
+                // W39：课程维度。这三样此前在教师端**完全不存在**。
+                m.put("courses", courses);
+                m.put("courseNames", courses.stream()
+                        .map(c -> c.get("courseName"))
+                        .filter(Objects::nonNull)
+                        .map(String::valueOf)
+                        .collect(Collectors.joining("、")));
+                m.put("involvesMyCourse", mine);
+                result.add(m);
             }
             return ApiResponse.success(result);
         } catch (Exception e) {
             return ApiResponse.error(e.getMessage());
+        }
+    }
+
+    /** {@code Number}/{@code String} 混着的 mapper 返回值 → {@code Long}；认不出返回 null。 */
+    private static Long toLongValue(Object v) {
+        if (v == null) {
+            return null;
+        }
+        if (v instanceof Number n) {
+            return n.longValue();
+        }
+        try {
+            return Long.parseLong(String.valueOf(v).trim());
+        } catch (NumberFormatException e) {
+            return null;
         }
     }
 
