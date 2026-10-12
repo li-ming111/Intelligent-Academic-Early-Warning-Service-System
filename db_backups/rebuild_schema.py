@@ -1,5 +1,15 @@
 # -*- coding: utf-8 -*-
-"""用线上库的权威结构重建 init_schema.sql。
+"""⚠️ 本仓明令禁止运行本脚本（见 FEATURES.md §8.12 / §8.14）。留在这里只为留下历史现场。
+
+它唯一的输入 `db_backups/schema_dump_20260916.sql` **早就不是活库快照**了：
+实测缺 admin_tasks / course_recommendation / user_settings / academic_warning_course 四张表
+（四张在活库里都真实存在），却还留着一张历史快照 academic_warning_bak_20260916。
+以它为"唯一权威"重排，等于**把这四张表从 init_schema.sql 里整表抹掉**；
+2026-10-02 起 `答辩准备-启动与演示手册.md` 里那句"两边漂移 = 0"就已不成立。
+
+—— 以下为脚本原始 docstring，保留以便对照 ——
+
+用线上库的权威结构重建 init_schema.sql。
 
 背景：init_schema.sql 与线上库长期脱节 —— 幽灵表（warning_rule/student/academic_warnings）、
 缺失表（college_admin_profile/login_logs/report_templates/score_audit_log）、

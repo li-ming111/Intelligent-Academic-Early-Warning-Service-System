@@ -405,7 +405,7 @@ Gateway (8076)
 3. 扫描多门挂科学生（≥ 2 门）
 4. 按规则条件精细化扫描
 5. 去重：已有未处理预警的学生不再生成
-6. 写入 `academic_warning` 表（**单数**）
+6. 写入 `academic_warning` 表（**单数**），**并逐门落 `academic_warning_course` 明细**（W39，见 §3.6.4）
 
 #### 3.6.3 预警接口
 
@@ -424,6 +424,63 @@ Gateway (8076)
 > `GET /warnings/statistics/{counselorId}` **四条都不存在**（2026-10-05 核对）。
 > 且上面这 **8 条前端一条都没调** —— 预警实际由每日 02:00 的定时任务产生，
 > 各端读取走自己的端点（`/counselors/warnings/**`、`/students/warnings/**`、`/admin/warnings`）。见 §八。
+
+#### 3.6.4 预警 ↔ 课程：`academic_warning_course`（W39，2026-10-12）
+
+**现象（用户报的）**：教师端和管理员端的"预警信息"与"课程信息"对应不上。
+
+**根因不是前端，是预警表根本没有课程这一维**：`academic_warning` 只有 `student_id`
+（= `student_profile.id`），预警按**学生聚合**生成，"挂了哪几门课"只以**散文**形式写在
+`description` 里（如"第5学期累计 3 门课程不及格：操作系统(40分)、计算机基础(47分)、高等数学(56.5分)"）。
+由此派生三处对不上：
+
+| # | 症状 | 机制 |
+|---|------|------|
+| 1 | 教师看到自己班上学生的预警，正文点名的课大部分**不是他教的** | 预警按 `classes.teacher_id`（班主任）过滤；老师的"我的课程"来自 `courses.teacher_id`。两条路不相交 |
+| 2 | 管理员端"班级"一列**恒为 `--`** | `GET /admin/warnings` 直接回裸实体，没有 `className`；`AdminWarnings.vue` 写的是 `w.className \|\| '--'` |
+| 3 | PC 学生端的"关联课程"**是前端编造的** | `Warnings.vue` 的 `extractCourseName()` 用正则从 `description` 里抠课程名 |
+
+**改法**：新增子表 `academic_warning_course`（一条预警 × 多门挂科课）。
+`academic_warning` 的**语义不变**，现有"累计挂科 1-2 / 3-5 / >5 门"规则引擎一行没改 ——
+所以这是"把已经存在的关系落到库里"，不是"改预警口径"。
+
+| 项 | 内容 |
+|---|---|
+| 写入方 | **只有** `WarningScheduledTask.createWarning`，经新 bean `WarningWriter.insertWarningWithCourses`（`@Transactional`，两表原子）。⚠️ 抽成独立 bean 是因为同类私有方法自调用不过代理 ⇒ 假事务 |
+| 不写的 | `IntelligentWarningServiceImpl.generateWarning`（`POST /warnings/generate`，前端零调用方）：它的契约只收 `studentId/ruleId/warningLevel/warningMessage`，**没有课程入参**，不落也不读子表 |
+| 读端 | `GET /teachers/warnings/{id}`、`GET /admin/warnings`、`GET /admin/warnings/{id}`、`GET /students/warnings/{id}` 各补 `courses`（数组）+ `courseNames`（拼串）；教师端另有 `involvesMyCourse` 布尔与 `onlyMine` 筛选 |
+| 改表五处 | `init_schema.sql` + 活库 + `db_backups/academic_warning_course_20261012_{apply,rollback}.sql` + **`DataInitializer.EXPECTED_COLUMNS` 刻意不加**（理由见下）。⚠️ 第四处 `db_backups/schema_dump_*.sql` **本轮没改** —— 那张 dump 早就不是"活库快照"了，见 **§8.14** |
+| 回填 | `apply` 脚本按权威口径（`ScoreCaliber.LATEST_VALID_SCORE`，`score_total < 60`）对**所有** pending 预警重算。实测活库 **4 条预警 / 11 行明细**，逐条 `COUNT(*) == academic_warning.fail_count`（司明3、李爽3、张健3、韩坤2） |
+
+**四条读端实测**（直连服务，2026-10-12；活库 **4 条预警**）：
+
+- `GET /teachers/warnings/29`（于凤海，uid 29）→ 4 条。司明那条的 `courses` = 操作系统40(任课18) / 计算机基础47(任课22) / **高等数学56.5(任课29)**，`involvesMyCourse=true`。
+- `GET /teachers/warnings/29?onlyMine=true` → 仍 **4** 条（4 条都涉他的课）。
+- ⚠️ **`rows=0` 不等于闸生效**：`GET /teachers/warnings/18?onlyMine=true` 也回 **0** 条，但那是**正确的** —— 刘教授（uid 18）带的是 31/32 班，司明等在 1 班（班主任 29）。**演示数据里每位"有预警的班主任"恰好也教那些课**，所以 `onlyMine` 这个分支在活库上打不出反例。该分支由单测钉住（`TeacherControllerReadOwnershipTest.onlyMineFiltersToWarningsTouchingMyCourses`，构造"班是我的、课是别人的"形状），并做了三轮反向打靶（M1 删筛选 ⇒ `1→2`；M2 恒拒 ⇒ `1→0`；M3 关掉归属查询 ⇒ `involvesMyCourse` 翻假）。
+- `GET /admin/warnings` → 4 条，`className` 均为 `计科2306班`（此前恒 `null` ⇒ 界面恒 `--`），`courses` 与教师端一致。`GET /admin/warnings/999999` → body `code:404`（HTTP 仍 200，是本仓控制器业务拒绝的常规形状）。
+- `GET /students/warnings/27`（司明）→ 1 条，`courses` 三门带 `semester`。
+
+**顺带修掉**：PC 学生端删掉 `extractCourseName` 正则（那是全仓唯一一处前端编造课程名）；
+小程序 `utils/warning.js` 的 `normalizeWarning` 统一补 `className/courses/courseNames/involvesMyCourse` 四个键，
+三个页面（student/teacher/admin）共用，不再各自兜 null。
+
+**刻意不动（免得被当成漏做）**：
+
+- 所有**计数/聚合** SQL（`ScoreStatMapper`、`WarningMapper`、dashboard…）数的是行数，与课程维无关。
+- `GET /ai/analyze-warning/{warningId}`：只把 id 塞进 prompt，**从不读预警行**。
+- 教师端**仍按班级**（`classes.teacher_id`），`isSelf` 归属闸不动；`onlyMine` 是"在班级范围内再筛"。
+- `warning_rules` / `RuleConditionParser`：规则仍是学生级累计口径。
+
+**已知边界**：
+
+- 子表是**派生数据**：`scores` 变了（补考通过、改分）子表会过期。本轮只在**生成预警时**写，不做"成绩回滚时重算子表"。
+- `description` 正文最多罗列 `MAX_COURSE_DETAIL=5` 门（超出以"等"省略），子表存**全部**挂科 ⇒ 子表比正文更完整。
+- 子表**不加** `EXPECTED_COLUMNS` 项：common jar 被 5 个服务加载，若某个库还没这张表，自检会把它报成"(表不存在)"并制造新的假漂移噪音（先例：`student_settings`）。代价 = 这张新表不在启动自检覆盖内，写进表注释与 `apply` 脚本头部。
+- **不加外键**到 `courses`：给 `courses.id` 加 FK 会让"删课"在历史预警上失败，而这是可重算的派生记录，悬空 `course_id` 无害（读端 `COALESCE(courses.name, awc.course_name)` 已兜住）。`uk_awc_warning_course` 保证重扫重写幂等。
+
+**同轮订正一处既有账**：`DataInitializer.EXPECTED_COLUMNS` 有 3 条基线早已过期（`colleges` 9→7、`assistance_plans` 8→9、`academic_warning` 21→22）。
+⚠️ 但订正到一半发现**这个自检从来没跑过**，所以"已经报警、没人听"那句话是**错的** —— 它连报警都没有。
+真相与改法见 **§8.12**（同一轮顺手核出的最重一条）。
 
 ---
 
@@ -600,8 +657,9 @@ WebSocket 实时推送 → 学生/辅导员收到通知
 | `counselor_profiles` | 辅导员档案表 | id, user_id, college_id |
 | `courses` | 课程表 | id, name, code, credits |
 | `scores` | **唯一权威成绩表**（W36 起：教师端读写、辅导员端、学生端、预警引擎**全部**读它） | id, student_id(**profile id**), course_id, semester(int), year, score_total, regular_score, final_score, grade, grade_point, **remark**, modified_by |
-| `score_record` | ~~成绩记录表~~ **2026-10-10（W36）起教师端已不再读写它**，只剩 `admin-service` 的 `POST /admin/import/scores` 一个写方 ⇒ 现在它是"**管理端导入暂存表**" | id, student_id, course_id, teacher_id, score, score_level |
+| ~~`score_record`~~ | **已删（2026-10-12 W39）**。W36 迁走教师端、W38 迁走 admin 导入之后，全仓对它**零读零写**（无 SQL 引用、无 mapper XML、无 `BaseMapper<ScoreRecord>`、活库无触发器/视图/存储过程），已从活库与 `init_schema.sql` 一并移除；246 行历史数据留档在 `db_backups/score_record_drop_20261012_rollback.sql`。详见 §8.15 | 已不存在 |
 | `academic_warning` | 预警记录表（**单数**） | id, student_id, warning_level, status(0待处理/1已处理/2已解除) |
+| `academic_warning_course` | 预警**挂了哪几门课**的明细（W39 新增，见 §3.6.4） | id, warning_id, course_id, course_name(快照), score_total, semester |
 | `warning_rules` | 预警规则表 | id, name, rule_condition, level, status |
 | `assistance_plans` | 帮扶计划表 | id, student_id, counselor_id, status, progress |
 | `classes` | 班级表 | id, name, teacher_id, counselor_id, college_id, major_id |
@@ -844,7 +902,8 @@ public Object registerStudent(Object request) {
 > 核完 `scores` 恢复 259 行、`score_record` 246 行未动。
 > ⚠️ 中文 body 在 MSYS bash 会按 GBK 发出去 ⇒ 探针 payload 一律用 ASCII，中文只走**显式百分号编码的查询参数**。
 
-**未修边界**：① `admin-service` 的 `POST /admin/import/scores` 仍写 `score_record`（登记）；
+**未修边界**：① ~~`admin-service` 的 `POST /admin/import/scores` 仍写 `score_record`（登记）~~ ⇒
+**已收口（W38 把 admin 导入也迁到 `scores`，W39 随即把这张已无人用的表整表删掉，见 §8.15）**；
 ② `/teachers/scores/by-class` 的入参仍是 `class_name` 字符串，同名班仍会被一并命中（要根治得改接口契约收 `class_id`）；
 ③ 教师端「成绩册/导出」沿用**分析口径**（过滤 `final_score IS NULL`）—— 司明那 4 行「期末未录入」因此不出现在教师页。
 实测全库**没有**"只有未录入行"的课，所以没有任何数据被隐藏；但那 4 行里 3 行低于 60，
@@ -912,7 +971,236 @@ M2（改回原始"无头就信 body"逻辑）⇒ 钉子的两条红。
 > ⚠️ 打靶中途那次"全绿"是**上一轮遗留的 `target/surefire-reports` 陈旧报告**（编译失败时 surefire 不跑、报告还在）
 > ⇒ 看结果要同时看 mvn 输出里有没有 `Tests run:`。
 
+### 8.11 「预警 ↔ 课程」原来不在库里，只在正文的散文里（2026-10-12 W39）
+
+**用户报的现象**："教师端和管理员端预警信息和课程信息对应不上。"
+
+**这条不属于 §8.6 的"接口是否诚实"（每个端点单独看都如实回了它有的东西），
+而是"库里的**数据模型**缺一维"** —— 所以它既不是桩、也不是假成功，是**结构上的缺失**。
+三者要分开答：桩 = 有接口没实现；假成功 = 说了做了没做；**这一条 = 关系从来没被存下来**。
+
+诊断链条（全部实测，未用前端）：
+
+1. `academic_warning` **没有 `course_id`**，只有 `student_id`（`student_profile.id` 空间）。
+2. 扫描任务 `createWarning` 手里**已经有** `detail` 列表（每行带 `courseId/courseName/scoreTotal/semester`，
+   来自 `FAIL_DETAIL_BY_STUDENT`），但 `m.put("courseDaily", ...)` 那里**只读 `scoreTotal` 和 `courseName` 就把 `courseId` 扔了**。
+3. 于是"挂了哪几门课"只剩下正文字符串；三个消费方各自用不同办法应对：
+   教师端不看课程（按班级过滤）、管理员端班级恒 `--`、PC 学生端**用正则从正文里抠课程名**。
+
+**判"前端编造"的判据**：`Warnings.vue:234-243` 的 `extractCourseName()` 是正则
+`/([一-龥]{2,6}?)[(（]?\d+\.?\d*分?/` —— 抠不出来就空着、抠错就是编造。
+这是全仓**唯一**一处前端从散文里造结构化数据的写法（W21 那两条是**后端**编造假数据，不同族）。
+
+**收口方式与判据**见 §3.6.4。台账取法上值得记的一条：
+
+> ⚠️ **`rows=0` 不能当"闸生效"的证据** —— 本轮 `GET /teachers/warnings/18?onlyMine=true` 回 0 条，
+> 看着像筛选对了，其实是**参数与数据两头恰好都不成立**（该教师是 31/32 班班主任，根本看不到这 4 条）。
+> 放行面必须断言**行数 > 0**，否则"参数没对上"与"闸生效"在输出里长得一模一样（W30 已栽过一次，这是第二次）。
+> 当活库数据**构造不出反例**时，正确的做法是**用单测构造那个形状**，而不是把 0 条读成通过。
+
+> ⚠️ **计数器类判断一律 `SELECT MAX(id)+1`**（`information_schema` 缓存旧值，本仓已有记载）。
+> 本轮 `academic_warning_course` 建表后自增计数正常，未触发该坑，但会话里查询一律走 `MAX(id)+1`。
+
+**同轮订正的既有账**（§3.6.4 末）：`DataInitializer.EXPECTED_COLUMNS` 3 条基线过期
+（`colleges` 9→7、`assistance_plans` 8→9、`academic_warning` 21→22）。
+订正后 14 张表的基线自检才**第一次真的等于活库** —— 此前每个服务每次启动都打 3 条假漂移 ERROR，
+把"schema 变更会被自检逮住"这个机制**自己喂瞎了**。判据 = 订正后重启服务，日志里
+`[DataInit] 结构自检发现 N 处漂移` 归零。
+
+**本轮验证**：全量 reactor **656 例 / 0 失败**（academic-common 28→31，teacher-service 118→119）；
+`python db_backups/verify_invariants.py` **42/42**；活库 4 条预警 / 11 行明细逐条 `COUNT(*) == fail_count`。
+
+### 8.12 ⭐ `DataInitializer` 的「建库 + 种子 + 结构自检」**一次都没跑过**（2026-10-12 W39 顺手核出）
+
+**这是本轮最重的一条，而且和被报的预警问题无关 —— 是顺手核出来的。**
+
+**现象**：在 §3.6.4 的订正里我写了"订正这 3 条基线，14 张表的自检才第一次真的等于活库"。
+为**验证这句话**，我起了一个新实例去看启动日志，结果 `DataInit` **一行都没有**。
+
+**排查链（每一步都是实测，不是读代码推的）**：
+
+1. `grep -c DataInit` 新起实例的日志 ⇒ **0**；`logs/` 全目录 grep `结构自检` ⇒ **零命中**（历史日志也没有）。
+2. 在 `@Bean` 方法体**首行**插 `System.out.println` 探针 ⇒ 起实例后**探针 0 次** —— 说明不是"跑了但没日志"，是**方法压根没被调用**。
+3. 把 `@ConditionalOnBean(DataSource.class)` 删掉，**其余一行不改**，重编重起 ⇒ **探针 2 次**（bean created + runner invoked），
+   且日志出现 `[DataInit] 结构自检通过：14 张关键表列数均与基线一致。`
+4. `git log -S` 定位：这个条件是 **2026-07-17 的提交 `15a1e841` 加进去的**（不是原始写法）。
+
+**根因**：`@ConditionalOnBean` 只在**用户自己声明**的 bean 上可靠。本仓没有任何一处 `@Bean DataSource`
+（11 个服务全靠自动配置），所以评估条件时 DataSource **可能还没注册** ⇒ 条件判假 ⇒ bean 静默跳过。
+**它不报错、不打日志，功能整体不发** —— 这正是本仓反复记的那类形状（"没实现"和"实现了但没接上"要分开答）。
+
+**后果**（不能夸大，逐条说清）：
+
+| DataInitializer 的两条职责 | 实际影响 |
+|---|---|
+| 建库（全新库执行 `init_schema.sql` + 种子数据） | **活库是手工建的**（`academic_warning_system.sql` / `db_backups/`），所以演示环境没事 —— 但**换台机器从零起会得到一个空库**，而且不报错 |
+| 结构自检（对照 `EXPECTED_COLUMNS`，漂移打 ERROR） | **完全没生效过**。本仓把"改表要在**五处**同步"写进规矩（§三 表注、§8.9），而**唯一的自动兜底一直是哑的** |
+
+**改法**：删掉 `@ConditionalOnBean(DataSource.class)`（连带 import），并在原地留一段 `⚠️` 注释写清
+"加过、为什么错、别再加回来"。去掉条件是安全的：11 个依赖 academic-common 的服务**全部**配了 `spring.datasource`，
+`gateway-service` 根本不依赖本模块（已核 pom）。万一将来真有不配数据源又引本模块的服务，
+Spring 会**明确报错**（"required a bean of type 'DataSource'"）—— 比"静默不跑"好得多。
+
+> ⚠️ 我误以为当时运行的旧 jar 是"改前对照" —— 它不是（那是 15a1e841 之后打包的，同样带条件）。
+> 真正的对照是**同一份代码、只差那一个注解**，这也正是判据必须写成"删掉条件 ⇒ 探针 2 次"的原因。
+
+**验证（四条，全部实测）**：
+
+1. `teacher-service` / `admin-service` 起实例 ⇒ 都打出 `结构自检通过：14 张关键表列数均与基线一致`，且**启动无异常**。
+2. **反向打靶 M5**：把基线 `colleges` 从 7 改成 99 ⇒ 日志立刻
+   `[DataInit] 结构自检发现 1 处漂移：colleges(实际 7 列, 期望 99 列)` ⇒ **这个闸是承重的，不是摆设**。
+3. 新测试 `DataInitializerWiringTest`（academic-common 28→31）钉住**接线**：类上不得有
+   `org.springframework.boot.autoconfigure.condition.*` 注解、`@Bean` 方法上不得有 `@ConditionalOnBean`、
+   返回类型必须是 `CommandLineRunner`。本仓零 `@SpringBootTest`（起不了容器），所以这是静态反射判据 ——
+   但它面对的正是**一个静态的、已经在日志里留下证据的**错误。
+4. **反向打靶 M4**：把条件加回去 ⇒ `initDatabaseIsUnconditional` 条**准确打红**（报错文本点出这个注解），其余两条仍绿。
+
+**顺带修掉一处"文档骗人去踩红线"**：漂移提示原本写
+`请以线上库为准重建该文件（见 db_backups/rebuild_schema.py）` —— 这个闸**第一次真正生效**，
+它打开就指向一个**本仓明令禁止运行**的脚本（`rebuild_schema.py` 从静态 dump 重建 `init_schema.sql`，会把新表/新列抹掉）。
+已改成"三处要一起改 + 别跑 rebuild_schema.py"。
+
+**未修边界**（如实记，不夸大）：本轮**未**在全部 11 个服务上起实例验证 —— 验了 teacher / admin 两个，
+其余服务的 `datasource` 配置逐条 grep 过（都配了）。也没在**全新空库**上验证建库分支。
+
+### 8.13 ⭐ `npx vite build` 的 BUILD SUCCESS **不能证明 `.vue` 的 `<script setup>` 是自洽的**（2026-10-12 W39 自己踩的）
+
+**这条是我自己造的伤，也是我自己差点没发现的。**
+
+**经过**：在 `TeacherWarnings.vue` 里做文本替换时，一次 `Edit` 把**整个 import 段**（5 行）静默吞掉了。
+随后 `npx vite build` 照常报 `✓ built in 24.29s`。文件在浏览器里会**立刻**炸（`ref is not defined`），
+但构建期**一行错都不报**。
+
+**根因**：Vite/esbuild 走的是**转译**，不是类型检查 —— 它**不解析未定义标识符**。
+`ref` / `computed` / `getTeacherId` 在产物里原样留着，直到运行期才抛 `ReferenceError`。
+所以"前端构建通过"这类证据**只覆盖语法**，不覆盖引用完整性。这与 §8.9 的 `score_record` 一族是同一种形状：
+**判据比结论弱一档**，绿灯照出来。
+
+**发现方式**：不是构建报的，是我回头逐个数各文件 `<script setup>` 的 import 行数（`grep -c "^import"`）
+——`TeacherWarnings.vue` 那一份少了 5 行。**其余 5 个改过的前端文件逐一数过，都完好**，只有这一份被吞。
+
+**补的装置**：`tmp/check-vue-setup-refs.mjs`（`tmp/` 已 gitignore，与同目录 `check-unused-imports.mjs` 同类）。
+判据：模板里用到的根标识符（`{{ }}` 插值 + `:prop`/`v-if`/`v-model`/`v-for` 绑定表达式）是否在
+`<script setup>` 里 import/声明过。**两只眼睛各扫一遍**：PC `src/` 70 个 `.vue`、小程序 `src/` 65 个 `.vue`，**均为 0**。
+
+> ⚠️ **这个检查器自己的第一版是瞎的，而且"报 0"看不出来** —— 见下一条。
+
+**⭐ 检查器必须打靶，两个方向都要打。** 第一版直接对全树报 0，我看着像"干净"，
+于是按本仓规矩**先造两个靶**再信它：
+
+| 靶 | 期望 | 第一版实测 |
+|---|---|---|
+| 红靶：把 `TeacherWarnings.vue` 的 import 段**整块删掉**（复现真实损伤） | 必须报红 | **报 0！打不红** |
+| 绿靶：一份正确写法的样本（嵌套对象 props / kebab 组件 / `$slots` / `in` 关键字 / `null`/`false` 字面量 / 对象字面量键 / 模板字符串 `${}`） | 必须 0 | 0 |
+
+红靶打不红 ⇒ 这个检查器**对它存在的那件事完全瞎**。原因是我给判据加了个自认为合理的豁免：
+
+```js
+if (inCall) return   // "函数调用位置的名字多半没问题" —— 错的
+```
+
+而被删掉的那 4 个 import（`warningStatusText`/`warningStatusKey`/`warningStatusTagType`/`isPendingWarning`）
+在模板里**恰好全都只出现在调用位置**（`warningStatusKey(w.status)`）。**豁免正好盖住了要抓的形态。**
+删掉这条豁免后，红靶报出那 4 个名字，绿靶仍 0 ⇒ 这才叫"扫得到"。
+
+> 这与 `abs-build-and-harness-false-negatives` 里那条一条路：
+> **"报 0"的扫描器必须打靶证明它扫得到，真假两个方向各一个靶。** 本轮是第 N 次栽在同一处，
+> 也再次说明"检查器输出 0"和"被检查的东西是干净的"是两件事。
+
+**未修边界**：`tmp/check-vue-setup-refs.mjs` 是**启发式**的，不解析 Vue 的编译期语义 ——
+它不认识 `defineOptions`、不认识 `<script>`（非 setup）导出的名字、不认识 `v-for` 解构重命名
+（`v-for="{ id, name } in list"`）。它只保证"不误报已知正确写法、能抓到删 import"，
+**不是**一个可以当门禁的静态分析器；真要门禁得上 `eslint-plugin-vue` + `no-undef`。
+
+### 8.14 ⚠️ 「改表第四处」`schema_dump_20260916.sql` **早就不是活库快照**，而台账一直说它是（2026-10-12 W39 核出）
+
+**起因**：写 §3.6.4 的"改表五处"表时，我按 repo 规矩把 `db_backups/schema_dump_*.sql` 也列了进去，
+还在心里记成"已改了"。实际去查 `git status` 时它**不在改动列表里** —— **我根本没改它**。
+这正是本仓反复记的那类：**说法（台账）与事实（工作区）不符**，只不过这次说话的人是我。
+
+**先量后判**（把两张文件的 `CREATE TABLE` 表名集合做差）：
+
+| | 表数 | 只在 `init_schema.sql` | 只在 dump |
+|---|---|---|---|
+| `init_schema.sql` | 51 | — | — |
+| `schema_dump_20260916.sql` | 47 | `academic_warning_course`、`admin_tasks`、`course_recommendation`、`user_settings` | `academic_warning_bak_20260916`（历史快照） |
+
+**关键不在 `academic_warning_course`**（那是我这轮没加）。**关键是 `admin_tasks` / `course_recommendation` / `user_settings`
+三张表早在 W39 之前就不在 dump 里**（W1.14 的 `admin_tasks_20261002_apply.sql` 在 `db_backups/` 里躺着，dump 没跟）。
+即：**"两边漂移 = 0" 从 2026-10-02 起就不成立了**，而 `答辩准备-启动与演示手册.md:1135` 至今写着
+「已两处都改…现在两边漂移 = **0**」。跨 10 天、两轮改动，没人回头量过。
+
+> ⚠️ 判"哪边过期"要**去问活库**，不能只看两张文件谁新：`admin_tasks` / `course_recommendation` /
+> `user_settings` / `academic_warning_course` **四张在活库里全部存在**（`information_schema` 实测）
+> ⇒ **过期的是 dump，不是 init_schema.sql**。
+
+**为什么没有自动闸**：`DataInitializer.verifySchema` 只对 `EXPECTED_COLUMNS` 里那 14 张**代码真正读写**的表做列数比对；
+dump 里多一张少一张、`rebuild_schema.py` 会不会把它们抹掉，**没有任何一处自动检查**。
+dump 只在"有人手动跑 `rebuild_schema.py`"时才起作用 —— 而那个脚本**本仓明令禁止运行**（§8.12 也再次提醒）。
+⇒ 它是个**只有踩到才炸**的雷：平时是死的，一旦运行就把 `admin_tasks` / `user_settings` 等整表从 `init_schema.sql` 里**抹掉**。
+
+**本轮怎么做（**没有**顺手把被删的 4 张表补进 dump）**：
+
+- 补进去是**沿用一个错的前提**（"dump 必须与活库一致"），而且补完 `rebuild_schema.py` 照样会按自己的规则重排/重写
+  `init_schema.sql`，谁也保证不了下次还对上。**正确的动作是把前提拆掉，不是继续喂它。**
+- 因此只做两件**如实**的事：① 订正 §3.6.4 那张表 + 本节的措辞，**把"改表四处"降为"三处 + 一处已失效"**；
+  ② 在 `db_backups/schema_dump_20260916.sql` 顶部与 `rebuild_schema.py` 的 docstring 里写明
+  「本文件已过期、不被任何自动流程使用、`rebuild_schema.py` 禁止运行，理由与被抹掉的 4 张表见 FEATURES §8.14」。
+
+**未修边界**：`rebuild_schema.py` 与那张 dump **仍在仓库里、仍是可运行的**（本轮只加警示，没删）。
+真要收口，得由人决定：删掉脚本 + dump，或把 `init_schema.sql` 定为唯一权威并删掉重建路径。
+**这是产品/维护决定，不该由我一个人替它拍板**，故此只报告 + 加警示。
+
+### 8.15 收尾：死表 `score_record` 已整表删除（2026-10-12 W39）
+
+**这是 §8.9 那条「两套成绩表」的最后一笔。** W36 把教师端、W38 把管理员导入都迁到权威表
+`scores` 之后，`score_record` 就只剩历史数据了 —— 本轮把它删掉。
+
+**删除前的判据（四条，全是实测，不是读代码推的）**：
+
+| 查什么 | 怎么查 | 结果 |
+|---|---|---|
+| SQL 层读写 | `grep -rn --include=*.java --include=*.xml -E "(FROM\|INTO\|UPDATE\|JOIN\|DELETE FROM)[[:space:]]+score_record"` | **零命中** |
+| mapper XML | `find -name "*.xml" -path "*mapper*"` | **全仓一个都没有**（SQL 全在注解里） |
+| MyBatis-Plus 泛型 | `grep -rn "BaseMapper<ScoreRecord>\|< *ScoreRecord *>"` | **零命中** ⇒ 没有任何按 `@TableName` 自动生成 SQL 的入口 |
+| 库内依赖 | `information_schema` 的 `TRIGGERS` / `VIEWS` / `ROUTINES` 正文 LIKE `%score_record%` | **零行** |
+
+> ⚠️ **判"表死没死"不能只 grep Java** —— 前三轮都在这一步差点放过 MyBatis-Plus：
+> `BaseMapper<T>` 和 `QueryWrapper<T>` 会在**运行期**按 `@TableName` 拼 SQL，源码里根本搜不到
+> `score_record` 这个字符串。所以第三条判据（"有没有 `BaseMapper<ScoreRecord>`"）是**必须单独查**的，
+> 它比第一条更接近真相。这四条里少任何一条，"删得安全"都是猜的。
+
+**特别说明：实体 `ScoreRecord` 类留下了，表没了 —— 这不是没删干净。**
+`academic-common/entity/ScoreRecord.java` 上仍写着 `@TableName("score_record")`，但它**只被当只读投影类型**用：
+teacher-service 的 `ScoreRecordMapper`（名字是历史残留）里每一条 SQL 都是 `FROM scores` 或
+`FROM ScoreCaliber.LATEST_VALID_SCORE`，返回类型是这个类，方便控制器消费面不变。
+把类一起删掉要动 7 个文件的签名，收益是把"名字骗人"换成"没有名字"—— 本轮**没做**，登记在未修边界里。
+
+**改表五处，本轮同步了四处**：
+
+| 处 | 动作 |
+|---|---|
+| `init_schema.sql` | 删掉 `CREATE TABLE score_record`，原地留注释说明"为什么没有它了" |
+| 活库 | 跑 `db_backups/score_record_drop_20261012_apply.sql`：删前打 246 行 / 22 列留档，再 `DROP TABLE IF EXISTS`。实测净表数 **81 → 80**，`scores` 259 行未动 |
+| `DataInitializer.EXPECTED_COLUMNS` | **删掉 `score_record` 那条基线**（14 → 13 项）。不删就是每个服务每次启动一条 `score_record(表不存在)` 的 ERROR —— 一声永远修不掉的假警报 |
+| `db_backups/*_{apply,rollback}.sql` | apply 是幂等 `DROP TABLE IF EXISTS`；rollback 是 **`mysqldump` 原样导出**（46476 字节，含 CREATE TABLE + 全部 246 行），逐字节可还原 |
+| 第五处 `schema_dump_20260916.sql` | **不涉及** —— 它早就不是活库快照了，且已标"禁止使用"（§8.14） |
+
+**钉住回归**：`DataInitializerWiringTest` 新增两例 ——
+`expectedColumnsHasNoScoreRecord`（基线里不得再有 `score_record`）与
+`expectedColumnsStillHasScores`（权威表 `scores` 的基线必须在，防止"顺手删表"删过头）。
+**两条是配对的**：只有"不该有的没有"，没有"该有的还在"，这类改动照样能全绿。
+
+**顺带订正三份文档里过期的说法**（`score_record` / `scores` 双写、表名复数 `academic_warnings`）：
+`系统功能模块介绍.md`（6 处 + 顶部订正说明）、`FEATURES.md` §7 表注与 §8.9 的未修边界①、
+`答辩准备-启动与演示手册.md`。**这些文档写的都是 2026-10-10 之前的实现**，
+而代码 10-10 就改了 —— 又一次印证 §8.7 那条："说法至少有三层，改完代码要顺手改台账"。
+
+**未修边界**：① `ScoreRecord` 实体与 `ScoreRecordMapper`（teacher-service + academic-common）**名字仍在骗人**
+（叫 Record，读的是 `scores`）—— 本轮只加注释，未改名；② `schema_dump_20260916.sql` 与 `rebuild_schema.py`
+仍在仓库里且仍可运行（§8.14）；③ 本轮**未**在全新空库上验证"不再建 `score_record`"这条路径。
+
 ---
 
 > **文档维护者：** 系统自动生成  
-> **最后更新：** 2026-10-10（W37）
+> **最后更新：** 2026-10-12（W39）

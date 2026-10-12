@@ -33,7 +33,7 @@
 | GET | `/students/{id}/gpa` | 获取GPA | `@PathVariable id` |
 | GET | `/students/dashboard/{userId}` | 学生仪表盘 | `@PathVariable userId` |
 | GET | `/students/scores/{userId}` | 成绩列表 | `@PathVariable userId, ?semester` |
-| GET | `/students/warnings/{userId}` | 预警列表 | `@PathVariable userId` |
+| GET | `/students/warnings/{userId}` | 预警列表（每条带 `courses`/`courseNames`，PC 端不再用正则从正文里抠课程名） | `@PathVariable userId` |
 | GET | `/students/assistance/{userId}` | 帮扶计划 | `@PathVariable userId` |
 | GET | `/students/suggestions/{userId}` | 学习建议 | `@PathVariable userId` |
 | GET | `/students/{id}/class-info` | 班级信息 | `@PathVariable id` |
@@ -102,7 +102,7 @@
 | POST | `/teachers/scores/warnings` | 触发预警 | `?course_id` |
 | GET | `/teachers/scores/audit/{teacherId}` | 审计日志 | `@PathVariable teacherId, ?page, size` |
 | GET | `/teachers/enrollments` | 选课记录 | `?teacherId, courseId` |
-| GET | `/teachers/warnings/{teacherId}` | 预警列表 | `@PathVariable teacherId, ?status` |
+| GET | `/teachers/warnings/{teacherId}` | 预警列表（每条带 `courses`/`courseNames`/`involvesMyCourse`） | `@PathVariable teacherId, ?status, onlyMine` |
 | POST | `/teachers/warnings/{id}/process` | 处理预警 | `@PathVariable id, body` |
 | GET | `/teachers/feedbacks` | 反馈列表 | `?teacherId, category` |
 | GET | `/teachers/feedbacks/{teacherId}/list` | 分页反馈 | `@PathVariable teacherId, ?category, page, size` |
@@ -234,7 +234,8 @@
 | POST | `/admin/rules` | 创建规则 | body |
 | PUT | `/admin/rules/{id}` | 更新规则 | `@PathVariable id, body` |
 | DELETE | `/admin/rules/{id}` | 删除规则 | `@PathVariable id` |
-| GET | `/admin/warnings` | 全部预警 | - |
+| GET | `/admin/warnings` | 全部预警（每条带 `className`/`courses`/`courseNames`；W39 前 `className` 恒为 null） | - |
+| GET | `/admin/warnings/{id}` | 单条预警（同上三个键 —— **与列表共用同一个载荷构造**） | `@PathVariable id` |
 | PUT | `/admin/warnings/{id}/handle` | 处理预警 | `@PathVariable id, body` |
 | GET | `/admin/activities` | 操作日志 | - |
 | GET | `/admin/export/statistics` | 导出统计 | - |

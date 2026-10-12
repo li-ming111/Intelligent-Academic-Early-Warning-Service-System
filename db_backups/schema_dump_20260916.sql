@@ -1,3 +1,12 @@
+-- ⚠️⚠️ 本文件已过期，且**不被任何自动流程使用**。别拿它当活库快照。
+--
+-- 它不是活库的快照：缺 admin_tasks / course_recommendation / user_settings / academic_warning_course
+-- 四张表（四张在活库里都真实存在，实测 information_schema），另留着一张历史快照 academic_warning_bak_20260916。
+-- 唯一会读它的是 db_backups/rebuild_schema.py，而那个脚本**本仓明令禁止运行**
+-- （它会用本文件重建 init_schema.sql，把上面 4 张表整表抹掉）。
+-- 改表要同步的权威三处 = init_schema.sql + 活库 + db_backups/*_apply.sql。
+-- 详细现场与未修边界见 FEATURES.md §8.14（W39，2026-10-12）。
+
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!50503 SET character_set_client = utf8mb4 */;
 CREATE TABLE `academic_warning` (
