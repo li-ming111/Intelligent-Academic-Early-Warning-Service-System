@@ -35,7 +35,7 @@
 -- 回滚：`mysql -uroot -p academic_warning_system < db_backups/score_record_drop_20261012_rollback.sql`
 --       （该文件是 **mysqldump 原样输出**，不是手写重建 —— 结构与 246 行数据逐字节可还原。）
 --
--- ⚠️ 同轮必须一起改的**第五处**（漏了就每个服务启动都报漂移）：
+-- ⚠️ 同轮必须一起改的**第四处**（漏了就每个服务启动都报漂移）：
 --     `academic-common/.../config/DataInitializer.java` 的 `EXPECTED_COLUMNS` 里
 --     `EXPECTED_COLUMNS.put("score_record", 22);` 这一行 —— 表没了，基线还在，
 --     自检会打 `score_record(表不存在)`。本轮已删该行（14 项 → 13 项）。

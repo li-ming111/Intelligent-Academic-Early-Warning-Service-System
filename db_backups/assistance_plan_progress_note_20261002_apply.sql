@@ -5,7 +5,8 @@
 -- 于是学生填的内容凭空消失。加这一列让它真的落库。
 --
 -- ⚠️ 与 `academic-common/src/main/resources/init_schema.sql` 两处必须同步改，
---    且**改完不要跑 `db_backups/rebuild_schema.py`**（它从静态 dump 读，会把这个列抹掉）。
+--    `db_backups/rebuild_schema.py` 已于 2026-10-12（W39）**整块删除**（它从静态 dump 读，
+--    会把这个列抹掉）。`init_schema.sql` 现在是唯一权威结构（见 FEATURES.md §8.14）。
 --
 -- 回滚见 assistance_plan_progress_note_20261002_rollback.sql
 

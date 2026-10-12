@@ -19,7 +19,8 @@
 -- ⚠️ `updated_at` **不加 `ON UPDATE CURRENT_TIMESTAMP`** —— 与本仓其余表保持一致
 --    （`updated_at` 全仓没有 MetaObjectHandler 自动填充），由 UPDATE 语句显式写。
 -- ⚠️ 加表要**两处都改**：这里 + `academic-common/src/main/resources/init_schema.sql`。
---    改完**不要**跑 `db_backups/rebuild_schema.py`（它从静态 dump 读，会把已删的表复活）。
+--    `db_backups/rebuild_schema.py` 已于 2026-10-12（W39）**整块删除**（它从静态 dump 读，
+--    会把已删的表复活、把新表抹掉）。`init_schema.sql` 现在是唯一权威结构（见 FEATURES.md §8.14）。
 --
 -- 可重复执行。
 -- ============================================================================

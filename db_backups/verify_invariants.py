@@ -24,11 +24,15 @@ G = ("CASE WHEN h.score_total>=90 THEN 'A' WHEN h.score_total>=80 THEN 'A-' "
 P = ("CASE WHEN h.score_total>=90 THEN 4.0 WHEN h.score_total>=85 THEN 3.7 WHEN h.score_total>=82 THEN 3.3 "
      "WHEN h.score_total>=78 THEN 3.0 WHEN h.score_total>=75 THEN 2.7 WHEN h.score_total>=72 THEN 2.3 "
      "WHEN h.score_total>=68 THEN 2.0 WHEN h.score_total>=64 THEN 1.5 WHEN h.score_total>=60 THEN 1.0 ELSE 0 END")
-L = ("CASE WHEN h.score_total>=90 THEN 1 WHEN h.score_total>=80 THEN 2 "
-     "WHEN h.score_total>=70 THEN 3 WHEN h.score_total>=60 THEN 4 ELSE 5 END")
+# 2026-10-12（W39）：原 `L`（score_level 的 CASE）**已移除** —— 它唯一的用途是反查
+# `score_record.score_level` 这个存储列，而那列随 score_record 一起消失；`scores` 里
+# 从来没有 score_level（counselor-service 的 `ScoreMapper` 用 `ScoreCaliber.SCORE_LEVEL_CASE` 现算）。
+# 留着就是一个零引用死变量。
 
-PAIR = ("score_record sr JOIN scores h ON h.student_id=sr.student_id AND h.course_id=sr.course_id "
-        "AND h.semester=CAST(sr.semester AS UNSIGNED)")
+# ⚠️ 2026-10-12（W39）：原 `PAIR`（score_record ⋈ scores）随 score_record 删表一并移除 ——
+# 它唯一的作用是把两张成绩表按 (student, course, semester) 连起来逐列比对，现在没有第二张表。
+# 原来 `L` 用于反查 `score_record.score_level` 这个**存储列**；那列随表消失（详见上方 L 处注释）。
+
 
 # 有 warning_id 列的表（bak_ 备份表不算），用来一次性检查有没有悬空引用
 WARN_REF_TABLES = ['communication_logs', 'notifications', 'score_appeals',
@@ -42,33 +46,38 @@ def c(group, label, sql, expect='0'):
     CHECKS.append((group, label, expect, sql))
 
 
-# ---------- A. 两套成绩表必须对齐（scores 是权威源） ----------
-g = 'A. 成绩双表对齐（scores 权威 -> score_record）'
-c(g, '每行 score_record 都能在 scores 里找到对应学期的那条',
-  'SELECT COUNT(*) FROM score_record sr LEFT JOIN scores h '
-  'ON h.student_id=sr.student_id AND h.course_id=sr.course_id AND h.semester=CAST(sr.semester AS UNSIGNED) '
-  'WHERE h.id IS NULL')
-c(g, 'score / score_total / 平时 / 期末 与权威行逐字相同',
-  'SELECT COUNT(*) FROM ' + PAIR + ' WHERE sr.score <> h.score_total OR sr.score_total <> h.score_total '
-  'OR NOT (sr.regular_score <=> h.regular_score) OR NOT (sr.final_score <=> h.final_score)')
-c(g, 'grade / grade_point 与权威行逐字相同',
-  'SELECT COUNT(*) FROM ' + PAIR + ' WHERE NOT (sr.grade <=> h.grade) OR NOT (sr.grade_point <=> h.grade_point)')
-c(g, 'score_level 与 ScoreSyncSupport 的口径一致',
-  'SELECT COUNT(*) FROM score_record sr WHERE sr.score_level <> ' + L.replace('h.', 'sr.'))
-c(g, 'scores 里**已出期末分**的行，grade / grade_point 必须符合换算规则（不是只对上 score_record）',
+# ---------- A. 成绩口径自洽（2026-10-12 W39 起只剩 scores 一张权威表） ----------
+#
+# 背景：W36（教师端）与 W38（管理员导入）把成绩链路全量迁到 `scores` 之后，`score_record`
+# 在 2026-10-12 被整表删除。因此原来的 4 条「双表逐列对齐」断言随之失去对象，改为直接校验
+# `scores` 自身：**外部权威（学生档案里的学号）推出的学年必须等于库里存的学年**、
+# **counselor-service 运行期派生的 score_level 必须等于规则式**。
+# 这不是放水 —— 原来那 4 条也是在守"两表一致"，而两表里只有一张是真源；真源自身的自洽，
+# 下面这两条才是唯一守着它的地方（W39 之前**没有任何一条**在守 score_level 与派生规则的一致）。
+g = 'A. 成绩口径自洽（scores 是唯一权威表）'
+c(g, 'scores 里**已出期末分**的行，grade / grade_point 必须符合换算规则（按 score_total 现算，不是抄别的表）',
   'SELECT COUNT(*) FROM scores h WHERE h.final_score IS NOT NULL '
   'AND (h.grade <> ' + G + ' OR NOT (h.grade_point <=> ' + P + '))')
 c(g, 'scores 里**未出期末分**的行，grade / grade_point 必须为空（不许提前给等级）',
   'SELECT COUNT(*) FROM scores h WHERE h.final_score IS NULL '
   'AND (h.grade IS NOT NULL OR h.grade_point IS NOT NULL)')
-c(g, '学年 = 学号前四位 + (学期-1) DIV 2（两表都要满足）',
-  'SELECT (SELECT COUNT(*) FROM score_record sr JOIN student_profile sp ON sp.id=sr.student_id '
-  'WHERE sr.year <> CAST(LEFT(sp.student_id,4) AS UNSIGNED) + (CAST(sr.semester AS UNSIGNED)-1) DIV 2) '
-  '+ (SELECT COUNT(*) FROM scores h JOIN student_profile sp ON sp.id=h.student_id '
-  'WHERE h.year <> CAST(LEFT(sp.student_id,4) AS UNSIGNED) + (CAST(h.semester AS UNSIGNED)-1) DIV 2)')
-c(g, '两表都不许有 NULL 学期/学年',
-  'SELECT (SELECT SUM(semester IS NULL)+SUM(year IS NULL) FROM scores) '
-  '+ (SELECT SUM(semester IS NULL)+SUM(year IS NULL) FROM score_record)')
+c(g, '学年 = 学号前四位 + (学期-1) DIV 2（学号是外部权威，学年是派生列）',
+  'SELECT COUNT(*) FROM scores h JOIN student_profile sp ON sp.id=h.student_id '
+  'WHERE h.year <> CAST(LEFT(sp.student_id,4) AS UNSIGNED) + (CAST(h.semester AS UNSIGNED)-1) DIV 2')
+c(g, 'scores 不许有 NULL 学期/学年',
+  'SELECT SUM(semester IS NULL)+SUM(year IS NULL) FROM scores')
+# 下面三条是 W39 删表时**补上的**：`scores` 至此成为唯一权威成绩表，而 D 段一直只守
+# warning / class / student 的悬空引用，**从没有一条守着 scores 自己的引用与值域**。
+c(g, 'scores.student_id / course_id 都不悬空（唯一权威成绩表自己的引用完整性）',
+  'SELECT (SELECT COUNT(*) FROM scores s LEFT JOIN student_profile sp ON sp.id=s.student_id WHERE sp.id IS NULL) '
+  '+ (SELECT COUNT(*) FROM scores s LEFT JOIN courses c ON c.id=s.course_id WHERE c.id IS NULL)')
+c(g, '三个分数列（score_total / regular_score / final_score）都在 0..100 内',
+  'SELECT COUNT(*) FROM scores WHERE score_total < 0 OR score_total > 100 '
+  'OR (regular_score IS NOT NULL AND (regular_score < 0 OR regular_score > 100)) '
+  'OR (final_score IS NOT NULL AND (final_score < 0 OR final_score > 100))')
+c(g, '(student_id, course_id, semester) 不许重复 —— 重复即"同一门课同一学期两条成绩"',
+  'SELECT COUNT(*) FROM (SELECT student_id, course_id, semester FROM scores '
+  'GROUP BY student_id, course_id, semester HAVING COUNT(*) > 1) x')
 
 # ---------- B. 冗余计数列必须等于实际（fix10 A13/A14 立的标准） ----------
 # ⚠️ 2026-10-01：`colleges.student_count` / `colleges.teacher_count` 两项**已移除**（40 → 38）。
@@ -128,15 +137,12 @@ c(g, 'classes.teacher_id 都指向存在的用户',
 c(g, 'student_profile.class_id 都指向存在的班级',
   'SELECT COUNT(*) FROM student_profile sp LEFT JOIN classes c ON c.id=sp.class_id '
   'WHERE sp.class_id IS NOT NULL AND c.id IS NULL')
-c(g, 'courses / score_record / course_plans 的 teacher_id 都不悬空',
+c(g, 'courses / course_plans 的 teacher_id 都不悬空',
   'SELECT (SELECT COUNT(*) FROM courses x LEFT JOIN users u ON u.id=x.teacher_id WHERE x.teacher_id IS NOT NULL AND u.id IS NULL) '
-  '+ (SELECT COUNT(*) FROM score_record x LEFT JOIN users u ON u.id=x.teacher_id WHERE x.teacher_id IS NOT NULL AND u.id IS NULL) '
   '+ (SELECT COUNT(*) FROM course_plans x LEFT JOIN users u ON u.id=x.teacher_id WHERE x.teacher_id IS NOT NULL AND u.id IS NULL)')
-c(g, '成绩记录里的教师 == 该门课的授课教师（三张表同一个口径）',
-  'SELECT (SELECT COUNT(*) FROM score_record sr JOIN courses c ON c.id=sr.course_id '
-  'WHERE NOT (sr.teacher_id <=> c.teacher_id)) '
-  '+ (SELECT COUNT(*) FROM course_plans p JOIN courses c ON c.id=p.course_id '
-  'WHERE NOT (p.teacher_id <=> c.teacher_id))')
+c(g, 'course_plans 的教师 == 该门课的授课教师（score_record 已删，其 teacher_id 一致性改由 courses 单侧守）',
+  'SELECT COUNT(*) FROM course_plans p JOIN courses c ON c.id=p.course_id '
+  'WHERE NOT (p.teacher_id <=> c.teacher_id)')
 c(g, 'academic_warning.student_id 都指向存在的学生档案',
   'SELECT COUNT(*) FROM academic_warning w LEFT JOIN student_profile sp ON sp.id=w.student_id WHERE sp.id IS NULL')
 # 2026-10-03（W8.3）：这两列此前全为 NULL，所以从来没人守。补上 157/152 之后它才有意义 ——
@@ -183,8 +189,8 @@ c(g, '司明/李爽/张健/韩坤 的挂科门数仍是 3,3,3,2（权威口径�
   'SELECT GROUP_CONCAT(f.c) FROM (SELECT COUNT(*) c FROM (' + CAL + ') t '
   'WHERE t.rn=1 AND t.score_total<60 GROUP BY t.student_id ORDER BY c DESC, t.student_id) f',
   '3,3,3,2')
-c(g, '两表行数 259 / 246',
-  'SELECT (SELECT COUNT(*) FROM scores), (SELECT COUNT(*) FROM score_record)', '259\t246')
+c(g, '成绩行数 259（score_record 已于 2026-10-12 W39 删除，不再有第二个数）',
+  'SELECT COUNT(*) FROM scores', '259')
 
 # ---------- G. 预警判重口径（2026-09-30 修"已处理的预警被重扫复活"时立的） ----------
 # 判重键是 (student_id, fail_count)，不看 status。下面两条直接守着这个口径：

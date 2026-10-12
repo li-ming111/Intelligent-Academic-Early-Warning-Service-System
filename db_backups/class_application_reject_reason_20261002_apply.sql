@@ -16,7 +16,8 @@
 --   · `counselor_class_application` **没有**这一列  ← 本次补的就是它
 --
 -- ⚠️ 加列要**两处都改**：这里 + `academic-common/src/main/resources/init_schema.sql`。
---    改完**不要**跑 `db_backups/rebuild_schema.py`（它从静态 dump 读，会把已删的列/表复活）。
+--    `db_backups/rebuild_schema.py` 已于 2026-10-12（W39）**整块删除**（它从静态 dump 读，
+--    会把已删的列/表复活）。`init_schema.sql` 现在是唯一权威结构（见 FEATURES.md §8.14）。
 --
 -- 可重复执行（用 information_schema 判一下再 ALTER；MySQL 8 的 ADD COLUMN 不支持 IF NOT EXISTS）。
 -- ============================================================================

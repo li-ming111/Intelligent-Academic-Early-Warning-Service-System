@@ -449,7 +449,7 @@ Gateway (8076)
 | 写入方 | **只有** `WarningScheduledTask.createWarning`，经新 bean `WarningWriter.insertWarningWithCourses`（`@Transactional`，两表原子）。⚠️ 抽成独立 bean 是因为同类私有方法自调用不过代理 ⇒ 假事务 |
 | 不写的 | `IntelligentWarningServiceImpl.generateWarning`（`POST /warnings/generate`，前端零调用方）：它的契约只收 `studentId/ruleId/warningLevel/warningMessage`，**没有课程入参**，不落也不读子表 |
 | 读端 | `GET /teachers/warnings/{id}`、`GET /admin/warnings`、`GET /admin/warnings/{id}`、`GET /students/warnings/{id}` 各补 `courses`（数组）+ `courseNames`（拼串）；教师端另有 `involvesMyCourse` 布尔与 `onlyMine` 筛选 |
-| 改表五处 | `init_schema.sql` + 活库 + `db_backups/academic_warning_course_20261012_{apply,rollback}.sql` + **`DataInitializer.EXPECTED_COLUMNS` 刻意不加**（理由见下）。⚠️ 第四处 `db_backups/schema_dump_*.sql` **本轮没改** —— 那张 dump 早就不是"活库快照"了，见 **§8.14** |
+| 改表处（**已不含 dump**） | `init_schema.sql` + 活库 + `db_backups/academic_warning_course_20261012_{apply,rollback}.sql` + **`DataInitializer.EXPECTED_COLUMNS` 刻意不加**（理由见下）。⚠️ 原"第四处" `db_backups/schema_dump_*.sql` **已随重建路径一并删除**（2026-10-12 W39，见 **§8.14**）—— 它早就不是"活库快照"了 |
 | 回填 | `apply` 脚本按权威口径（`ScoreCaliber.LATEST_VALID_SCORE`，`score_total < 60`）对**所有** pending 预警重算。实测活库 **4 条预警 / 11 行明细**，逐条 `COUNT(*) == academic_warning.fail_count`（司明3、李爽3、张健3、韩坤2） |
 
 **四条读端实测**（直连服务，2026-10-12；活库 **4 条预警**）：
@@ -1007,8 +1007,19 @@ M2（改回原始"无头就信 body"逻辑）⇒ 钉子的两条红。
 把"schema 变更会被自检逮住"这个机制**自己喂瞎了**。判据 = 订正后重启服务，日志里
 `[DataInit] 结构自检发现 N 处漂移` 归零。
 
-**本轮验证**：全量 reactor **656 例 / 0 失败**（academic-common 28→31，teacher-service 118→119）；
-`python db_backups/verify_invariants.py` **42/42**；活库 4 条预警 / 11 行明细逐条 `COUNT(*) == fail_count`。
+**本轮验证**：全量 reactor **658 例 / 0 失败**（academic-common 28→31，teacher-service 118→119）；
+`python db_backups/verify_invariants.py` ⇒ **41 项 / 0 失败**（⚠️ 见下方订正）；
+活库 4 条预警 / 11 行明细逐条 `COUNT(*) == fail_count`。
+
+> ⚠️ **2026-10-12 收尾订正（我必须自己认这条）**：这一行最初写的是「`verify_invariants.py` **42/42**」，
+> **它是错的**。42/42 是**删 `score_record` 之前**的旧数，我是从磁盘上那份陈旧的 `_verify_invariants.txt`
+> 里抄来的 —— 那份文件当时还明明打印着 `[PASS] 每行 score_record 都能在 scores 里找到对应学期的那条`。
+> **删表之后我从没重跑过这个脚本**，而它里面 **9 条查询还在读 `score_record`**，所以真实状态是
+> **33 通过 / 9 失败**（失败项全是 `[SQLERR] Table 'score_record' doesn't exist`）。
+> 这正好是 §8.7 那条的反面教材：**"台账里写着的验证结论"也是"说法"，必须自己重跑一遍才算事实**。
+> 已同步：`verify_invariants.py` 里 9 条 `score_record` 查询改写/移除（A 段 4 条、D 段 2 条、F 段 1 条、
+> 全局 `PAIR`），并**补了 3 条真正守着 `scores` 的新检查**（悬空引用 / 分数值域 / 三元组唯一），
+> 三条各自单独打红靶通过。现为 **41 项 / 0 失败**。详见 §8.16。
 
 ### 8.12 ⭐ `DataInitializer` 的「建库 + 种子 + 结构自检」**一次都没跑过**（2026-10-12 W39 顺手核出）
 
@@ -1114,7 +1125,7 @@ if (inCall) return   // "函数调用位置的名字多半没问题" —— 错�
 
 ### 8.14 ⚠️ 「改表第四处」`schema_dump_20260916.sql` **早就不是活库快照**，而台账一直说它是（2026-10-12 W39 核出）
 
-**起因**：写 §3.6.4 的"改表五处"表时，我按 repo 规矩把 `db_backups/schema_dump_*.sql` 也列了进去，
+**起因**：写 §3.6.4 的"改表五处"表时（该行后来已改写，见 §3.6.4），我按 repo 规矩把 `db_backups/schema_dump_*.sql` 也列了进去，
 还在心里记成"已改了"。实际去查 `git status` 时它**不在改动列表里** —— **我根本没改它**。
 这正是本仓反复记的那类：**说法（台账）与事实（工作区）不符**，只不过这次说话的人是我。
 
@@ -1147,9 +1158,18 @@ dump 只在"有人手动跑 `rebuild_schema.py`"时才起作用 —— 而那个
   ② 在 `db_backups/schema_dump_20260916.sql` 顶部与 `rebuild_schema.py` 的 docstring 里写明
   「本文件已过期、不被任何自动流程使用、`rebuild_schema.py` 禁止运行，理由与被抹掉的 4 张表见 FEATURES §8.14」。
 
-**未修边界**：`rebuild_schema.py` 与那张 dump **仍在仓库里、仍是可运行的**（本轮只加警示，没删）。
+**未修边界**（本节首次写下时）：`rebuild_schema.py` 与那张 dump **仍在仓库里、仍是可运行的**（当日只加警示，没删）。
 真要收口，得由人决定：删掉脚本 + dump，或把 `init_schema.sql` 定为唯一权威并删掉重建路径。
-**这是产品/维护决定，不该由我一个人替它拍板**，故此只报告 + 加警示。
+
+> **✅ 2026-10-12 收口（人工拍板后执行）**：`db_backups/rebuild_schema.py` 与
+> `db_backups/schema_dump_20260916.sql` **已 `git rm` 整块删除**（删除前 sha256 留档：
+> `830ed4f8…091` / `bdd8f3d3…df5`；需要对照时从 `fe8c468d` 取回）。
+> **`init_schema.sql` 由此成为唯一权威结构**，"改表"从此是**三处**：`init_schema.sql` + 活库 +
+> `DataInitializer.EXPECTED_COLUMNS`（表在 `EXPECTED_COLUMNS` 里时）。
+> 全仓 7 处引用已同步改口径：4 个 `db_backups/*_apply.sql` 的"不要跑"改成"已删除"、
+> `DataInitializer` 的漂移提示不再指向一个不存在的脚本、`答辩准备-启动与演示手册.md` 三处。
+> ⚠️ 删掉的是**过期 dump**，不是"删东西让仓库变干净" —— 判据是那份 dump 缺 4 张活库真实存在的表，
+> 而脚本会以它为唯一权威反向重写 `init_schema.sql`。
 
 ### 8.15 收尾：死表 `score_record` 已整表删除（2026-10-12 W39）
 
@@ -1176,7 +1196,7 @@ teacher-service 的 `ScoreRecordMapper`（名字是历史残留）里每一条 S
 `FROM ScoreCaliber.LATEST_VALID_SCORE`，返回类型是这个类，方便控制器消费面不变。
 把类一起删掉要动 7 个文件的签名，收益是把"名字骗人"换成"没有名字"—— 本轮**没做**，登记在未修边界里。
 
-**改表五处，本轮同步了四处**：
+**改表四处，本轮同步了四处**：
 
 | 处 | 动作 |
 |---|---|
@@ -1184,7 +1204,7 @@ teacher-service 的 `ScoreRecordMapper`（名字是历史残留）里每一条 S
 | 活库 | 跑 `db_backups/score_record_drop_20261012_apply.sql`：删前打 246 行 / 22 列留档，再 `DROP TABLE IF EXISTS`。实测净表数 **81 → 80**，`scores` 259 行未动 |
 | `DataInitializer.EXPECTED_COLUMNS` | **删掉 `score_record` 那条基线**（14 → 13 项）。不删就是每个服务每次启动一条 `score_record(表不存在)` 的 ERROR —— 一声永远修不掉的假警报 |
 | `db_backups/*_{apply,rollback}.sql` | apply 是幂等 `DROP TABLE IF EXISTS`；rollback 是 **`mysqldump` 原样导出**（46476 字节，含 CREATE TABLE + 全部 246 行），逐字节可还原 |
-| 第五处 `schema_dump_20260916.sql` | **不涉及** —— 它早就不是活库快照了，且已标"禁止使用"（§8.14） |
+| ~~原"第五处" `schema_dump_20260916.sql`~~ | **已随之删除**（2026-10-12，见 §8.14）—— 它早就不是活库快照，且"以它为权威重建 `init_schema.sql`"这条路径整块移除后，"处数"从五降为四 |
 
 **钉住回归**：`DataInitializerWiringTest` 新增两例 ——
 `expectedColumnsHasNoScoreRecord`（基线里不得再有 `score_record`）与
@@ -1197,8 +1217,60 @@ teacher-service 的 `ScoreRecordMapper`（名字是历史残留）里每一条 S
 而代码 10-10 就改了 —— 又一次印证 §8.7 那条："说法至少有三层，改完代码要顺手改台账"。
 
 **未修边界**：① `ScoreRecord` 实体与 `ScoreRecordMapper`（teacher-service + academic-common）**名字仍在骗人**
-（叫 Record，读的是 `scores`）—— 本轮只加注释，未改名；② `schema_dump_20260916.sql` 与 `rebuild_schema.py`
-仍在仓库里且仍可运行（§8.14）；③ 本轮**未**在全新空库上验证"不再建 `score_record`"这条路径。
+（叫 Record，读的是 `scores`）—— 本轮只加注释，未改名；② ~~`schema_dump_20260916.sql` 与 `rebuild_schema.py`
+仍在仓库里且仍可运行~~ → **已于同日删除收口，见 §8.14 末尾**；③ 本轮**未**在全新空库上验证"不再建 `score_record`"这条路径。
+
+### 8.16 ⭐ 删表之后**没重跑**不变量脚本，于是台账里多了一条我自己的假验证（2026-10-12 W39 收尾自查）
+
+**形状**：删掉一张表 ⇒ 某个"常驻体检"脚本里还有查询读它 ⇒ 脚本红了，而我**没跑**，
+把它删表前的绿数（42/42）当成本轮的验证结论写进了 §8.11、`db_backups/_verify_invariants.txt` 与提交信息 `dbdabb69`。
+
+**怎么发现的**：收尾时按惯例跑一次 `python db_backups/verify_invariants.py`，
+得到 **33 通过 / 9 失败**，失败项 9 条**全是** `[SQLERR] Table 'score_record' doesn't exist`。
+去翻磁盘上的 `_verify_invariants.txt`（未跟踪、停留在 2026-10-03），它第 4 行赫然是
+`[PASS] 每行 score_record 都能在 scores 里找到对应学期的那条` ⇒ **42/42 是删表前最后一次运行的产物**。
+
+> ⚠️ 我写这句时**没有跑它** —— 这正是本仓反复记的那类失衡：**"说法"（台账 + 提交信息）与"事实"（工作区）不符**。
+> 而且这次说话的人是我自己，栽的也是本仓已经记过至少三次的同一个坑：
+> **结果文件可能是上一轮的 —— 必须自己重跑，且要看清它是哪个入口/哪一刻写出来的。**
+
+**修法（`db_backups/verify_invariants.py`，9 条查询）**：
+
+| 原检查 | 处理 |
+|---|---|
+| A 段 4 条：`score_record` ↔ `scores` 逐列对齐、`score_record.score_level` 反查 | **移除**（没有了第二张表；`scores` 里从来没有 `score_level`，它是 `ScoreMapper` 用 `ScoreCaliber.SCORE_LEVEL_CASE` 现算的） |
+| A 段 2 条（`scores` 自身的 grade/grade_point 换算） | **保留**（本来就是对 `scores` 单向校验，不依赖 `score_record`） |
+| A 段"学年 = 学号前四位…"、"不许 NULL 学期/学年" | **改写成只查 `scores`**（去掉了 `+ (SELECT … FROM score_record)` 那一半） |
+| 全局 `PAIR` / `L` 两个常量 | `PAIR` 无引用**删除**；`L` 无引用**删除**（本仓"零引用=删"） |
+| D 段"courses / score_record / course_plans 的 teacher_id 都不悬空" | 收窄为 **courses / course_plans** |
+| D 段"成绩记录里的教师 == 该门课的授课教师（三张表同一个口径）" | 收窄为 **course_plans 单侧**（`score_record.teacher_id` 那半消失；`scores` 无 `teacher_id` 列，归属走 `courses.teacher_id`） |
+| F 段"两表行数 259 / 246" | 改为 **单表 259** |
+
+**不增不减的诚实做法：同时补 3 条真承重的新检查**（`scores` 一跃成为**唯一**权威成绩表，
+而 D 段此前**从没有一条**守着它自己的引用完整性）：
+
+1. `scores.student_id` / `course_id` 都**不悬空**；
+2. 三个分数列（`score_total` / `regular_score` / `final_score`）都在 **0..100** 内；
+3. `(student_id, course_id, semester)` **不许重复**（重复即"同一门课同一学期两条成绩"）。
+
+**判据（全部实测）**：改完 `python db_backups/verify_invariants.py` ⇒ **41 项 / 0 失败**（退出码 0）。
+三条新检查**各自单独打红靶**（不是"一次全红"）：
+
+| 靶 | 变异 | 结果 |
+|---|---|---|
+| M1 悬空 | `WHERE sp.id IS NULL` → `IS NOT NULL` | FAIL，实际 **259**，恰 1 条红 |
+| M2 值域 | `score_total < 0` → `< 60` | FAIL，实际 **17**，恰 1 条红 |
+| M3 重复 | `HAVING COUNT(*) > 1` → `> 0` | FAIL，实际 **259**，恰 1 条红 |
+
+> ⚠️ M3 的第一版变异（`GROUP BY` 去掉 `semester`）返回的是 `[SQLERR]` —— **那叫"脚本坏了"，不叫"抓到了违例"**。
+> 判据绿色/红色都要能分清"被守的东西出问题"和"守它的东西自己出问题"。换成一个合法 SQL 变异才真正打红。
+
+收尾 `cp` 从备份还原，`diff` 确认字节一致。
+
+**未修边界**：① 磁盘上那份未跟踪的 `db_backups/_verify_invariants.txt`（2026-10-03 的旧产物）
+**没删**，它继续留着会误导下一个人；根治办法是让脚本把它写进一个明确标日期的路径，属独立改动，未做。
+② 分支从未推送（无 upstream），所以历史提交 `dbdabb69` 的信息里那句"42/42"**改不掉**（改它要重写
+`fe8c468d` 的哈希，而 §8.14 正以 `fe8c468d` 作为"删文件取回点"）⇒ 只能在本节如实订正，未 amend。
 
 ---
 

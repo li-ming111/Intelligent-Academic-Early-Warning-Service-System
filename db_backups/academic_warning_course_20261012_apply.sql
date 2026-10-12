@@ -25,7 +25,9 @@
 --    那种情况由 releaseRecoveredWarnings 把整条预警标成 status=2（已解除），本表随之失去意义。
 --
 -- ⚠️ 新建表要**两处都改**：这里 + `academic-common/src/main/resources/init_schema.sql`。
---    改完**不要**跑 `db_backups/rebuild_schema.py`（它从静态 dump 重建 init_schema.sql，会把本表抹掉）。
+--    `db_backups/rebuild_schema.py` 已于 2026-10-12（W39）**整块删除** —— 它从静态 dump 重建
+--    init_schema.sql，会把本表连同 admin_tasks / course_recommendation / user_settings 一起抹掉。
+--    `init_schema.sql` 现在是唯一权威结构（现场见 FEATURES.md §8.14）。
 --
 -- ⚠️ 本表**没有**加进 DataInitializer.EXPECTED_COLUMNS，这是**有意的**：common jar 被
 --    admin/ai/college/counselor/course 5 个服务加载，若它们的活库还没有这张表，自检会把它

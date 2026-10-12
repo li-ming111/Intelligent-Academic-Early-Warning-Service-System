@@ -178,7 +178,8 @@ public class DataInitializer {
             log.error("[DataInit] 结构自检发现 {} 处漂移：{}。"
                     + "init_schema.sql 已与线上库脱节，或线上库被手工改过列；"
                     + "三处要一起改：init_schema.sql、活库、本表 EXPECTED_COLUMNS"
-                    + "（⚠️ 别跑 db_backups/rebuild_schema.py —— 它从静态 dump 重建 init_schema.sql，会把新表/新列抹掉）。",
+                    + "（`init_schema.sql` 是唯一权威结构；原先那条从静态 dump 反向重建它的 "
+                    + "db_backups/rebuild_schema.py 已于 2026-10-12 W39 删除，见 FEATURES.md §8.14）。",
                     drift.size(), String.join(", ", drift));
         }
     }
