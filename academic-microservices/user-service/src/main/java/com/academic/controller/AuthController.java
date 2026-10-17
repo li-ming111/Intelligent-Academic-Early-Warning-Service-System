@@ -1,6 +1,7 @@
 package com.academic.controller;
 
 import com.academic.common.dto.ApiResponse;
+import com.academic.common.util.ExceptionMessages;
 import com.academic.service.CaptchaService;
 import com.academic.service.UserService;
 import com.academic.util.JwtUtil;
@@ -101,7 +102,7 @@ public class AuthController {
             return ApiResponse.success(response);
         } catch (Exception e) {
             log.error("Login failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -136,7 +137,7 @@ public class AuthController {
             return ApiResponse.success(result);
         } catch (Exception e) {
             log.error("Student register failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -156,7 +157,7 @@ public class AuthController {
             return ApiResponse.success(result);
         } catch (Exception e) {
             log.error("Teacher register failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -176,7 +177,7 @@ public class AuthController {
             return ApiResponse.success(result);
         } catch (Exception e) {
             log.error("Counselor register failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -241,7 +242,7 @@ public class AuthController {
             return ApiResponse.success(response);
         } catch (Exception e) {
             log.error("Logout failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -273,7 +274,7 @@ public class AuthController {
             return ApiResponse.success(response);
         } catch (Exception e) {
             log.error("Refresh token failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -316,7 +317,7 @@ public class AuthController {
             return ApiResponse.success("密码修改成功");
         } catch (Exception e) {
             log.error("Change password failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 

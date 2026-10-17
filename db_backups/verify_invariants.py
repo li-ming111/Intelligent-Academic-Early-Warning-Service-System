@@ -13,6 +13,7 @@
 约定：每条断言都是"违例计数"，期望 0（少数是期望的具体形态，见各条注释）。
 退出码：有 FAIL 则 1，否则 0。
 """
+import datetime
 import subprocess
 import sys
 
@@ -217,7 +218,8 @@ c(g, '每行 fail_count 都落在它 warning_level 对应的档里',
 # "展示/绑定副本"。两者一旦对不上，症状是**静默的**：
 #   · 2026-10-01 实测：活库 `roles` 只有 1–4 行，`users.role=5` 却有 2 个真实账号
 #     （collegeadmin1/2）⇒ 学院管理员的角色名、权限在页面上全查不到，
-#     而仓库根的种子 academic_warning_system.sql:1432-1437 明明写了 5 行。
+#     而仓库根的种子 academic_warning_system.sql 里那条 `INSERT INTO roles`
+#     明明写了 5 行（含 id=5 学院管理员）。
 #   这一条就是"照种子重建 == 现在的活库"的那一半，也是唯一能自动发现该漂移的地方。
 g = 'I. 角色词表（roles 表必须覆盖 users.role 用到的每个取值）'
 c(g, '没有账号指向一个 roles 里不存在的角色（悬空的 users.role）',
@@ -268,9 +270,18 @@ def main():
         for f in fails:
             lines.append('  - %s' % f)
     text = '\n'.join(lines)
-    with open('_verify_invariants.txt', 'w', encoding='utf-8') as fh:
-        fh.write(text)
+    # 产物写进**带日期**的文件名，并在正文顶部记一次生成时刻 ——
+    # 起因：此前固定写 `_verify_invariants.txt`，磁盘上那份 2026-10-03 的旧产物
+    # 被当成"最新结果"抄进台账（FEATURES.md §8.16 记的假验证）。带日期后，
+    # 一眼能看出读到的是哪一次跑的，不会再被陈旧产物骗到。
+    stamp = datetime.datetime.now().strftime('%Y%m%d')
+    header = '# 生成于 %s\n# 判据：全部比对**活库** academic_warning_system；通过 %d 项 / 失败 %d 项\n\n' % (
+        datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'), len(CHECKS) - len(fails), len(fails))
+    out_name = '_verify_invariants_%s.txt' % stamp
+    with open(out_name, 'w', encoding='utf-8') as fh:
+        fh.write(header + text)
     print(text)
+    print('\n# 已写出 %s' % out_name)
     return 1 if fails else 0
 
 

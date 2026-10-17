@@ -3,6 +3,7 @@ package com.academic.controller;
 import com.academic.common.dto.ApiResponse;
 import com.academic.common.entity.TeacherCourse;
 import com.academic.common.util.UpdateBodyGuard;
+import com.academic.common.util.ExceptionMessages;
 import com.academic.service.TeacherCourseService;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
@@ -58,7 +59,7 @@ public class TeacherCourseController {
             return ApiResponse.success(responseData);
         } catch (Exception e) {
             log.error("Get teacher courses failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -76,7 +77,7 @@ public class TeacherCourseController {
             return ApiResponse.success(teacherCourse);
         } catch (Exception e) {
             log.error("Get teacher course info failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -100,7 +101,7 @@ public class TeacherCourseController {
             }
         } catch (Exception e) {
             log.error("Add teacher course failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -125,7 +126,7 @@ public class TeacherCourseController {
             }
         } catch (Exception e) {
             log.error("Update teacher course failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -149,7 +150,7 @@ public class TeacherCourseController {
             }
         } catch (Exception e) {
             log.error("Delete teacher course failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -164,7 +165,7 @@ public class TeacherCourseController {
             return ApiResponse.success(teacherCourses);
         } catch (Exception e) {
             log.error("Get teacher courses by teacher id failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -179,7 +180,7 @@ public class TeacherCourseController {
             return ApiResponse.success(teacherCourses);
         } catch (Exception e) {
             log.error("Get teacher courses by course id failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -197,7 +198,7 @@ public class TeacherCourseController {
             return ApiResponse.success(teacherCourse);
         } catch (Exception e) {
             log.error("Get teacher course by teacher id and course id failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -212,7 +213,7 @@ public class TeacherCourseController {
             return ApiResponse.success(teacherCourses);
         } catch (Exception e) {
             log.error("Get all teacher courses failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -234,7 +235,7 @@ public class TeacherCourseController {
             return ApiResponse.success(count);
         } catch (Exception e) {
             log.error("Get teacher course count failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 }

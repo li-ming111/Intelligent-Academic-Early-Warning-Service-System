@@ -84,12 +84,6 @@ FK = [
      "SELECT s.id, s.student_id FROM scores s LEFT JOIN student_profile sp ON sp.id=s.student_id WHERE sp.id IS NULL"),
     ('scores.course_id -> courses.id',
      "SELECT s.id, s.course_id FROM scores s LEFT JOIN courses c ON c.id=s.course_id WHERE c.id IS NULL"),
-    ('score_record.student_id -> student_profile.id',
-     "SELECT s.id, s.student_id FROM score_record s LEFT JOIN student_profile sp ON sp.id=s.student_id WHERE sp.id IS NULL"),
-    ('score_record.course_id -> courses.id',
-     "SELECT s.id, s.course_id FROM score_record s LEFT JOIN courses c ON c.id=s.course_id WHERE c.id IS NULL"),
-    ('teaching_resources.course_id -> courses.id',
-     "SELECT t.id, t.course_id FROM teaching_resources t LEFT JOIN courses c ON c.id=t.course_id WHERE t.course_id IS NOT NULL AND c.id IS NULL"),
     ('teacher_course.course_id -> courses.id',
      "SELECT t.id, t.course_id FROM teacher_course t LEFT JOIN courses c ON c.id=t.course_id WHERE c.id IS NULL"),
     ('counselor_profiles.user_id -> users.id',
@@ -100,8 +94,9 @@ FK = [
      "SELECT t.id, t.user_id FROM teacher_profile t LEFT JOIN users u ON u.id=t.user_id WHERE u.id IS NULL"),
     ('teacher_profile.college_id -> colleges.id',
      "SELECT t.id, t.college_id FROM teacher_profile t LEFT JOIN colleges c ON c.id=t.college_id WHERE c.id IS NULL"),
-    ('admin_profile（含学院管理员）-> colleges.id',
-     "SELECT a.id, a.college_id FROM admin_profile a LEFT JOIN colleges c ON c.id=a.college_id WHERE a.college_id IS NOT NULL AND c.id IS NULL"),
+    # ⚠️ `admin_profile` 表**没有 college_id 列**（只有 id/user_id/name/phone/email/department），
+    #    学院归属在独立的 `college_admin_profile` 表里 —— 下一行才是真正要查的。
+    #    早先这里写 `admin_profile.college_id` 每跑必 `[SQLERR] Unknown column`，白扫。
     ('college_admin_profile -> colleges.id',
      "SELECT a.id, a.college_id FROM college_admin_profile a LEFT JOIN colleges c ON c.id=a.college_id WHERE a.college_id IS NOT NULL AND c.id IS NULL"),
     ('login_logs.user_id -> users.id',
@@ -144,8 +139,6 @@ PROBE_COLS = [
     ('score_audit_log.student_id', 'score_audit_log', 'student_id'),
     ('score_audit_log.teacher_id', 'score_audit_log', 'teacher_id'),
     ('export_history.exported_by', 'export_history', 'exported_by'),
-    ('teaching_resources.created_by', 'teaching_resources', 'created_by'),
-    ('teaching_resources.updated_by', 'teaching_resources', 'updated_by'),
 ]
 CAND = [('users', 'id'), ('student_profile', 'id'), ('teacher_profile', 'id'),
         ('counselor_profiles', 'id'), ('admin_profile', 'id'), ('college_admin_profile', 'id')]
@@ -232,8 +225,6 @@ TEXT_TABLES = [
     ('feedback', ['content', 'reply', 'category']),
     ('notifications', ['title', 'content', 'type']),
     ('assistance_plans', ['content', 'status']),
-    ('teaching_resources', ['title', 'description']),
-    ('support_resource', ['title', 'description', 'author']),
     ('export_history', ['file_name', 'data_type']),
     ('login_logs', ['device', 'location', 'ip_address']),
     ('warning_rules', ['name', 'description', 'rule_code', 'responsible_person']),
@@ -281,16 +272,13 @@ RANGE = [
     ('scores.grade_point 不在 0~4', "SELECT id, grade_point FROM scores WHERE grade_point IS NOT NULL AND grade_point NOT BETWEEN 0 AND 4"),
     ('scores.grade 不是 A/A-/B/C/D 或 NULL', "SELECT id, grade FROM scores WHERE grade IS NOT NULL AND grade NOT IN ('A','A-','B','C','D')"),
     ('scores.semester 不在 1~8', "SELECT id, semester FROM scores WHERE semester NOT BETWEEN 1 AND 8"),
-    ('score_record 同上：grade 非法', "SELECT id, grade FROM score_record WHERE grade IS NOT NULL AND grade NOT IN ('A','A-','B','C','D','F')"),
-    ('score_record.score_level 不在 1~5', "SELECT id, score_level FROM score_record WHERE score_level IS NOT NULL AND score_level NOT BETWEEN 1 AND 5"),
-    ('score_record.semester 不在 1~8', "SELECT id, semester FROM score_record WHERE semester IS NOT NULL AND semester NOT BETWEEN 1 AND 8"),
     ('courses.credits 为空或 <=0', "SELECT id, name, credits FROM courses WHERE credits IS NULL OR credits <= 0"),
     ('student_profile.gender 取值异常', "SELECT id, gender FROM student_profile WHERE gender IS NOT NULL AND gender NOT IN ('男','女')"),
     ('users.role 取值清单', "SELECT role, COUNT(*) FROM users GROUP BY role"),
     ('users.status 取值清单', "SELECT status, COUNT(*) FROM users GROUP BY status"),
     ('enrollments.status 取值清单', "SELECT status, COUNT(*) FROM enrollments GROUP BY status"),
-    ('colleges.status / courses.status 取值清单', "SELECT (SELECT GROUP_CONCAT(DISTINCT status) FROM colleges), (SELECT GROUP_CONCAT(DISTINCT status) FROM courses), (SELECT GROUP_CONCAT(DISTINCT status) FROM majors)"),
-    ('score_record 有期末无平时 或 有平时无期末', "SELECT id, regular_score, final_score FROM score_record WHERE (final_score IS NOT NULL AND regular_score IS NULL) OR (final_score IS NULL AND regular_score IS NOT NULL)"),
+    # ⚠️ `courses` 表**没有 status 列**（只有 colleges / majors 有）—— 早先这条每跑必 `[SQLERR]`。
+    ('colleges.status / majors.status 取值清单', "SELECT (SELECT GROUP_CONCAT(DISTINCT status) FROM colleges), (SELECT GROUP_CONCAT(DISTINCT status) FROM majors)"),
     ('scores 有期末无平时 或 有平时无期末', "SELECT id, regular_score, final_score FROM scores WHERE (final_score IS NOT NULL AND regular_score IS NULL) OR (final_score IS NULL AND regular_score IS NOT NULL)"),
 ]
 for label, sql in RANGE:
@@ -304,14 +292,17 @@ OUT.append('    ' + got)
 head('第 6 部分：冗余计数列 vs 实际行数')
 
 COUNT_CHECKS = [
-    ('colleges.student_count 与实际学生数不符',
-     "SELECT c.id, c.name, c.student_count, (SELECT COUNT(*) FROM student_profile sp WHERE sp.college_id=c.id) FROM colleges c WHERE c.student_count <> (SELECT COUNT(*) FROM student_profile sp WHERE sp.college_id=c.id)"),
-    ('colleges.teacher_count 与实际教师数不符',
-     "SELECT c.id, c.name, c.teacher_count, (SELECT COUNT(*) FROM teacher_profile t WHERE t.college_id=c.id) FROM colleges c WHERE c.teacher_count <> (SELECT COUNT(*) FROM teacher_profile t WHERE t.college_id=c.id)"),
+    # ⚠️ `colleges.student_count` / `colleges.teacher_count` 两项**已删**（2026-10-12 W40）。
+    #    那两列已从活库与 init_schema.sql 一并删掉（自助注册的 `+1` 是唯一写入方，删个学生就永久偏大），
+    #    再查它们只会得到 `[SQLERR] Unknown column`。
+    # ⚠️ `counselor_class_management` / `counselor_profiles.class_count` 的归属要 join `users`：
+    #    `classes.counselor_id` 存的是 **users.id**，而 `counselor_profiles.id` 是**档案表自己的主键**
+    #    （两套 id 空间不重合，见 `abs-db-id-spaces-and-calibers`）—— 早先这里写 `classes.counselor_id=cp.id`
+    #    是**跨 id 空间**的错连接，必然恒为 0，白扫。
     ('counselor_profiles.class_count 与实际带班数不符',
-     "SELECT cp.id, cp.name, cp.class_count, (SELECT COUNT(*) FROM classes c WHERE c.counselor_id=cp.id) FROM counselor_profiles cp WHERE cp.class_count <> (SELECT COUNT(*) FROM classes c WHERE c.counselor_id=cp.id)"),
+     "SELECT cp.id, cp.name, cp.class_count, (SELECT COUNT(*) FROM classes c WHERE c.counselor_id=cp.user_id) FROM counselor_profiles cp WHERE cp.class_count <> (SELECT COUNT(*) FROM classes c WHERE c.counselor_id=cp.user_id)"),
     ('counselor_profiles.student_count 与实际学生数不符',
-     "SELECT cp.id, cp.name, cp.student_count, (SELECT COUNT(*) FROM student_profile sp JOIN classes c ON c.id=sp.class_id WHERE c.counselor_id=cp.id) FROM counselor_profiles cp WHERE cp.student_count <> (SELECT COUNT(*) FROM student_profile sp JOIN classes c ON c.id=sp.class_id WHERE c.counselor_id=cp.id)"),
+     "SELECT cp.id, cp.name, cp.student_count, (SELECT COUNT(*) FROM student_profile sp JOIN classes c ON c.id=sp.class_id WHERE c.counselor_id=cp.user_id) FROM counselor_profiles cp WHERE cp.student_count <> (SELECT COUNT(*) FROM student_profile sp JOIN classes c ON c.id=sp.class_id WHERE c.counselor_id=cp.user_id)"),
     ('export_history.record_count 与真实数据量无法核对（仅列出取值）',
      "SELECT id, data_type, file_name, record_count FROM export_history"),
 ]
@@ -352,7 +343,7 @@ TIME = [
     ('course_plans 学期 vs 开课日期年份不符',
      "SELECT id, course_id, semester, year, start_date, end_date FROM course_plans WHERE start_date IS NOT NULL AND (YEAR(start_date) < year OR YEAR(end_date) > year+1)"),
     ('created_at 晚于当前（2026-09-16）',
-     "SELECT 'users' t, id FROM users WHERE created_at > '2026-09-16 23:59:59' UNION ALL SELECT 'scores', id FROM scores WHERE created_at > '2026-09-16 23:59:59' UNION ALL SELECT 'score_record', id FROM score_record WHERE created_at > '2026-09-16 23:59:59' UNION ALL SELECT 'classes', id FROM classes WHERE created_at > '2026-09-16 23:59:59'"),
+     "SELECT 'users' t, id FROM users WHERE created_at > '2026-09-16 23:59:59' UNION ALL SELECT 'scores', id FROM scores WHERE created_at > '2026-09-16 23:59:59' UNION ALL SELECT 'classes', id FROM classes WHERE created_at > '2026-09-16 23:59:59'"),
     ('student_profile.created_at 在 2020 之前',
      "SELECT id, created_at FROM student_profile WHERE created_at < '2020-01-01'"),
     ('users.deleted_at 非空但 status 仍是启用类',

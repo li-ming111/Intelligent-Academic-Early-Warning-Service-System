@@ -3,6 +3,7 @@ package com.academic.controller;
 import com.academic.common.dto.ApiResponse;
 import com.academic.common.entity.Major;
 import com.academic.common.util.UpdateBodyGuard;
+import com.academic.common.util.ExceptionMessages;
 import com.academic.service.MajorService;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
@@ -54,7 +55,7 @@ public class MajorController {
             return ApiResponse.success(responseData);
         } catch (Exception e) {
             log.error("Get majors failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -72,7 +73,7 @@ public class MajorController {
             return ApiResponse.success(major);
         } catch (Exception e) {
             log.error("Get major info failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -91,7 +92,7 @@ public class MajorController {
             }
         } catch (Exception e) {
             log.error("Add major failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -116,7 +117,7 @@ public class MajorController {
             }
         } catch (Exception e) {
             log.error("Update major failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -135,7 +136,7 @@ public class MajorController {
             }
         } catch (Exception e) {
             log.error("Delete major failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -153,7 +154,7 @@ public class MajorController {
             return ApiResponse.success(major);
         } catch (Exception e) {
             log.error("Get major by code failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -168,7 +169,7 @@ public class MajorController {
             return ApiResponse.success(majors);
         } catch (Exception e) {
             log.error("Get majors by college id failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -196,7 +197,7 @@ public class MajorController {
             return ApiResponse.success(majors);
         } catch (Exception e) {
             log.error("Get all majors failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -215,7 +216,7 @@ public class MajorController {
             return ApiResponse.success(count);
         } catch (Exception e) {
             log.error("Get major count failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 }

@@ -30,14 +30,8 @@ public class TeacherCourseServiceImpl extends ServiceImpl<TeacherCourseMapper, T
         return baseMapper.selectList(wrapper);
     }
 
-    @Override
-    public boolean assignCourse(TeacherCourse teacherCourse) {
-        // 设置创建时间和更新时间
-        teacherCourse.setCreatedAt(LocalDateTime.now());
-        teacherCourse.setUpdatedAt(LocalDateTime.now());
-
-        return save(teacherCourse);
-    }
+    // assignCourse 已删（2026-10-14 W44）：唯一调用方 `POST /teachers/courses/assign` 已删
+    // （那个端点无闸且零调用方，实测能以别人的 profile.id 建出任课关系行）。
 
     @Override
     public boolean updateTeacherCourse(TeacherCourse teacherCourse) {

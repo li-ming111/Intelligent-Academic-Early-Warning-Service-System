@@ -2,6 +2,7 @@ package com.academic.controller;
 
 import com.academic.common.dto.ApiResponse;
 import com.academic.common.util.UpdateBodyGuard;
+import com.academic.common.util.ExceptionMessages;
 import com.academic.entity.Role;
 import com.academic.service.RoleService;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
@@ -62,7 +63,7 @@ public class RoleController {
             return ApiResponse.success(responseData);
         } catch (Exception e) {
             log.error("Get roles failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -80,7 +81,7 @@ public class RoleController {
             return ApiResponse.success(role);
         } catch (Exception e) {
             log.error("Get role info failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -104,7 +105,7 @@ public class RoleController {
             }
         } catch (Exception e) {
             log.error("Add role failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -134,7 +135,7 @@ public class RoleController {
             }
         } catch (Exception e) {
             log.error("Update role failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -153,7 +154,7 @@ public class RoleController {
             }
         } catch (Exception e) {
             log.error("Delete role failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -171,7 +172,7 @@ public class RoleController {
             return ApiResponse.success(role);
         } catch (Exception e) {
             log.error("Get role by code failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -186,7 +187,7 @@ public class RoleController {
             return ApiResponse.success(roles);
         } catch (Exception e) {
             log.error("Get roles by status failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -201,7 +202,7 @@ public class RoleController {
             return ApiResponse.success(roles);
         } catch (Exception e) {
             log.error("Get all roles failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -226,7 +227,7 @@ public class RoleController {
             return ApiResponse.success(count);
         } catch (Exception e) {
             log.error("Get role count failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 }

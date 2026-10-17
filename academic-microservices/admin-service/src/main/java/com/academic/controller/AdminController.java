@@ -13,6 +13,7 @@ import com.academic.common.entity.AcademicWarning;
 import com.academic.common.entity.Score;
 import com.academic.common.util.ExcelUploadErrors;
 import com.academic.common.util.UpdateBodyGuard;
+import com.academic.common.util.ExceptionMessages;
 import com.academic.entity.*;
 import com.academic.service.BackupService;
 import com.academic.service.CollegeService;
@@ -366,7 +367,7 @@ public class AdminController {
             return ApiResponse.success(top);
         } catch (Exception e) {
             log.error("Get activities failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -490,7 +491,7 @@ public class AdminController {
             return ApiResponse.success(statistics);
         } catch (Exception e) {
             log.error("Get statistics failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -501,7 +502,7 @@ public class AdminController {
         fallbackData.put("totalCourses", 0);
         fallbackData.put("totalColleges", 0);
         fallbackData.put("totalWarnings", 0);
-        fallbackData.put("message", "adminApi:getStatistics API is degraded: " + t.getMessage());
+        fallbackData.put("message", "adminApi:getStatistics API is degraded: " + ExceptionMessages.describe(t));
         return ApiResponse.success(fallbackData);
     }
 
@@ -560,7 +561,7 @@ public class AdminController {
             return ApiResponse.success(scoreAppealMapper.selectAppeals(status));
         } catch (Exception e) {
             log.error("List appeals failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -655,7 +656,7 @@ public class AdminController {
             return ApiResponse.success(dashboard);
         } catch (Exception e) {
             log.error("Get dashboard failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -689,7 +690,7 @@ public class AdminController {
 
     public ApiResponse<List<User>> getAllUsersFallback(Throwable t) {
         log.warn("adminApi:getUsers API is degraded: {}", t.getMessage());
-        return ApiResponse.error("adminApi:getUsers API is degraded: " + t.getMessage());
+        return ApiResponse.error("adminApi:getUsers API is degraded: " + ExceptionMessages.describe(t));
     }
 
     @GetMapping("/users/{id}")
@@ -875,12 +876,12 @@ public class AdminController {
             return ApiResponse.success("User updated successfully");
         } catch (Exception e) {
             log.error("Update user failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
     public ApiResponse<String> updateUserFallback(Long id, User user, Throwable t) {
-        return ApiResponse.error("adminApi:updateUser API is degraded: " + t.getMessage());
+        return ApiResponse.error("adminApi:updateUser API is degraded: " + ExceptionMessages.describe(t));
     }
 
     @Transactional
@@ -1006,7 +1007,7 @@ public class AdminController {
             return ApiResponse.success("密码已重置为演示口令 123456（系统无邮件服务，特此明示）");
         } catch (Exception e) {
             log.error("Reset password failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
     
@@ -1033,7 +1034,7 @@ public class AdminController {
             return ApiResponse.success(user.getStatus() == 1 ? "User enabled" : "User disabled");
         } catch (Exception e) {
             log.error("Toggle status failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -1051,7 +1052,7 @@ public class AdminController {
             return ApiResponse.success("审批通过，用户已激活");
         } catch (Exception e) {
             log.error("Approve user failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -1090,7 +1091,7 @@ public class AdminController {
             return ApiResponse.success(result);
         } catch (Exception e) {
             log.error("Get audit logs failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -1122,7 +1123,7 @@ public class AdminController {
             return ApiResponse.success(result);
         } catch (Exception e) {
             log.error("Get login logs failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -1200,7 +1201,7 @@ public class AdminController {
             return ApiResponse.success(result);
         } catch (Exception e) {
             log.error("Get users failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
     
@@ -1358,7 +1359,7 @@ public class AdminController {
         Map<String, Object> fallbackData = new HashMap<>();
         fallbackData.put("total", 0);
         fallbackData.put("items", List.of());
-        fallbackData.put("message", "adminApi:getUsersByPage API is degraded: " + t.getMessage());
+        fallbackData.put("message", "adminApi:getUsersByPage API is degraded: " + ExceptionMessages.describe(t));
         return ApiResponse.success(fallbackData);
     }
 
@@ -1393,7 +1394,7 @@ public class AdminController {
             return ApiResponse.success(resultList);
         } catch (Exception e) {
             log.error("Get all colleges failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -1527,7 +1528,7 @@ public class AdminController {
             return ApiResponse.success(new ArrayList<>());
         } catch (Exception e) {
             log.error("Get courses failed: {}", e.getMessage());
-            return ApiResponse.error("获取课程列表失败: " + e.getMessage());
+            return ApiResponse.error("获取课程列表失败: " + ExceptionMessages.describe(e));
         }
     }
 
@@ -1827,13 +1828,13 @@ public class AdminController {
             return ApiResponse.error("Failed to get students");
         } catch (Exception e) {
             log.error("Get all students failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
     public ApiResponse<List<Student>> getAllStudentsFallback(Throwable t) {
         log.warn("adminApi:getStudents API is degraded: {}", t.getMessage());
-        return ApiResponse.error("adminApi:getStudents API is degraded: " + t.getMessage());
+        return ApiResponse.error("adminApi:getStudents API is degraded: " + ExceptionMessages.describe(t));
     }
 
     @GetMapping("/students/{id}")
@@ -1846,7 +1847,7 @@ public class AdminController {
             return ApiResponse.notFound("Student not found");
         } catch (Exception e) {
             log.error("Get student by id failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -1857,7 +1858,7 @@ public class AdminController {
             return ApiResponse.success("Student created successfully");
         } catch (Exception e) {
             log.error("Create student failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -1873,7 +1874,7 @@ public class AdminController {
                     : ApiResponse.notFound("Student not found");
         } catch (Exception e) {
             log.error("Update student failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -1885,7 +1886,7 @@ public class AdminController {
                     : ApiResponse.notFound("Student not found");
         } catch (Exception e) {
             log.error("Delete student failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -1896,7 +1897,7 @@ public class AdminController {
             return ApiResponse.success(teachers);
         } catch (Exception e) {
             log.error("Get all teachers failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -1916,7 +1917,7 @@ public class AdminController {
             return ApiResponse.success("Teacher created successfully");
         } catch (Exception e) {
             log.error("Create teacher failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -1932,7 +1933,7 @@ public class AdminController {
                     : ApiResponse.notFound("Teacher not found");
         } catch (Exception e) {
             log.error("Update teacher failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -1957,7 +1958,7 @@ public class AdminController {
             return ApiResponse.success("Teacher deleted successfully");
         } catch (Exception e) {
             log.error("Delete teacher failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -1972,13 +1973,13 @@ public class AdminController {
             return ApiResponse.error("Failed to get counselors");
         } catch (Exception e) {
             log.error("Get all counselors failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
     public ApiResponse<List<CounselorProfile>> getAllCounselorsFallback(Throwable t) {
         log.warn("adminApi:getCounselors API is degraded: {}", t.getMessage());
-        return ApiResponse.error("adminApi:getCounselors API is degraded: " + t.getMessage());
+        return ApiResponse.error("adminApi:getCounselors API is degraded: " + ExceptionMessages.describe(t));
     }
 
     @GetMapping("/counselors/{id}")
@@ -2001,7 +2002,7 @@ public class AdminController {
             return ApiResponse.notFound("Counselor not found");
         } catch (Exception e) {
             log.error("Get counselor by id failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -2012,7 +2013,7 @@ public class AdminController {
             return ApiResponse.success("Counselor created successfully");
         } catch (Exception e) {
             log.error("Create counselor failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -2028,7 +2029,7 @@ public class AdminController {
                     : ApiResponse.notFound("Counselor not found");
         } catch (Exception e) {
             log.error("Update counselor failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -2054,7 +2055,7 @@ public class AdminController {
             return ApiResponse.success("Counselor deleted successfully");
         } catch (Exception e) {
             log.error("Delete counselor failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -2144,13 +2145,13 @@ public class AdminController {
             return ApiResponse.success(result);
         } catch (Exception e) {
             log.error("Get warnings failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
     public ApiResponse<List<Map<String, Object>>> getWarningsFallback(Throwable t) {
         log.warn("adminApi:getWarnings API is degraded: {}", t.getMessage());
-        return ApiResponse.error("adminApi:getWarnings API is degraded: " + t.getMessage());
+        return ApiResponse.error("adminApi:getWarnings API is degraded: " + ExceptionMessages.describe(t));
     }
 
     /** {@code Number}/{@code String} 混着的 mapper 返回值 → {@code Long}；认不出返回 null。 */
@@ -2242,7 +2243,7 @@ public class AdminController {
             return ApiResponse.notFound("Warning not found");
         } catch (Exception e) {
             log.error("Get warning by id failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -2276,7 +2277,7 @@ public class AdminController {
             return ApiResponse.success("Warning handled successfully");
         } catch (Exception e) {
             log.error("Handle warning failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -2308,7 +2309,7 @@ public class AdminController {
             return ApiResponse.success(result);
         } catch (Exception e) {
             log.error("Get teacher class applications failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -2328,7 +2329,7 @@ public class AdminController {
             return ApiResponse.success("Application created successfully");
         } catch (Exception e) {
             log.error("Create teacher class application failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -2344,7 +2345,7 @@ public class AdminController {
             return ApiResponse.notFound("Application not found");
         } catch (Exception e) {
             log.error("Approve application failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -2361,7 +2362,7 @@ public class AdminController {
             return ApiResponse.notFound("Application not found");
         } catch (Exception e) {
             log.error("Reject application failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -2373,7 +2374,7 @@ public class AdminController {
                     : ApiResponse.notFound("Application not found");
         } catch (Exception e) {
             log.error("Delete teacher class application failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -3133,7 +3134,7 @@ public class AdminController {
         } catch (Exception e) {
             log.error("Import scores failed", e);
             result.put("success", successCount);
-            return ApiResponse.error("导入异常: " + e.getMessage());
+            return ApiResponse.error("导入异常: " + ExceptionMessages.describe(e));
         }
     }
 
@@ -3288,7 +3289,7 @@ public class AdminController {
             log.info("Download template successfully: {}", fileName);
         } catch (Exception e) {
             log.error("Download template failed: {}", e.getMessage());
-            writeFileEndpointError(response, "下载模板失败: " + e.getMessage());
+            writeFileEndpointError(response, "下载模板失败: " + ExceptionMessages.describe(e));
         }
     }
 
@@ -3354,7 +3355,7 @@ public class AdminController {
             log.info("Export insufficient students successfully: {}", fileName);
         } catch (Exception e) {
             log.error("Export insufficient students failed: {}", e.getMessage());
-            writeFileEndpointError(response, "导出失败: " + e.getMessage());
+            writeFileEndpointError(response, "导出失败: " + ExceptionMessages.describe(e));
         }
     }
 
@@ -3442,7 +3443,7 @@ public class AdminController {
             log.info("Export scores successfully: {}", fileName);
         } catch (Exception e) {
             log.error("Export scores failed: {}", e.getMessage());
-            writeFileEndpointError(response, "导出失败: " + e.getMessage());
+            writeFileEndpointError(response, "导出失败: " + ExceptionMessages.describe(e));
         }
     }
 
@@ -3529,7 +3530,7 @@ public class AdminController {
             return ApiResponse.error("Failed to get messages");
         } catch (Exception e) {
             log.error("Get messages failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -3554,7 +3555,7 @@ public class AdminController {
             return ApiResponse.error("Failed to get messages");
         } catch (Exception e) {
             log.error("Get messages list failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -3570,7 +3571,7 @@ public class AdminController {
             return ApiResponse.error(response != null ? response.getMessage() : "Failed to send broadcast");
         } catch (Exception e) {
             log.error("Send broadcast failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -3584,7 +3585,7 @@ public class AdminController {
             return ApiResponse.error(response != null ? response.getMessage() : "Failed to send message");
         } catch (Exception e) {
             log.error("Send message failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -3624,7 +3625,7 @@ public class AdminController {
             return ApiResponse.success(result);
         } catch (Exception e) {
             log.error("Get tasks list failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -3664,7 +3665,7 @@ public class AdminController {
             return ApiResponse.success(result);
         } catch (Exception e) {
             log.error("Create task failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -3691,7 +3692,7 @@ public class AdminController {
             return ApiResponse.success(result);
         } catch (Exception e) {
             log.error("Update task status failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -3706,7 +3707,7 @@ public class AdminController {
             return ApiResponse.success("任务已删除");
         } catch (Exception e) {
             log.error("Delete task failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -3770,7 +3771,7 @@ public class AdminController {
             return ApiResponse.success(result);
         } catch (Exception e) {
             log.error("Get pending class requests failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -3865,11 +3866,35 @@ public class AdminController {
             return ApiResponse.success(result);
         } catch (Exception e) {
             log.error("Get class management applications failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
+    /**
+     * 批准一条班级管理申请（教师 / 辅导员两张表，靠 {@code type} 区分）。
+     *
+     * <p>⚠️ 2026-10-14（W46）：<b>{@code type=counselor} 这一支是<b>无事务的双表写</b></b>，已补
+     * {@code @Transactional(rollbackFor = Exception.class)}。
+     *
+     * <p>它要写两张表：先 {@code counselor_class_application.status=1}，再
+     * {@code classes.counselor_id=申请里的辅导员}。没有事务时这两笔各自独立提交 ——
+     * 第二笔失败（行被锁 / 连接断开 / 数据不合法）之后**第一笔不会回滚**，
+     * 于是库里留下"申请已通过、班级却没换辅导员"的半截状态，而接口照旧回
+     * {@code "已批准辅导员班级申请"}。
+     *
+     * <p>实测复现（不碰演示数据）：另开一个连接对目标 {@code classes} 行加
+     * {@code SELECT … FOR UPDATE} 持锁，期间调本接口 —— 另一条连接能读到申请行已是
+     * {@code status=1}、而 {@code classes.counselor_id} 还是 {@code NULL}：
+     * 第一笔确实已经提交了。这与 {@code ClassManagementService.reviewApplication}
+     * （counselor-service 那 4 条已修路径）是同一族；台账原先只记了那 4 条，
+     * **admin 侧这一条漏在账外**。
+     *
+     * <p>⚠️ 与 {@code createUser}/{@code deleteUser}/{@code assignRole} 同一条规矩：
+     * 加了事务就**不能**在方法内把异常 catch 掉再 return —— 那样 Spring 看到的是
+     * "正常返回"，照样提交。所以下面 catch 里是 {@code throw}，不是 {@code return error}。
+     */
     @PostMapping("/class-management/approve/{requestId}")
+    @Transactional(rollbackFor = Exception.class)
     public ApiResponse<String> approveClassRequest(@PathVariable Long requestId, @RequestParam(defaultValue = "teacher") String type) {
         try {
             if ("counselor".equals(type)) {
@@ -3898,7 +3923,11 @@ public class AdminController {
             return ApiResponse.error("Application not found");
         } catch (Exception e) {
             log.error("Approve class request failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            // ⚠️ 必须抛出去，不能 `return ApiResponse.error(...)`：本方法带 @Transactional，
+            //    catch 掉再正常返回等于告诉事务拦截器"一切正常"，半截状态照样提交
+            //    （createUser/deleteUser/assignRole 是同一条规矩）。
+            throw e instanceof RuntimeException ? (RuntimeException) e
+                    : new RuntimeException(ExceptionMessages.describe(e), e);
         }
     }
 
@@ -3948,7 +3977,7 @@ public class AdminController {
             return ApiResponse.error("Application not found");
         } catch (Exception e) {
             log.error("Reject class request failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -4030,7 +4059,7 @@ public class AdminController {
             return ApiResponse.success(result);
         } catch (Exception e) {
             log.error("Get export history failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -4042,7 +4071,7 @@ public class AdminController {
                     : ApiResponse.notFound("Export not found");
         } catch (Exception e) {
             log.error("Delete export failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -4091,7 +4120,7 @@ public class AdminController {
             return ApiResponse.success(templates);
         } catch (Exception e) {
             log.error("Get report templates failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -4155,7 +4184,7 @@ public class AdminController {
             return ApiResponse.success(result);
         } catch (Exception e) {
             log.error("Generate report failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -4497,7 +4526,7 @@ public class AdminController {
         } catch (Exception e) {
             // 抛出来的是"工具缺失 / 命令失败 / 产物为空"这类真原因，如实透给页面
             log.error("Backup failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -4516,7 +4545,7 @@ public class AdminController {
             return ApiResponse.success(result);
         } catch (Exception e) {
             log.error("List backups failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -4532,7 +4561,7 @@ public class AdminController {
             return ApiResponse.success(backupService.restoreIntoScratchDb(backupId));
         } catch (Exception e) {
             log.error("Restore backup failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -4546,7 +4575,7 @@ public class AdminController {
                     : ApiResponse.error("备份文件不存在: " + backupId);
         } catch (Exception e) {
             log.error("Delete backup failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -4557,7 +4586,7 @@ public class AdminController {
             return messageServiceClient.sendMessage(messageData);
         } catch (Exception e) {
             log.error("Send targeted message failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -4567,7 +4596,7 @@ public class AdminController {
             return messageServiceClient.deleteMessageById(messageId);
         } catch (Exception e) {
             log.error("Delete message failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -4594,7 +4623,7 @@ public class AdminController {
             return ApiResponse.success(result);
         } catch (Exception e) {
             log.error("Get report templates failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -4647,7 +4676,7 @@ public class AdminController {
             return ApiResponse.success(result);
         } catch (Exception e) {
             log.error("Upload report template failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -4660,7 +4689,7 @@ public class AdminController {
                     : ApiResponse.notFound("模板不存在");
         } catch (Exception e) {
             log.error("Delete report template failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -4706,7 +4735,7 @@ public class AdminController {
             return ApiResponse.success(result);
         } catch (Exception e) {
             log.error("Generate report failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -4754,7 +4783,7 @@ public class AdminController {
             return ApiResponse.success(result);
         } catch (Exception e) {
             log.error("Get roles failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -5056,7 +5085,7 @@ public class AdminController {
             return ApiResponse.success(result);
         } catch (Exception e) {
             log.error("Get permissions failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -5135,7 +5164,7 @@ public class AdminController {
             return ApiResponse.success(result);
         } catch (Exception e) {
             log.error("Update permission failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -5170,9 +5199,10 @@ public class AdminController {
                     case 2 -> "ROLE_TEACHER";
                     case 3 -> "ROLE_COUNSELOR";
                     case 4 -> "ROLE_ADMIN";
-                    // 5 = 学院管理员。种子 academic_warning_system.sql:1437 里**没有**给
-                    // ROLE_COLLEGE_ADMIN 绑任何权限（role_permissions 只有角色 1–4 的 21 行），
-                    // 所以这条查出来仍是空表 —— 那是数据本身的实情，不是查询写错。
+                    // 5 = 学院管理员。⚠️ 这条注释曾写「种子没给 ROLE_COLLEGE_ADMIN 绑任何权限、
+                    // role_permissions 只有角色 1–4 的 21 行」—— 那是更早的状态，现在不成立：
+                    // 活库与根种子的 `role_permissions` 都含 role_id=5 的 5 行（合计 26 行），
+                    // 学院管理员确实有一组权限。此处只做 code 映射，不再假设它绑没绑。
                     case 5 -> "ROLE_COLLEGE_ADMIN";
                     default -> "UNKNOWN";
                 };
@@ -5194,7 +5224,7 @@ public class AdminController {
             throw e;
         } catch (Exception e) {
             log.error("Get user permissions failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -5340,7 +5370,7 @@ public class AdminController {
      *
      * <p><b>upsert 而不是 insert</b>：{@code college_admin_profile.user_id} 上
      * **只有普通索引 `idx_college_admin_user`、没有唯一约束**（见
-     * {@code academic_warning_system.sql:1556-1568}），所以"先 selectCount 再 insert"
+     * {@code academic_warning_system.sql} 里那条 {@code INSERT INTO college_admin_profile}），所以"先 selectCount 再 insert"
      * 的幂等是应用层自己撑的；已有的行若再插一条会变成**同一个 user 两份档案**，
      * {@code selectByUserId} 那样的单行查询会随机取到一份（取到旧学院就白改了）。
      * 已有则改 {@code college_id}/{@code name}。
@@ -5432,18 +5462,43 @@ public class AdminController {
     }
 
     // ==================== P0新增：班级管理remove-teacher ====================
+    //
+    // ⚠️ 2026-10-14（W46）：**这一支是假的**，已修。
+    //
+    // 原实现是 `clazz.setTeacherId(null); classesMapper.updateById(clazz);`。
+    // 本工程没有改过 MyBatis-Plus 的字段策略（各服务 application.yml 里只有
+    // `map-underscore-to-camel-case: true`），默认是 NOT_NULL ⇒ **值为 null 的字段
+    // 根本不进 SET 子句**。实测抓到的 SQL（MySQL general_log）是：
+    //     UPDATE classes SET name='…', college_id=1, created_at=…, updated_at=…, major_id=1 WHERE id=990001
+    // —— `teacher_id` 连影子都没有。而接口照样回 HTTP 200 + "教师已从班级移除"、
+    // 日志照样打 "Removed teacher from class"：**页面上教师消失了，刷新就回来**；
+    // 数据库里那一行的教师绑定从头到尾没动过。
+    // 这与 counselor-service `ClassManagementService.reviewApplication` 里
+    // "清空拒绝理由"踩的是同一个坑（那边已用 UpdateWrapper 修掉，见其注释）。
+    // 修法：用 `UpdateWrapper.set("teacher_id", null)` 显式写 NULL —— 这是本仓既定的写法
+    // （同类还有 `updatePermission`）。
     @PostMapping("/class-management/remove-teacher/{classId}")
     public ApiResponse<String> removeTeacherFromClass(@PathVariable Long classId) {
         try {
             Classes clazz = classesMapper.selectById(classId);
             if (clazz == null) return ApiResponse.notFound("班级不存在");
-            clazz.setTeacherId(null);
-            classesMapper.updateById(clazz);
+
+            UpdateWrapper<Classes> update = new UpdateWrapper<>();
+            update.eq("id", classId).set("teacher_id", null);
+            classesMapper.update(null, update);
+
+            // 回读一次再报成功：改前这一支无论如何都回"教师已从班级移除"，
+            // 连"改到 0 行"都看不出来。回读是这里唯一能区分"真改了"和"没改"的手段。
+            Classes saved = classesMapper.selectById(classId);
+            if (saved != null && saved.getTeacherId() != null) {
+                log.error("Remove teacher did not take effect: classId={}, teacher_id={}", classId, saved.getTeacherId());
+                return ApiResponse.error("移除教师未生效，班级仍绑定教师 " + saved.getTeacherId());
+            }
             log.info("Removed teacher from class: {}", classId);
             return ApiResponse.success("教师已从班级移除");
         } catch (Exception e) {
             log.error("Remove teacher from class failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -5456,7 +5511,7 @@ public class AdminController {
             return ApiResponse.success(majorService.list(query));
         } catch (Exception e) {
             log.error("Get majors by college failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 

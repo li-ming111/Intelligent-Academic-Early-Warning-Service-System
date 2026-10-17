@@ -2,6 +2,7 @@ package com.academic.controller;
 
 import com.academic.common.dto.ApiResponse;
 import com.academic.common.util.UpdateBodyGuard;
+import com.academic.common.util.ExceptionMessages;
 import com.academic.entity.Permission;
 import com.academic.entity.Role;
 import com.academic.entity.RolePermission;
@@ -69,7 +70,7 @@ public class RolePermissionController {
             return ApiResponse.success(responseData);
         } catch (Exception e) {
             log.error("Get role permissions failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -87,7 +88,7 @@ public class RolePermissionController {
             return ApiResponse.success(rolePermission);
         } catch (Exception e) {
             log.error("Get role permission info failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -111,7 +112,7 @@ public class RolePermissionController {
             }
         } catch (Exception e) {
             log.error("Add role permission failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -136,7 +137,7 @@ public class RolePermissionController {
             }
         } catch (Exception e) {
             log.error("Update role permission failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -155,7 +156,7 @@ public class RolePermissionController {
             }
         } catch (Exception e) {
             log.error("Delete role permission failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -170,7 +171,7 @@ public class RolePermissionController {
             return ApiResponse.success(rolePermissions);
         } catch (Exception e) {
             log.error("Get role permissions by role id failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -185,7 +186,7 @@ public class RolePermissionController {
             return ApiResponse.success(rolePermissions);
         } catch (Exception e) {
             log.error("Get role permissions by permission id failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -203,7 +204,7 @@ public class RolePermissionController {
             return ApiResponse.success(rolePermission);
         } catch (Exception e) {
             log.error("Get role permission by role id and permission id failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -222,7 +223,7 @@ public class RolePermissionController {
             }
         } catch (Exception e) {
             log.error("Batch add role permissions failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -241,7 +242,7 @@ public class RolePermissionController {
             }
         } catch (Exception e) {
             log.error("Delete role permissions by role id failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -256,7 +257,7 @@ public class RolePermissionController {
             return ApiResponse.success(rolePermissions);
         } catch (Exception e) {
             log.error("Get all role permissions failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -340,7 +341,7 @@ public class RolePermissionController {
             return ApiResponse.success(count);
         } catch (Exception e) {
             log.error("Get role permission count failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 }

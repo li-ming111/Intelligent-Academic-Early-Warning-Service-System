@@ -23,12 +23,7 @@ public interface TeacherCourseService extends IService<TeacherCourse> {
      */
     List<TeacherCourse> getTeachersByCourseId(Long courseId);
 
-    /**
-     * 分配课程给教师
-     * @param teacherCourse 教师课程关系
-     * @return 是否分配成功
-     */
-    boolean assignCourse(TeacherCourse teacherCourse);
+    // assignCourse 已删（2026-10-14 W44）：唯一调用方 `POST /teachers/courses/assign` 已删。
 
     /**
      * 更新教师课程关系

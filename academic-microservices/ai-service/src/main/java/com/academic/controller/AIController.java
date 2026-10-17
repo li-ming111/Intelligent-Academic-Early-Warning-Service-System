@@ -1,6 +1,7 @@
 package com.academic.controller;
 
 import com.academic.common.dto.ApiResponse;
+import com.academic.common.util.ExceptionMessages;
 import com.academic.feign.StudentServiceFeignClient;
 import com.academic.service.AIService;
 import com.academic.service.TongYiService;
@@ -85,7 +86,7 @@ public class AIController {
             return ApiResponse.success(aiService.analyzeScore(request));
         } catch (Exception e) {
             log.error("成绩分析失败: {}", e.getMessage(), e);
-            return ApiResponse.error("分析失败: " + e.getMessage());
+            return ApiResponse.error("分析失败: " + ExceptionMessages.describe(e));
         }
     }
 
@@ -96,7 +97,7 @@ public class AIController {
             return ApiResponse.success(aiService.generateSuggestion(request));
         } catch (Exception e) {
             log.error("建议生成失败: {}", e.getMessage(), e);
-            return ApiResponse.error("生成失败: " + e.getMessage());
+            return ApiResponse.error("生成失败: " + ExceptionMessages.describe(e));
         }
     }
 
@@ -107,7 +108,7 @@ public class AIController {
             return ApiResponse.success(aiService.analyzeBehavior(request));
         } catch (Exception e) {
             log.error("趋势分析失败: {}", e.getMessage(), e);
-            return ApiResponse.error("分析失败: " + e.getMessage());
+            return ApiResponse.error("分析失败: " + ExceptionMessages.describe(e));
         }
     }
 
@@ -118,7 +119,7 @@ public class AIController {
             return ApiResponse.success(aiService.predictRisk(request));
         } catch (Exception e) {
             log.error("风险预测失败: {}", e.getMessage(), e);
-            return ApiResponse.error("预测失败: " + e.getMessage());
+            return ApiResponse.error("预测失败: " + ExceptionMessages.describe(e));
         }
     }
 
@@ -129,7 +130,7 @@ public class AIController {
             return ApiResponse.success(aiService.generateWarning(request));
         } catch (Exception e) {
             log.error("预警生成失败: {}", e.getMessage(), e);
-            return ApiResponse.error("生成失败: " + e.getMessage());
+            return ApiResponse.error("生成失败: " + ExceptionMessages.describe(e));
         }
     }
 
@@ -146,7 +147,7 @@ public class AIController {
             return ApiResponse.success(aiService.generateSuggestion(request));
         } catch (Exception e) {
             log.error("获取建议失败: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -183,7 +184,7 @@ public class AIController {
             return ApiResponse.success(result);
         } catch (Exception e) {
             log.error("聊天失败: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -214,7 +215,7 @@ public class AIController {
             return ApiResponse.success(result);
         } catch (Exception e) {
             log.error("问答失败: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -226,7 +227,7 @@ public class AIController {
             return ApiResponse.success(aiService.predictRisk(request));
         } catch (Exception e) {
             log.error("预警预测失败: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -241,7 +242,7 @@ public class AIController {
             return ApiResponse.success(aiService.generateWarning(request));
         } catch (Exception e) {
             log.error("计划生成失败: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -282,12 +283,12 @@ public class AIController {
                 }
             } catch (Exception ex) {
                 log.warn("无法获取学生成绩数据: studentId={}, {}", studentId, ex.getMessage());
-                request.put("scoresUnavailable", "调用成绩服务失败：" + ex.getMessage());
+                request.put("scoresUnavailable", "调用成绩服务失败：" + ExceptionMessages.describe(ex));
             }
             return ApiResponse.success(aiService.analyzeScore(request));
         } catch (Exception e) {
             log.error("成绩分析失败: {}", e.getMessage(), e);
-            return ApiResponse.error("分析失败: " + e.getMessage());
+            return ApiResponse.error("分析失败: " + ExceptionMessages.describe(e));
         }
     }
 
@@ -306,7 +307,7 @@ public class AIController {
             return ApiResponse.success(result);
         } catch (Exception e) {
             log.error("趋势分析失败: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -340,7 +341,7 @@ public class AIController {
             return ApiResponse.success(result);
         } catch (Exception e) {
             log.error("综合分析失败: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -359,7 +360,7 @@ public class AIController {
             return ApiResponse.success(result);
         } catch (Exception e) {
             log.error("预警分析失败: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -378,7 +379,7 @@ public class AIController {
             return ApiResponse.success(result);
         } catch (Exception e) {
             log.error("班级成绩分析失败: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -390,7 +391,7 @@ public class AIController {
             return ApiResponse.success(aiService.generateSuggestion(request));
         } catch (Exception e) {
             log.error("预警建议获取失败: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -402,7 +403,7 @@ public class AIController {
             return ApiResponse.success(aiService.generateSuggestion(request));
         } catch (Exception e) {
             log.error("推荐获取失败: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -414,7 +415,7 @@ public class AIController {
             return ApiResponse.success(aiService.predictRisk(request));
         } catch (Exception e) {
             log.error("风险评估失败: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 }

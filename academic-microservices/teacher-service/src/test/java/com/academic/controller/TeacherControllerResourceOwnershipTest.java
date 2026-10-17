@@ -541,4 +541,74 @@ class TeacherControllerResourceOwnershipTest {
     void analyze_anonymousDenied() {
         assertEquals(403, controller.analyzeStudentScore(STUDENT, MY_COURSE, anonymous()).getCode());
     }
+
+    // ================================================== W44：body 里带 teacherId 的写端点
+
+    /** 沟通记录请求体：`teacherId` 由客户端说了算。 */
+    private static Map<String, Object> communicationBody(long teacherId) {
+        return Map.of("teacherId", String.valueOf(teacherId), "studentId", "3",
+                "content", "W44", "type", "notify_counselor", "studentName", "司明");
+    }
+
+    /** 班级申请请求体：同上。 */
+    private static Map<String, Object> applyBody(long teacherId, long classId) {
+        return Map.of("teacherId", String.valueOf(teacherId), "classId", String.valueOf(classId),
+                "reason", "W44", "className", "X");
+    }
+
+    @Test
+    @DisplayName("★ W44 沟通记录：以**别人**的名义写（body 里 teacherId=别人）⇒ 403 且一行都不写")
+    void saveCommunication_othersName_denied() {
+        assertEquals(403, controller.saveCommunication(communicationBody(OTHER), as(ME)).getCode(),
+                "教师 18 用 teacherId=29 写沟通记录，必须被拒 —— 此前照单全收，实测真写进 teacher_id=18");
+        verify(communicationRecordService, never()).saveCommunication(anyLong(), anyLong(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("W44 沟通记录：以自己的名义 ⇒ 放行（闸不误伤；PC「通知辅导员」发的就是 getUserId()）")
+    void saveCommunication_ownName_allowed() {
+        assertEquals(200, controller.saveCommunication(communicationBody(ME), as(ME)).getCode());
+        verify(communicationRecordService).saveCommunication(eq(ME), eq(3L), eq("W44"), eq("notify_counselor"), eq("司明"));
+    }
+
+    @Test
+    @DisplayName("W44 沟通记录：无身份头 ⇒ fail-closed，不写库")
+    void saveCommunication_anonymousDenied() {
+        assertEquals(403, controller.saveCommunication(communicationBody(ME), anonymous()).getCode());
+        verify(communicationRecordService, never()).saveCommunication(anyLong(), anyLong(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("★ W44 班级申请：以**别人**的名义提交（body 里 teacherId=别人）⇒ 403 且不写库")
+    void submitClassApplication_othersName_denied() {
+        assertEquals(403, controller.submitClassManagementRequest(applyBody(OTHER, MY_CLASS), as(ME)).getCode(),
+                "教师 18 用 teacherId=29 提交申请，必须被拒 —— 批准后班就记在他名下了");
+        verify(applicationService, never()).submitApplication(anyLong(), anyLong(), any(), any(), anyInt());
+    }
+
+    @Test
+    @DisplayName("★ W44 解除班级管理：以**别人**的身份把班置空 ⇒ 403 且不写库（三条里最重的一条）")
+    void cancelClassManagement_othersName_denied() {
+        assertEquals(403, controller.cancelClassManagement(applyBody(OTHER, MY_CLASS), as(ME)).getCode(),
+                "教师 18 用 teacherId=29 解除班级管理，必须被拒 —— 这是当场写库的操作");
+        verify(applicationService, never()).cancelClassManagement(anyLong(), anyLong());
+    }
+
+    @Test
+    @DisplayName("W44 解除班级管理：以自己身份 ⇒ 放行（服务层那道闸才判得下去）")
+    void cancelClassManagement_ownName_allowed() {
+        when(applicationService.cancelClassManagement(ME, MY_CLASS)).thenReturn(null);
+
+        assertEquals(200, controller.cancelClassManagement(applyBody(ME, MY_CLASS), as(ME)).getCode());
+        verify(applicationService).cancelClassManagement(ME, MY_CLASS);
+    }
+
+    @Test
+    @DisplayName("W44 三条写端点：管理员（X-Role: 4）⇒ 旁路放行")
+    void bodyTeacherIdWrites_adminBypass() {
+        when(applicationService.cancelClassManagement(OTHER, MY_CLASS)).thenReturn(null);
+
+        assertEquals(200, controller.saveCommunication(communicationBody(OTHER), asAdmin(1L)).getCode());
+        assertEquals(200, controller.cancelClassManagement(applyBody(OTHER, MY_CLASS), asAdmin(1L)).getCode());
+    }
 }

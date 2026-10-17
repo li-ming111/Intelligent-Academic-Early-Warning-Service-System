@@ -4,6 +4,7 @@ import com.academic.common.dto.ApiResponse;
 import com.academic.common.entity.User;
 import com.academic.common.entity.UserSettings;
 import com.academic.common.util.UpdateBodyGuard;
+import com.academic.common.util.ExceptionMessages;
 import com.academic.dto.UserDTO;
 import com.academic.entity.LoginLog;
 import com.academic.mapper.LoginLogMapper;
@@ -142,7 +143,7 @@ public class UserController {
             return ApiResponse.success(responseData);
         } catch (Exception e) {
             log.error("Get users failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -175,7 +176,7 @@ public class UserController {
             return ApiResponse.success(dto);
         } catch (Exception e) {
             log.error("Get user info failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -217,7 +218,7 @@ public class UserController {
             if (String.valueOf(e.getMessage()).contains("Duplicate entry")) {
                 return ApiResponse.error("用户名已存在");
             }
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -259,7 +260,7 @@ public class UserController {
             }
         } catch (Exception e) {
             log.error("Update user failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -281,7 +282,7 @@ public class UserController {
             }
         } catch (Exception e) {
             log.error("Delete user failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -307,7 +308,7 @@ public class UserController {
             return ApiResponse.success(user);
         } catch (Exception e) {
             log.error("Get user by username failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -329,7 +330,7 @@ public class UserController {
             return ApiResponse.success(count);
         } catch (Exception e) {
             log.error("Get user count failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -358,7 +359,7 @@ public class UserController {
             return ApiResponse.success(settings);
         } catch (Exception e) {
             log.error("Get user settings failed: userId={}, err={}", userId, e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -402,7 +403,7 @@ public class UserController {
                     existing == null ? body.getId() : existing.getId()));
         } catch (Exception e) {
             log.error("Update user settings failed: userId={}, err={}", userId, e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -445,7 +446,7 @@ public class UserController {
             return ApiResponse.success(result);
         } catch (Exception e) {
             log.error("Get login logs failed: userId={}, err={}", userId, e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 

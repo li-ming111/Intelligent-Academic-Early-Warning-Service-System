@@ -2,6 +2,7 @@ package com.academic.controller;
 
 import com.academic.common.dto.ApiResponse;
 import com.academic.common.entity.Classes;
+import com.academic.common.util.ExceptionMessages;
 import com.academic.mapper.ClassMapper;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import lombok.extern.slf4j.Slf4j;
@@ -63,7 +64,7 @@ public class ClassController {
             return ApiResponse.success(classes);
         } catch (Exception e) {
             log.error("Get classes failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 }

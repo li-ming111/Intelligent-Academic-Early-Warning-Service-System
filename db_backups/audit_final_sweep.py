@@ -69,32 +69,26 @@ o.append(q('SELECT student_id, course_id, semester, regular_score, final_score, 
            'WHERE final_score IS NULL ORDER BY student_id, course_id'))
 
 o.append('')
-o.append('== 全库还剩下的"数字与文字对不上"的地方（人工复核用）==')
-o.append('  score_record.grade / grade_point / score_total / regular_score / final_score 非空行数:')
-o.append('  ' + q('SELECT COUNT(*) , SUM(grade IS NOT NULL), SUM(grade_point IS NOT NULL), '
-                   'SUM(score_total IS NOT NULL), SUM(regular_score IS NOT NULL), SUM(final_score IS NOT NULL) '
-                   'FROM score_record') + '   <- 这些列无任何代码写入')
-o.append('  score_record 用自己的旧口径(A/B/C/D/F + (total-50)/10)自洽:')
-o.append('    grade 例外 0 行, grade_point 例外 ' + q(
-    'SELECT COUNT(*) FROM score_record WHERE grade_point IS NOT NULL '
-    'AND ABS(grade_point - LEAST(4.0,(score_total-50)/10)) > 0.001') + ' 行')
-o.append('  score_record 换成当前口径(ScoreSyncSupport)后不符: grade ' + q(
-    "SELECT COUNT(*) FROM score_record WHERE score_total IS NOT NULL AND grade <> "
+o.append('== scores 的等级/绩点与派生规则是否自洽（唯一权威成绩表）==')
+o.append('  行数 / grade / grade_point / score_total / regular_score / final_score / remark 非空:')
+o.append('  ' + q('SELECT COUNT(*), SUM(grade IS NOT NULL), SUM(grade_point IS NOT NULL), '
+                   'SUM(score_total IS NOT NULL), SUM(regular_score IS NOT NULL), '
+                   'SUM(final_score IS NOT NULL), SUM(remark IS NOT NULL) FROM scores'))
+o.append('  换成当前口径(ScoreSyncSupport)后不符: grade ' + q(
+    "SELECT COUNT(*) FROM scores WHERE score_total IS NOT NULL AND grade <> "
     "CASE WHEN score_total>=90 THEN 'A' WHEN score_total>=80 THEN 'A-' WHEN score_total>=70 THEN 'B' "
     "WHEN score_total>=60 THEN 'C' ELSE 'D' END") + ' 行, grade_point ' + q(
-    "SELECT COUNT(*) FROM score_record WHERE score_total IS NOT NULL AND grade_point <> "
+    "SELECT COUNT(*) FROM scores WHERE score_total IS NOT NULL AND grade_point <> "
     "CASE WHEN score_total>=90 THEN 4.0 WHEN score_total>=85 THEN 3.7 WHEN score_total>=82 THEN 3.3 "
     "WHEN score_total>=78 THEN 3.0 WHEN score_total>=75 THEN 2.7 WHEN score_total>=72 THEN 2.3 "
     "WHEN score_total>=68 THEN 2.0 WHEN score_total>=64 THEN 1.5 WHEN score_total>=60 THEN 1.0 "
     "ELSE 0.0 END") + ' 行')
 
 o.append('')
-o.append('== score_record.remark 与 course_id 的题材错配（课程 3/5/6）==')
-for cid, expect, now in ((3, '线性代数', '计算机基础'), (5, 'Java程序设计', '计算机网络'), (6, '计算机组成原理', '操作系统')):
-    o.append('  course %d (现名 %s，旧名 %s): 评语里带旧课程题材的行数 = %s' % (
-        cid, now, expect,
-        q("SELECT COUNT(*) FROM score_record WHERE course_id=%d AND remark NOT LIKE '第%%学期%%' "
-          "AND remark IS NOT NULL" % cid)))
+o.append('== 「remark 与 course_id 题材错配」这类检查已失去对象 ==')
+o.append('  原来是查 `score_record.remark`（旧课程的评语题材）与 `course_id` 对不上。')
+o.append('  `score_record` 已于 2026-10-12 W39 整表删除；权威表 `scores` 虽有 `remark` 列，')
+o.append('  但全库 `remark IS NOT NULL` 为 0 行（代码不写该列）⇒ 题材错配随旧表一起消失，无可查之列。')
 
 io.open('D:/ABS/db_backups/_final_sweep.txt', 'w', encoding='utf-8', newline='\n').write('\n'.join(o))
 print('ok')

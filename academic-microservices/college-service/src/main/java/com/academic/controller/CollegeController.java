@@ -2,6 +2,7 @@ package com.academic.controller;
 
 import com.academic.common.dto.ApiResponse;
 import com.academic.common.entity.College;
+import com.academic.common.util.ExceptionMessages;
 import com.academic.service.CollegeService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -86,7 +87,7 @@ public class CollegeController {
             return ApiResponse.success(resultList);
         } catch (Exception e) {
             log.error("Get all colleges failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 

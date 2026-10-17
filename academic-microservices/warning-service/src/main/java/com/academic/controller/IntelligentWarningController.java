@@ -1,6 +1,7 @@
 package com.academic.controller;
 
 import com.academic.common.dto.ApiResponse;
+import com.academic.common.util.ExceptionMessages;
 import com.academic.exception.WarningNotFoundException;
 import com.academic.service.IntelligentWarningService;
 import com.academic.task.WarningScheduledTask;
@@ -67,7 +68,7 @@ public class IntelligentWarningController {
             return ApiResponse.success(body);
         } catch (Exception e) {
             log.error("Manual warning scan failed: {}", e.getMessage(), e);
-            return ApiResponse.error(500, e.getMessage());
+            return ApiResponse.error(500, ExceptionMessages.describe(e));
         }
     }
 
@@ -95,7 +96,7 @@ public class IntelligentWarningController {
             return ApiResponse.badRequest(e.getMessage());
         } catch (Exception e) {
             log.error("Generate warning failed: {}", e.getMessage(), e);
-            return ApiResponse.error(500, e.getMessage());
+            return ApiResponse.error(500, ExceptionMessages.describe(e));
         }
     }
 
@@ -116,7 +117,7 @@ public class IntelligentWarningController {
             return ApiResponse.badRequest(e.getMessage());
         } catch (Exception e) {
             log.error("Handle warning failed: {}", e.getMessage(), e);
-            return ApiResponse.error(500, e.getMessage());
+            return ApiResponse.error(500, ExceptionMessages.describe(e));
         }
     }
 
@@ -131,7 +132,7 @@ public class IntelligentWarningController {
             return ApiResponse.success(result);
         } catch (Exception e) {
             log.error("Get warning list failed: {}", e.getMessage(), e);
-            return ApiResponse.error(500, e.getMessage());
+            return ApiResponse.error(500, ExceptionMessages.describe(e));
         }
     }
 
@@ -146,7 +147,7 @@ public class IntelligentWarningController {
             return ApiResponse.success(result);
         } catch (Exception e) {
             log.error("Get warnings by studentId failed: {}", e.getMessage(), e);
-            return ApiResponse.error(500, e.getMessage());
+            return ApiResponse.error(500, ExceptionMessages.describe(e));
         }
     }
 
@@ -161,7 +162,7 @@ public class IntelligentWarningController {
             return ApiResponse.success(result);
         } catch (Exception e) {
             log.error("Get warnings by level failed: {}", e.getMessage(), e);
-            return ApiResponse.error(500, e.getMessage());
+            return ApiResponse.error(500, ExceptionMessages.describe(e));
         }
     }
 
@@ -182,7 +183,7 @@ public class IntelligentWarningController {
             return ApiResponse.badRequest(e.getMessage());
         } catch (Exception e) {
             log.error("Get warning detail failed: {}", e.getMessage(), e);
-            return ApiResponse.error(500, e.getMessage());
+            return ApiResponse.error(500, ExceptionMessages.describe(e));
         }
     }
 
@@ -203,7 +204,7 @@ public class IntelligentWarningController {
             return ApiResponse.badRequest(e.getMessage());
         } catch (Exception e) {
             log.error("Update warning status failed: {}", e.getMessage(), e);
-            return ApiResponse.error(500, e.getMessage());
+            return ApiResponse.error(500, ExceptionMessages.describe(e));
         }
     }
 }

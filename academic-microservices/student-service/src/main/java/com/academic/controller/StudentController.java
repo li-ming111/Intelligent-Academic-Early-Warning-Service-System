@@ -1,6 +1,7 @@
 package com.academic.controller;
 
 import com.academic.common.dto.ApiResponse;
+import com.academic.common.util.ExceptionMessages;
 import com.academic.dto.StudentDashboardResponse;
 import com.academic.service.StudentService;
 import jakarta.servlet.http.HttpServletRequest;
@@ -47,7 +48,7 @@ public class StudentController {
             return ApiResponse.success(studentService.getStudentDashboard(Long.parseLong(studentId)));
         } catch (Exception e) {
             log.error("Get student dashboard failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -64,7 +65,7 @@ public class StudentController {
             return ApiResponse.success(studentService.getStudentScores(Long.parseLong(studentId), semester));
         } catch (Exception e) {
             log.error("Get student scores failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -107,7 +108,7 @@ public class StudentController {
             log.info("Export scores to Excel ok: userId={}, bytes={}", userId, content.length);
         } catch (Exception e) {
             log.error("Export scores to Excel failed: {}", e.getMessage(), e);
-            writeJsonError(response, HttpServletResponse.SC_INTERNAL_SERVER_ERROR, "导出失败: " + e.getMessage());
+            writeJsonError(response, HttpServletResponse.SC_INTERNAL_SERVER_ERROR, "导出失败: " + ExceptionMessages.describe(e));
         }
     }
 
@@ -140,6 +141,19 @@ public class StudentController {
     private static boolean isAdmin(HttpServletRequest request) {
         String role = request == null ? null : request.getHeader("X-Role");
         return "4".equals(role) || "admin".equals(role);
+    }
+
+    /**
+     * W43：管理口径端点（学院统计 / 全院花名册）的闸。
+     *
+     * <p>放行**系统管理员(4)**与**学院管理员(5)** —— 这两条正是"按学院看学生"的使用者
+     * （学院看板、`AdminController.getAllStudents`）。缺头、学生(1)、教师(2)、辅导员(3)
+     * 一律拒（fail-closed）。**刻意不放行教师**：教师看名单走 `/teachers/students/{id}`，
+     * 不该从 `/api/students/**` 这个学生自助前缀拿全院花名册。
+     */
+    private static boolean isAdminOrCollegeAdmin(HttpServletRequest request) {
+        String role = request == null ? null : request.getHeader("X-Role");
+        return "4".equals(role) || "admin".equals(role) || "5".equals(role) || "college_admin".equals(role);
     }
 
     /**
@@ -237,6 +251,55 @@ public class StudentController {
     }
 
     /**
+     * 「**新建记录**」型端点的归属闸（W42）：请求体里那个自证的 {@code studentId}
+     * 必须**就是登录人自己**。
+     *
+     * <p>与上面三条资源闸的区别：那三条收的是"已经存在的东西的 id"，要查一次库才知道主人；
+     * 这一条收的是**即将被创建的行**，库里的真值就是请求体写进去的那个 —— 所以判据只能是
+     * "请求体说的这个人，是不是登录人"。**不能换算成档案 id 再比**：本仓两套 id 空间大量
+     * 重叠，一旦"拿 userId 去当档案 id 比"，伪造者只要把 {@code studentId} 填成"档案 id
+     * 恰好等于他 userId"的受害者就能绕过（这是 W42 之外、W11/W12 两轮都反复强调的坑）。
+     *
+     * <p>{@code studentId} 缺失 / 非数字时**放行**，交给服务层按既有语义回
+     * {@code {error:"缺少 studentId"}} —— 本闸只回答"是不是你"，不接管参数校验。
+     */
+    private <T> ApiResponse<T> denyUnlessBodyStudentIsSelf(Object body, HttpServletRequest request) {
+        if (isAdmin(request)) {
+            return null;
+        }
+        Long claimed = bodyLong(body, "studentId");
+        if (claimed == null) {
+            return null;
+        }
+        Long me = currentUserId();
+        return me != null && me.equals(claimed)
+                ? null
+                : ApiResponse.error(403, "只能为本人提交，不能代他人提交");
+    }
+
+    /**
+     * 从请求体（{@code Map}）里取一个整数型字段；取不到 / 认不出返回 {@code null}。
+     *
+     * <p>不用 {@code Long.valueOf(toString())} 直接抛：前端各种页面这几处传过
+     * 数字、字符串、甚至 {@code null}，抛出去会变成 HTTP 500（本仓 W33 踩过
+     * "该报 403 却冒成 500"），而这里"认不出"的正确含义是"交给服务层报参数错"。
+     */
+    private static Long bodyLong(Object body, String key) {
+        if (!(body instanceof Map<?, ?> map)) {
+            return null;
+        }
+        Object raw = map.get(key);
+        if (raw == null || "".equals(raw.toString().trim())) {
+            return null;
+        }
+        try {
+            return Long.valueOf(raw.toString().trim());
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    /**
      * 以 JSON 回一个错误。
      *
      * <p>响应已经被声明成 {@code responseType:'blob'}，前端拿到的是 Blob，
@@ -271,7 +334,7 @@ public class StudentController {
             return ApiResponse.success(studentService.getStudentWarnings(Long.parseLong(studentId)));
         } catch (Exception e) {
             log.error("Get student warnings failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -287,7 +350,7 @@ public class StudentController {
             return ApiResponse.success(studentService.getStudentInfo(Long.parseLong(studentId)));
         } catch (Exception e) {
             log.error("Get student info failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -302,7 +365,7 @@ public class StudentController {
             return ApiResponse.success(studentService.getStudentInfo(Long.parseLong(studentId)));
         } catch (Exception e) {
             log.error("Get student info by path failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -317,7 +380,7 @@ public class StudentController {
             return ApiResponse.success(studentService.getStudentInfo(Long.parseLong(userId)));
         } catch (Exception e) {
             log.error("Get student by user ID failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -332,7 +395,7 @@ public class StudentController {
             return ApiResponse.success(studentService.getHistoryBenchmark(Long.parseLong(studentId)));
         } catch (Exception e) {
             log.error("Get student GPA failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -347,7 +410,7 @@ public class StudentController {
             return ApiResponse.success(studentService.getClassInfo(Long.parseLong(studentId)));
         } catch (Exception e) {
             log.error("Get class info failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -375,7 +438,7 @@ public class StudentController {
             return ApiResponse.success(courseRecommendationMapper.listForStudent(Long.parseLong(userId)));
         } catch (Exception e) {
             log.error("Get course recommendations failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -391,7 +454,7 @@ public class StudentController {
             return ApiResponse.success(studentService.getAssistancePlans(Long.parseLong(studentId)));
         } catch (Exception e) {
             log.error("Get assistance failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -406,7 +469,7 @@ public class StudentController {
             return ApiResponse.success(studentService.getAssistancePlans(Long.parseLong(studentId)));
         } catch (Exception e) {
             log.error("Get assistance plans failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -443,26 +506,54 @@ public class StudentController {
             return ApiResponse.success(studentService.getSuggestions(Long.parseLong(studentId)));
         } catch (Exception e) {
             log.error("Get suggestions failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
     // ==================== 申诉 (P0新增) ====================
+    /**
+     * 提交成绩申诉。
+     *
+     * <p>⚠️ 2026-10-13（W42）补上**归属闸**。此前签名是
+     * {@code submitAppeal(@RequestBody Object request)} —— 没有 {@code HttpServletRequest}，
+     * 于是身份**只取自请求体里的 {@code studentId}**，从不看登录人是谁。实测（经网关）：
+     * 邱琳紫（{@code users.id=30}）发 {@code {studentId:27,...}} 即**成功写出**一条挂在
+     * 司明名下的申诉。与同族写端点（withdraw / mark-read / settings …）相比，
+     * 这一族"**新建记录**"的端点当时集体漏了闸（本方法与下面的提交评价同批）。
+     *
+     * <p>闸的判据：请求体里的 {@code studentId} 认的是 **{@code users.id}**（PC 五处
+     * 提交点发的是 {@code localStorage.userId} / {@code student-by-user} 得到的 id；
+     * 小程序发 {@code userId}），所以直接与网关注入的登录人比一次即可 ——
+     * **不做换算**：写成"查档案再比"会让伪造者只要把 id 换成"档案 id 恰好等于他 userId"
+     * 的受害者就能绕过（本仓两套 id 大量重叠）。简言之：
+     * <b>{@code studentId} 是谁，就必须是登录人自己。</b>
+     *
+     * <p>缺 {@code studentId} 时**不在这里拦** —— 服务层会如实回
+     * {@code {error:"缺少 studentId"}}（HTTP 200），保持既有语义。管理员（{@code X-Role:4}）
+     * 旁路放行，与其余归属闸一致。
+     *
+     * <p>被拒形状：HTTP 200 + body {@code code:403}（本控制器惯用；前端 axios 因此走
+     * reject 分支，页面 catch 里提示失败）。
+     */
     @PostMapping("/appeals/submit")
-    public ApiResponse<Object> submitAppeal(@RequestBody Object request) {
+    public ApiResponse<Object> submitAppeal(@RequestBody Object request, HttpServletRequest httpRequest) {
+        ApiResponse<Object> deny = denyUnlessBodyStudentIsSelf(request, httpRequest);
+        if (deny != null) {
+            return deny;
+        }
         try {
             log.info("Submit appeal request");
             return ApiResponse.success(studentService.submitAppeal(request));
         } catch (Exception e) {
             log.error("Submit appeal failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
-    /** 兼容旧路径 */
+    /** 兼容旧路径（同样受上面的归属闸保护 —— 它转发到同一方法）。 */
     @PostMapping("/appeal")
-    public ApiResponse<Object> submitAppealLegacy(@RequestBody Object request) {
-        return submitAppeal(request);
+    public ApiResponse<Object> submitAppealLegacy(@RequestBody Object request, HttpServletRequest httpRequest) {
+        return submitAppeal(request, httpRequest);
     }
 
     @GetMapping("/appeals/{studentId}/list")
@@ -476,7 +567,7 @@ public class StudentController {
             return ApiResponse.success(studentService.getStudentAppeals(Long.parseLong(studentId)));
         } catch (Exception e) {
             log.error("Get student appeals failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -491,7 +582,7 @@ public class StudentController {
             return ApiResponse.success(studentService.getAppealDetail(appealId));
         } catch (Exception e) {
             log.error("Get appeal detail failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -514,7 +605,7 @@ public class StudentController {
             return ApiResponse.success(studentService.withdrawAppeal(appealId, studentId));
         } catch (Exception e) {
             log.error("Withdraw appeal failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -529,7 +620,7 @@ public class StudentController {
             return ApiResponse.success(studentService.getPendingAppeals(Long.parseLong(studentId)));
         } catch (Exception e) {
             log.error("Get pending appeals failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -544,7 +635,7 @@ public class StudentController {
             return ApiResponse.success(studentService.getAppealStatistics(Long.parseLong(studentId)));
         } catch (Exception e) {
             log.error("Get appeal statistics failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -559,7 +650,7 @@ public class StudentController {
             return ApiResponse.success(studentService.getAppealSuccessRate(Long.parseLong(studentId)));
         } catch (Exception e) {
             log.error("Get appeal success rate failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -575,7 +666,7 @@ public class StudentController {
             return ApiResponse.success(studentService.getAppealsByStatus(Long.parseLong(studentId), status));
         } catch (Exception e) {
             log.error("Get appeals by status failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -593,7 +684,7 @@ public class StudentController {
             return ApiResponse.success(studentService.getAppealHistory(Long.parseLong(studentId), page, pageSize));
         } catch (Exception e) {
             log.error("Get appeal history failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -608,7 +699,7 @@ public class StudentController {
             return ApiResponse.success(studentService.getAppealReasonStatistics(Long.parseLong(studentId)));
         } catch (Exception e) {
             log.error("Get appeal reason statistics failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -624,7 +715,7 @@ public class StudentController {
             return ApiResponse.success(studentService.getLatestBenchmark(Long.parseLong(studentId)));
         } catch (Exception e) {
             log.error("Get latest benchmark failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -640,7 +731,7 @@ public class StudentController {
             return ApiResponse.success(studentService.getSemesterBenchmark(Long.parseLong(studentId), semester));
         } catch (Exception e) {
             log.error("Get semester benchmark failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -655,7 +746,7 @@ public class StudentController {
             return ApiResponse.success(studentService.getHistoryBenchmark(Long.parseLong(studentId)));
         } catch (Exception e) {
             log.error("Get history benchmark failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -673,7 +764,7 @@ public class StudentController {
             return ApiResponse.success(studentService.getBenchmarkClassRanking(Long.parseLong(studentId), classId, semester));
         } catch (Exception e) {
             log.error("Get benchmark class ranking failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -691,7 +782,7 @@ public class StudentController {
             return ApiResponse.success(studentService.getBenchmarkMajorRanking(Long.parseLong(studentId), majorId, semester));
         } catch (Exception e) {
             log.error("Get benchmark major ranking failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -702,7 +793,7 @@ public class StudentController {
             return ApiResponse.success(studentService.getClassBenchmarkComparison(classId, semester));
         } catch (Exception e) {
             log.error("Get class benchmark comparison failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -713,7 +804,7 @@ public class StudentController {
             return ApiResponse.success(studentService.getMajorBenchmarkComparison(majorId, semester));
         } catch (Exception e) {
             log.error("Get major benchmark comparison failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -728,7 +819,7 @@ public class StudentController {
             return ApiResponse.success(studentService.getProgressReport(Long.parseLong(studentId)));
         } catch (Exception e) {
             log.error("Get progress report failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -747,7 +838,7 @@ public class StudentController {
             return ApiResponse.success(studentService.getNotificationCenterList(Long.parseLong(userId), page, pageSize));
         } catch (Exception e) {
             log.error("Get notification list failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -762,7 +853,7 @@ public class StudentController {
             return ApiResponse.success(studentService.getNotificationUnreadCount(Long.parseLong(userId)));
         } catch (Exception e) {
             log.error("Get notification unread count failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -777,7 +868,7 @@ public class StudentController {
             return ApiResponse.success(studentService.getUnreadNotifications(Long.parseLong(userId)));
         } catch (Exception e) {
             log.error("Get unread notifications failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -795,7 +886,7 @@ public class StudentController {
             return ApiResponse.success(studentService.markNotificationsBatchRead(Long.parseLong(userId), notificationIds));
         } catch (Exception e) {
             log.error("Mark notifications batch read failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -819,7 +910,7 @@ public class StudentController {
             return ApiResponse.success(studentService.markNotificationRead(notificationId));
         } catch (Exception e) {
             log.error("Mark single notification read failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -835,7 +926,7 @@ public class StudentController {
             return ApiResponse.success(studentService.deleteNotification(notificationId));
         } catch (Exception e) {
             log.error("Delete notification failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -851,7 +942,7 @@ public class StudentController {
             return ApiResponse.success(studentService.clearReadNotifications(Long.parseLong(userId)));
         } catch (Exception e) {
             log.error("Clear read notifications failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -867,7 +958,7 @@ public class StudentController {
             return ApiResponse.success(studentService.getNotificationCenterList(Long.parseLong(studentId), 1, 10));
         } catch (Exception e) {
             log.error("Get notification center failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -884,7 +975,7 @@ public class StudentController {
             return ApiResponse.success(studentService.markNotificationsBatchRead(Long.parseLong(studentId), List.of(notificationId)));
         } catch (Exception e) {
             log.error("Mark notification as read failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -901,7 +992,7 @@ public class StudentController {
             return ApiResponse.success(studentService.getSubscriptionPreferences(Long.parseLong(studentId)));
         } catch (Exception e) {
             log.error("Get subscription preferences failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -925,7 +1016,7 @@ public class StudentController {
             return ApiResponse.success(studentService.updateSubscriptionPreferences(Long.parseLong(studentId), preferences));
         } catch (Exception e) {
             log.error("Update subscription preferences failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -940,7 +1031,7 @@ public class StudentController {
             return ApiResponse.success(studentService.subscribeWarningLevel(Long.parseLong(studentId), level));
         } catch (Exception e) {
             log.error("Subscribe warning level failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -955,7 +1046,7 @@ public class StudentController {
             return ApiResponse.success(studentService.unsubscribeWarningLevel(Long.parseLong(studentId), level));
         } catch (Exception e) {
             log.error("Unsubscribe warning level failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -970,7 +1061,7 @@ public class StudentController {
             return ApiResponse.success(studentService.setPushChannel(Long.parseLong(studentId), channel, enabled));
         } catch (Exception e) {
             log.error("Set push channel failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -994,14 +1085,40 @@ public class StudentController {
      * {@code {"success":false,"message":"..."}}）再包一层放进 `data`，
      * 而 HTTP 与 `code` 都是 200 —— 判断成败必须看 `data.success`，不是看请求有没有成功。
      */
+    /**
+     * 提交 / 更新帮扶评价。
+     *
+     * <p>⚠️ 2026-10-13（W42）补上**归属闸**。此前它把"这条评价属于谁"**完全交给服务层
+     * 拿请求体里的 {@code studentId} 去和 plan 比**（{@code StudentServiceImpl:1756}）
+     * —— 服务层那片逻辑本身没错，但它**从不看登录人是谁**，于是 {@code studentId} 填谁的
+     * 都行。实测（经网关）：邱琳紫（{@code users.id=30}）把 {@code studentId} 填成
+     * {@code 52}（张健），即**成功写出**一条挂在张健帮扶计划（{@code id=3}）上的评价。
+     *
+     * <p>闸的判据复用 {@link #denyUnlessMyPlan}：**看 {@code planId} 指的那份计划是不是
+     * 登录人自己的**。这是服务层表达不出的一维 —— 请求体里的 {@code studentId} 只是
+     * 自证，伪造它可以自洽；而"计划挂在谁的档案上"由登录身份与库中真值两方决定。
+     * 顺带一提：小程序提交评价时**根本不发 {@code studentId}**（靠 planId 关联），
+     * 所以这一维也是唯一对两端都成立的判据。
+     *
+     * <p>管理员（{@code X-Role:4}）旁路放行。被拒形状：HTTP 200 + body {@code code:403}。
+     */
     @PostMapping("/evaluations/submit")
-    public ApiResponse<Object> submitEvaluation(@RequestBody Object evaluation) {
+    public ApiResponse<Object> submitEvaluation(@RequestBody Object evaluation,
+                                                HttpServletRequest request) {
+        Long planId = bodyLong(evaluation, "planId");
+        if (planId != null) {
+            // planId 缺失时不在这里拦：服务层会如实回「缺少 planId（要评价哪条帮扶计划）」。
+            ApiResponse<Object> deny = denyUnlessMyPlan(planId, request, "只能提交本人帮扶计划的评价");
+            if (deny != null) {
+                return deny;
+            }
+        }
         try {
             log.info("Submit evaluation");
             return ApiResponse.success(studentService.submitEvaluation(evaluation));
         } catch (Exception e) {
             log.error("Submit evaluation failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -1025,7 +1142,7 @@ public class StudentController {
             return ApiResponse.success(studentService.getEvaluationsByStudent(Long.parseLong(studentId)));
         } catch (Exception e) {
             log.error("Get evaluations list failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -1046,7 +1163,7 @@ public class StudentController {
             return ApiResponse.success(studentService.getPlanEvaluation(planId));
         } catch (Exception e) {
             log.error("Get plan evaluation failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -1063,7 +1180,7 @@ public class StudentController {
             return ApiResponse.success(studentService.getEvaluationStatistics(Long.parseLong(studentId)));
         } catch (Exception e) {
             log.error("Get evaluation statistics failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -1091,7 +1208,7 @@ public class StudentController {
             return ApiResponse.success(studentService.getStudentSettings(Long.parseLong(studentId)));
         } catch (Exception e) {
             log.error("Get student settings failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -1121,7 +1238,7 @@ public class StudentController {
             return ApiResponse.success(studentService.updateStudentSettings(Long.parseLong(studentId), body));
         } catch (Exception e) {
             log.error("Update student settings failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -1137,7 +1254,7 @@ public class StudentController {
             return ApiResponse.success(studentService.updatePrivacyLevel(Long.parseLong(studentId), privacyLevel));
         } catch (Exception e) {
             log.error("Update privacy level failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -1171,7 +1288,7 @@ public class StudentController {
             return ApiResponse.success(studentService.getStudentMessages(Long.parseLong(studentId)));
         } catch (Exception e) {
             log.error("Get student messages failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -1186,7 +1303,7 @@ public class StudentController {
             return ApiResponse.success(studentService.getUnreadMessageCount(Long.parseLong(studentId)));
         } catch (Exception e) {
             log.error("Get unread message count failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -1203,7 +1320,7 @@ public class StudentController {
             return ApiResponse.success(studentService.getClassInfo(Long.parseLong(studentId)));
         } catch (Exception e) {
             log.error("Get class members failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -1218,7 +1335,7 @@ public class StudentController {
             return ApiResponse.success(studentService.getBenchmarkClassRanking(Long.parseLong(studentId), null, null));
         } catch (Exception e) {
             log.error("Get class ranking failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -1236,15 +1353,23 @@ public class StudentController {
      * {@code ApiResponse.success(0L)} —— 查库炸了和"这个学院一个学生都没有"
      * 在响应上**长得一模一样**，调用方（如学院看板）会把一次故障显示成一个可信的 0。
      * 这正是本仓反复记过的「恒 0 的 total」那一族。现在如实回错误。
+     *
+     * <p><b>W43 补闸</b>：这是**管理口径**（跨学院 / 全库计数），不是学生自助面。
+     * 此前它只靠网关 `path.startsWith(PREFIX_STUDENT) && role != ROLE_STUDENT` 挡——
+     * 那条对**任何一个学生**都是放行的，于是学生打 `?collegeId=1` 能读到 24。
+     * 同族见下面 {@code /students/list}。
      */
     @GetMapping("/count-by-college")
-    public ApiResponse<Long> countByCollege(@RequestParam Long collegeId) {
+    public ApiResponse<Long> countByCollege(@RequestParam Long collegeId, HttpServletRequest request) {
+        if (!isAdminOrCollegeAdmin(request)) {
+            return ApiResponse.error(403, "仅管理员可查看学院统计");
+        }
         try {
             log.info("Count students by college: {}", collegeId);
             return ApiResponse.success(studentService.countByCollege(collegeId));
         } catch (Exception e) {
             log.error("Count students by college failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -1253,15 +1378,32 @@ public class StudentController {
      *
      * <p><b>W14 修的同一条静默错</b>：原来 {@code catch} 回 {@code success(List.of())}，
      * 于是"学生服务炸了"与"这个学院没有学生"回同一个 200 + 空数组。
+     *
+     * <p><b>W43 补闸（本轮学生端全量走查查出）</b>：这条是所有 {@code /students/**}
+     * 读端点里**唯一没有归属闸的** —— 因为它没有 {member id} 可比，服务层返回的是
+     * {@code student_profile} 的**整行**（含姓名 / 学号 / 性别 / 班级 / 学院），
+     * 是**全院花名册**，不是"我班同学"（同班的公开面另有 {@code class-ranking}，
+     * 见 `utils/classRanking.js` 的说明，那是刻意的）。实测：学生 30 打
+     * {@code GET /students/list} ⇒ 200 + **24 行**（全库学生，`collegeId` 还缺省成"全部"）。
+     *
+     * <p>后端真实调用方只有 admin-service 的 Feign `getStudentsByCollege(null)`
+     * （`AdminController.getAllStudents`，经 Feign 请求头透传 ⇒ 这里是 {@code role:4}）；
+     * 前端**零调用方**（PC / 小程序都没有这条封装，小程序 `services/api.js` 里那个
+     * {@code getStudents: () => '/admin/students'} 从无页面在用）。所以闸取"管理员或
+     * 学院管理员"（**刻意不含教师**：教师看名单走 `/teachers/students/{id}`）。
      */
     @GetMapping("/list")
-    public ApiResponse<List<Object>> getStudentsByCollege(@RequestParam(required = false) Long collegeId) {
+    public ApiResponse<List<Object>> getStudentsByCollege(@RequestParam(required = false) Long collegeId,
+                                                          HttpServletRequest request) {
+        if (!isAdminOrCollegeAdmin(request)) {
+            return ApiResponse.error(403, "仅管理员可查看学生名册");
+        }
         try {
             log.info("Get students by college: {}", collegeId);
             return ApiResponse.success(studentService.getStudentsByCollege(collegeId));
         } catch (Exception e) {
             log.error("Get students by college failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 }

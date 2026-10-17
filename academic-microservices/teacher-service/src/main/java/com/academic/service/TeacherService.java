@@ -16,12 +16,8 @@ public interface TeacherService extends IService<TeacherProfile> {
 
     // register 已删（2026-10-08 W27）：它只插 teacher_profile 档案行，不建账号、不设口令，
     // 且零调用方。注册在 user-service 的 `/auth/register/teacher`。
-    /**
-     * 更新教师信息
-     * @param teacherProfile 教师信息
-     * @return 是否更新成功
-     */
-    boolean updateProfile(TeacherProfile teacherProfile);
+    // updateProfile 已删（2026-10-14 W44）：唯一调用方 `PUT /teachers/{id}` 已删
+    // （那个端点无归属闸、零调用方）。
 
     /**
      * 删除教师信息

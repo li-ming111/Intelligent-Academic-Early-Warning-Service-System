@@ -21,6 +21,7 @@ import com.academic.service.FeedbackService;
 import com.academic.service.CommunicationRecordService;
 import com.academic.service.ScoreAuditLogService;
 import com.academic.common.entity.ScoreAuditLog;
+import com.academic.common.util.ExceptionMessages;
 import com.academic.entity.Feedback;
 import com.academic.entity.TeacherClassApplication;
 import jakarta.servlet.http.HttpServletRequest;
@@ -142,27 +143,28 @@ public class TeacherController {
                 return ApiResponse.notFound("教师不存在");
             }
         } catch (Exception e) {
-            return ApiResponse.serverError("获取教师信息失败: " + e.getMessage());
+            return ApiResponse.serverError("获取教师信息失败: " + ExceptionMessages.describe(e));
         }
     }
 
-    /**
-     * 更新教师信息
-     */
-    @PutMapping("/{id}")
-    public ApiResponse<String> updateTeacherInfo(@PathVariable Long id, @RequestBody TeacherProfile teacherProfile) {
-        try {
-            teacherProfile.setId(id);
-            boolean success = teacherService.updateProfile(teacherProfile);
-            if (success) {
-                return ApiResponse.success("教师信息更新成功");
-            } else {
-                return ApiResponse.notFound("教师不存在");
-            }
-        } catch (Exception e) {
-            return ApiResponse.serverError("更新教师信息失败: " + e.getMessage());
-        }
-    }
+    // `PUT /{id}`（updateTeacherInfo）已删（2026-10-14 W44）：
+    //
+    // 它**一道闸都没有** —— 签名里连 `HttpServletRequest` 都没有，方法体只做
+    // `teacherProfile.setId(id); teacherService.updateProfile(...)`，**零调用方**。
+    // 实测（经网关，教师 29 于凤海打 `PUT /api/teachers/990002`）：把**别人**的档案行
+    // 改成了 `W44越权改名`，回 HTTP 200 + `code:200`，真写库。
+    //
+    // 与本族其余成员对照，可见这是**漏装**而不是设计：
+    //   · `GET /{id}`  有 `isSelfProfile`（同一路径参数空间 = teacher_profile.id）；
+    //   · `DELETE /{id}` 有 `isAdmin/self`。
+    // 控制器里 `PUT /courses/{id}`（W12）、`DELETE /scores/{id}`（W10）等同族写端点
+    // 都各自补过闸，只有这一条一直裸奔。
+    //
+    // 按本仓「零调用方 = 删」处理（W27 删三条 `/register` 假成功端点、W34 删
+    // `GET /auth/info/{userId}` 都是这条）：档案的 `title`/`research_areas` 现由
+    // user-service 的注册路径（`createTeacherProfile`）与 admin-service
+    // `PUT /admin/teachers/{id}` 维护，教师自助面**不再**提供改档案能力。
+    // 删除后路径下只剩 GET/DELETE ⇒ 已认证当事人应得 **405**（静态判定，未实测）。
 
     /**
      * 删除教师信息（仅限本人或管理员）
@@ -186,7 +188,7 @@ public class TeacherController {
                 return ApiResponse.notFound("教师不存在");
             }
         } catch (Exception e) {
-            return ApiResponse.serverError("删除教师信息失败: " + e.getMessage());
+            return ApiResponse.serverError("删除教师信息失败: " + ExceptionMessages.describe(e));
         }
     }
 
@@ -205,26 +207,27 @@ public class TeacherController {
             List<TeacherCourse> courses = teacherCourseService.getCoursesByTeacherId(teacherId);
             return ApiResponse.success(courses);
         } catch (Exception e) {
-            return ApiResponse.serverError("获取教师课程列表失败: " + e.getMessage());
+            return ApiResponse.serverError("获取教师课程列表失败: " + ExceptionMessages.describe(e));
         }
     }
 
-    /**
-     * 分配课程给教师
-     */
-    @PostMapping("/courses/assign")
-    public ApiResponse<TeacherCourse> assignCourse(@RequestBody TeacherCourse teacherCourse) {
-        try {
-            boolean success = teacherCourseService.assignCourse(teacherCourse);
-            if (success) {
-                return ApiResponse.success(teacherCourse);
-            } else {
-                return ApiResponse.badRequest("课程分配失败");
-            }
-        } catch (Exception e) {
-            return ApiResponse.serverError("课程分配失败: " + e.getMessage());
-        }
-    }
+    // `POST /courses/assign`（assignCourse）已删（2026-10-14 W44）：
+    //
+    // 同样是**一道闸都没有** + **零调用方**，但它比 updateTeacherInfo 更糟一层 ——
+    // 请求体里就带着 `teacherId`，而 `teacher_course.teacher_id` 是 **teacher_profile.id**
+    // （外键 `fk_teacher_course_teacher_id` 指向它）。实测（教师 29 于凤海，body 传
+    // `teacherId=2` 即王老师的 profile.id）：`code:200` 建出 `teacher_course` 行
+    // `16 | 2 | 7` —— **以别人的名义**给自己以外的教师挂了任课关系（连带接管该课
+    // 在教师端的全部读写面）。
+    // ⚠️ 第一次探针给的是 `users.id=18`（不是 profile.id），撞外键回 500"外键约束失败"，
+    //    看着像"没写成"；换成真实 profile.id 才看到真写进去了。
+    //
+    // 删除依据：全仓零调用方（PC 与小程序两侧封装都不是调用方；`assignCourse` 的
+    // 其余调用点也不存在），且 `teacher_course` 仍有 course-service
+    // `TeacherCourseController`（`POST /teacher-courses`）这条带自建表的入口 ——
+    // 认领课程的**能力**没丢，丢的是一条无闸路径。
+    // ⚠️ 顺带记一条与本轮同族的事实：course-service 的 `TeacherCourseController`
+    //    **经网关不可达**（网关 `StripPrefix=1`，路径对不上），本轮只记录、不动它。
 
     /**
      * 创建课程。
@@ -247,7 +250,7 @@ public class TeacherController {
                 return ApiResponse.badRequest("课程代码已存在");
             }
         } catch (Exception e) {
-            return ApiResponse.serverError("课程创建失败: " + e.getMessage());
+            return ApiResponse.serverError("课程创建失败: " + ExceptionMessages.describe(e));
         }
     }
 
@@ -289,7 +292,7 @@ public class TeacherController {
                 return ApiResponse.notFound("课程不存在");
             }
         } catch (Exception e) {
-            return ApiResponse.serverError("更新课程信息失败: " + e.getMessage());
+            return ApiResponse.serverError("更新课程信息失败: " + ExceptionMessages.describe(e));
         }
     }
 
@@ -313,7 +316,7 @@ public class TeacherController {
                 return ApiResponse.notFound("课程不存在");
             }
         } catch (Exception e) {
-            return ApiResponse.serverError("删除课程失败: " + e.getMessage());
+            return ApiResponse.serverError("删除课程失败: " + ExceptionMessages.describe(e));
         }
     }
 
@@ -336,7 +339,7 @@ public class TeacherController {
             }
             return ApiResponse.success(courses);
         } catch (Exception e) {
-            return ApiResponse.serverError("获取课程列表失败: " + e.getMessage());
+            return ApiResponse.serverError("获取课程列表失败: " + ExceptionMessages.describe(e));
         }
     }
 
@@ -418,7 +421,7 @@ public class TeacherController {
             
             return ApiResponse.success(dashboard);
         } catch (Exception e) {
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -443,7 +446,7 @@ public class TeacherController {
             }
             return ApiResponse.success(allStudents);
         } catch (Exception e) {
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -468,7 +471,7 @@ public class TeacherController {
             }
             return ApiResponse.success(scores);
         } catch (Exception e) {
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -492,7 +495,7 @@ public class TeacherController {
                 return ApiResponse.success((List<Object>) (List<?>) scoreRecordService
                         .getScoresByClassNameAndTeacherId(class_name, teacher_id));
             } catch (Exception e) {
-                return ApiResponse.error(e.getMessage());
+                return ApiResponse.error(ExceptionMessages.describe(e));
             }
         }
         ApiResponse<Object> deny = denyUnlessMyClassByName(class_name, request, "只能查看本人所带班级的成绩");
@@ -502,7 +505,7 @@ public class TeacherController {
         try {
             return ApiResponse.success((List<Object>) (List<?>) scoreRecordService.getScoresByClassName(class_name));
         } catch (Exception e) {
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -522,7 +525,7 @@ public class TeacherController {
             scoreRecordService.saveScores(scores, teacherId);
             return ApiResponse.success("成绩保存成功");
         } catch (Exception e) {
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -569,7 +572,7 @@ public class TeacherController {
             scoreRecordService.updateScore(scoreId, score, remark, modifiedBy);
             return ApiResponse.success("成绩更新成功");
         } catch (Exception e) {
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -914,7 +917,7 @@ public class TeacherController {
             List<Object> feedbacks = (List<Object>) (List<?>) feedbackService.getFeedbacks(teacherId, category);
             return ApiResponse.success(feedbacks);
         } catch (Exception e) {
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -992,26 +995,39 @@ public class TeacherController {
             }
             return ApiResponse.success(enrollments);
         } catch (Exception e) {
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
     /**
      * 保存沟通记录
+     *
+     * <p><b>2026-10-14（W44）补归属闸</b>：`teacherId` 来自请求体，此前**照单全收** ——
+     * 换一个 id 就能**以别人的名义**写一条沟通记录（实测：于凤海 users.id=29 传 `teacherId=18`
+     * 写行成功，回 `code:200`）。这与 W13 给辅导员侧装的 `denyUnlessSelfCounselor`
+     * 是**同一族、同一判据**：body 里的 id 只当**被检查对象**，身份一律取 `X-User-Id`。
+     *
+     * <p>口径：`teacherId` 必须等于登录人（管理员旁路）；`X-User-Id` 头缺失一律拒绝
+     * （fail-closed，见 {@link #isSelf}）。真实调用方（PC `TeacherScores.vue:810`
+     * 「通知辅导员」）发的本来就是 `getUserId()`，所以不受影响。
      */
     @PostMapping("/communications")
-    public ApiResponse<Object> saveCommunication(@RequestBody Map<String, Object> data) {
+    public ApiResponse<Object> saveCommunication(@RequestBody Map<String, Object> data,
+                                                 HttpServletRequest request) {
         try {
             Long teacherId = Long.parseLong(data.get("teacherId").toString());
+            if (!isSelf(teacherId, request)) {
+                return forbidden("无权以其他教师的名义保存沟通记录");
+            }
             Long studentId = Long.parseLong(data.get("studentId").toString());
             String content = (String) data.get("content");
             String type = (String) data.get("type");
             String studentName = (String) data.get("studentName");
-            
+
             communicationRecordService.saveCommunication(teacherId, studentId, content, type, studentName);
             return ApiResponse.success("沟通记录保存成功");
         } catch (Exception e) {
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -1027,7 +1043,7 @@ public class TeacherController {
             }
             return ApiResponse.success(counselor);
         } catch (Exception e) {
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -1045,7 +1061,7 @@ public class TeacherController {
         try {
             return ApiResponse.success(buildCourseAnalysis(course_id));
         } catch (Exception e) {
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -1069,7 +1085,7 @@ public class TeacherController {
             }
             return ApiResponse.success(course);
         } catch (Exception e) {
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -1253,7 +1269,7 @@ public class TeacherController {
             }
             return ApiResponse.success(result);
         } catch (Exception e) {
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -1374,7 +1390,7 @@ public class TeacherController {
             return ApiResponse.success(result);
         } catch (Exception e) {
             log.error("处理预警失败: warningId={}, {}", warningId, e.getMessage(), e);
-            return ApiResponse.serverError("处理预警失败: " + e.getMessage());
+            return ApiResponse.serverError("处理预警失败: " + ExceptionMessages.describe(e));
         }
     }
 
@@ -1631,7 +1647,7 @@ public class TeacherController {
                     + ScoreCaliber.PASS_LINE + " 分；本接口只做统计，不生成预警记录");
             return ApiResponse.success(result);
         } catch (Exception e) {
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -1684,7 +1700,7 @@ public class TeacherController {
             result.put("trend", failedCourses > 0 ? "需关注" : "良好");
             return ApiResponse.success(result);
         } catch (Exception e) {
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -1763,7 +1779,7 @@ public class TeacherController {
             analysis.put("comment", buildStudentComment(studentScore, courseAvg, better + 1, total));
             return ApiResponse.success(analysis);
         } catch (Exception e) {
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -1806,7 +1822,7 @@ public class TeacherController {
             List<Object> requests = (List<Object>) (List<?>) applicationService.getApplicationsByTeacherId(teacherId);
             return ApiResponse.success(requests);
         } catch (Exception e) {
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -1873,7 +1889,7 @@ public class TeacherController {
             }
             return ApiResponse.success(todos);
         } catch (Exception e) {
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -1915,7 +1931,7 @@ public class TeacherController {
 
             return ApiResponse.success(result);
         } catch (Exception e) {
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -1940,7 +1956,7 @@ public class TeacherController {
             }
             return ApiResponse.success(anomalies);
         } catch (Exception e) {
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -1974,7 +1990,7 @@ public class TeacherController {
             result.put("list", new ArrayList<>(all.subList(from, to)));
             return ApiResponse.success(result);
         } catch (Exception e) {
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -2037,7 +2053,7 @@ public class TeacherController {
             }
             return ApiResponse.success(recommendations);
         } catch (Exception e) {
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -2061,7 +2077,7 @@ public class TeacherController {
             result.put("list", list);
             return ApiResponse.success(result);
         } catch (Exception e) {
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -2095,7 +2111,7 @@ public class TeacherController {
             List<Object> feedbacks = (List<Object>) (List<?>) feedbackService.getFeedbacks(tid, category.isEmpty() ? null : category);
             return ApiResponse.success(feedbacks);
         } catch (Exception e) {
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -2121,7 +2137,7 @@ public class TeacherController {
             feedbackService.replyFeedback(feedbackId, reply);
             return ApiResponse.success("回复成功");
         } catch (Exception e) {
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -2137,7 +2153,7 @@ public class TeacherController {
         try {
             return ApiResponse.success(buildCourseAnalysis(course_id));
         } catch (Exception e) {
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -2285,7 +2301,7 @@ public class TeacherController {
             }
             return ApiResponse.success(anomalies);
         } catch (Exception e) {
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -2314,7 +2330,7 @@ public class TeacherController {
                     ? ApiResponse.success("成绩删除成功")
                     : ApiResponse.notFound("成绩记录不存在");
         } catch (Exception e) {
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -2340,7 +2356,7 @@ public class TeacherController {
                     ? ApiResponse.success("成绩批量删除成功")
                     : ApiResponse.notFound("没有可删除的成绩记录");
         } catch (Exception e) {
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -2407,7 +2423,7 @@ public class TeacherController {
             );
             return ApiResponse.success(analysis);
         } catch (Exception e) {
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -2424,7 +2440,7 @@ public class TeacherController {
             List<Map<String, Object>> classes = classInfoService.getClassesByTeacherId(teacherId);
             return ApiResponse.success(classes);
         } catch (Exception e) {
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -2437,7 +2453,7 @@ public class TeacherController {
             List<Map<String, Object>> classes = classInfoService.searchClasses(keyword);
             return ApiResponse.success(classes);
         } catch (Exception e) {
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -2454,55 +2470,86 @@ public class TeacherController {
             List<Object> applications = (List<Object>) (List<?>) applicationService.getApplicationsByTeacherId(teacherId);
             return ApiResponse.success(applications);
         } catch (Exception e) {
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
     /**
      * 提交班级管理申请（申请管理或解除管理）
+     *
+     * <p><b>2026-10-14（W44）补归属闸</b>：`teacherId` 来自请求体，此前不核对 ——
+     * 换一个 id 就能**以别的教师的名义**提交申请（批准后班就记在他名下了）。
+     * 实测：于凤海 users.id=29 传 `teacherId=18`，`teacher_class_application` 真写进一行
+     * `teacher_id=18`，回 `code:200`。判据与 W13 辅导员侧 `applyForClass` 逐字同形。
+     *
+     * <p>真实调用方（PC `TeacherClassManagement.vue` 的 `submitClassManagementRequest`、
+     * 小程序 `pages/teacher/class-management.vue:331`）发的都是自己的 `userId` ⇒ 不受影响。
      */
     @PostMapping("/class-management/apply")
-    public ApiResponse<Object> submitClassManagementRequest(@RequestBody Map<String, Object> data) {
+    public ApiResponse<Object> submitClassManagementRequest(@RequestBody Map<String, Object> data,
+                                                            HttpServletRequest request) {
         try {
             Long teacherId = Long.parseLong(data.get("teacherId").toString());
+            if (!isSelf(teacherId, request)) {
+                return forbidden("无权以其他教师的名义提交班级申请");
+            }
             Long classId = Long.parseLong(data.get("classId").toString());
             String reason = (String) data.get("reason");
             String className = (String) data.get("className");
-            
+
             // 获取申请类型，默认为0（申请管理）
             Integer applicationType = 0;
             if (data.get("applicationType") != null) {
                 applicationType = Integer.parseInt(data.get("applicationType").toString());
             }
-            
+
             String errorMessage = applicationService.submitApplication(teacherId, classId, reason, className, applicationType);
             if (errorMessage != null) {
                 return ApiResponse.error(errorMessage);
             }
-            
+
             String message = applicationType == 1 ? "解除申请提交成功" : "申请提交成功";
             return ApiResponse.success(message);
         } catch (Exception e) {
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
     /**
      * 解除班级管理权限
+     *
+     * <p><b>2026-10-14（W44）补归属闸</b>：三条里**最重**的一条 —— 它当场写库
+     * （`classes.teacher_id` 置 NULL），不是提交申请。此前 `teacherId` 来自请求体且不核对，
+     * 实测：于凤海 users.id=29 传 `teacherId=18` + 探针班，把**别人名下**班级的
+     * `teacher_id` 置成了 NULL（`before=['18'] after=['NULL']`，回 `code:200`）。
+     *
+     * <p>⚠️ 服务层的 `cancelClassManagement(teacherId, classId)` 内部**有**一道检查
+     * （`classInfo.getTeacherId().equals(realTeacherId)`），但它比对的 `realTeacherId`
+     * 就是**方法入参** `teacherId` —— 也就是请求体给的那个数。于是那句判断从
+     * "这个班是不是**你的**"退化成了"这个班是不是**他的**"，传谁都能过。
+     * 这正是 W13 手册 §C.2 记的形状（"身份跟着请求体走"），控制器侧不补闸，服务层那道闸
+     * 永远是恒真的。
+     *
+     * <p>真实调用方（PC `TeacherClassManagement.vue:794`、小程序
+     * `pages/teacher/class-management.vue:363`）发的都是自己的 `userId` ⇒ 不受影响。
      */
     @PostMapping("/class-management/cancel")
-    public ApiResponse<Object> cancelClassManagement(@RequestBody Map<String, Object> data) {
+    public ApiResponse<Object> cancelClassManagement(@RequestBody Map<String, Object> data,
+                                                     HttpServletRequest request) {
         try {
             Long teacherId = Long.parseLong(data.get("teacherId").toString());
+            if (!isSelf(teacherId, request)) {
+                return forbidden("无权解除其他教师的班级管理");
+            }
             Long classId = Long.parseLong(data.get("classId").toString());
-            
+
             String errorMessage = applicationService.cancelClassManagement(teacherId, classId);
             if (errorMessage != null) {
                 return ApiResponse.error(errorMessage);
             }
             return ApiResponse.success("班级管理权限已解除");
         } catch (Exception e) {
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -2520,7 +2567,7 @@ public class TeacherController {
             List<Map<String, Object>> students = classInfoService.getStudentsByClassId(classId);
             return ApiResponse.success(students);
         } catch (Exception e) {
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -2543,7 +2590,7 @@ public class TeacherController {
             }
             return ApiResponse.success(result);
         } catch (Exception e) {
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -2586,7 +2633,7 @@ public class TeacherController {
             }
             return ApiResponse.success(messages);
         } catch (Exception e) {
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -2613,7 +2660,7 @@ public class TeacherController {
                     .count();
             return ApiResponse.success(unread);
         } catch (Exception e) {
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -2645,7 +2692,7 @@ public class TeacherController {
             return ApiResponse.success(count);
         } catch (Exception e) {
             log.error("统计教师数量失败: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 

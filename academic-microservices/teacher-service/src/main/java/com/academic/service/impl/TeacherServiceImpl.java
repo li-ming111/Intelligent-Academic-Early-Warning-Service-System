@@ -26,12 +26,8 @@ public class TeacherServiceImpl extends ServiceImpl<TeacherProfileMapper, Teache
     // 不设口令 —— 对已存在的 user_id 会插出第二份档案，对陌生 user_id 撞外键直接失败。
     // 零调用方，真实注册在 user-service `/auth/register/teacher`。
 
-    @Override
-    public boolean updateProfile(TeacherProfile teacherProfile) {
-        // 设置更新时间
-        teacherProfile.setUpdatedAt(LocalDateTime.now());
-        return updateById(teacherProfile);
-    }
+    // updateProfile 已删（2026-10-14 W44）：唯一调用方 `PUT /teachers/{id}` 已删。
+    // 那个端点一道归属闸都没有（实测可改任意教师的档案行），且零调用方。
 
     @Override
     public boolean deleteProfile(Long id) {

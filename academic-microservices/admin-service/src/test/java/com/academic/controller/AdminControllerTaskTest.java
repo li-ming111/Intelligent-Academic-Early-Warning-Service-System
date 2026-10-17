@@ -145,16 +145,27 @@ class AdminControllerTaskTest {
         assertEquals(200, capturedInsert().getTitle().length());
     }
 
-    /** 落库抛异常 → 如实回错误，不吞。 */
+    /**
+     * 落库抛异常 → 如实回「错误」这件事，但**不把异常原文透给客户端**。
+     *
+     * <p>W45：原断言写成 {@code r.getMessage().contains("db down")}，即"必须回显内部异常原文"，
+     * 而 mock 抛的是 <b>裸 {@code RuntimeException}</b>（恰好是本仓承载业务文案的形状）。
+     * 前端 {@code client.js} 会把 message 直接弹给用户 ⇒ 真 DB 故障若带 SQL 原文就会泄露。
+     * 现在把 mock 换成数据库层真实抛的 {@code DataAccessException}，断言只回中性文案。
+     */
     @Test
     void create_reportsInsertFailure() {
         when(auditLogService.currentActorId()).thenReturn(1L);
-        when(adminTaskMapper.insert(any(AdminTask.class))).thenThrow(new RuntimeException("db down"));
+        when(adminTaskMapper.insert(any(AdminTask.class)))
+                .thenThrow(new org.springframework.dao.DataAccessResourceFailureException("db down"));
 
         ApiResponse<Map<String, Object>> r = controller.createTask(body("title", "任务"));
 
         assertNotEquals(200, r.getCode());
-        assertTrue(r.getMessage().contains("db down"));
+        assertEquals(com.academic.common.util.ExceptionMessages.GENERIC, r.getMessage(),
+                "数据库类异常只回中性文案，不暴露内部细节");
+        assertFalse(String.valueOf(r.getMessage()).contains("db down"),
+                "内部异常原文不能出现在给客户端的 message 里");
     }
 
     // ---------------- 改状态 ----------------

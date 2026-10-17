@@ -2,6 +2,7 @@ package com.academic.controller;
 
 import com.academic.common.dto.ApiResponse;
 import com.academic.common.util.UpdateBodyGuard;
+import com.academic.common.util.ExceptionMessages;
 import com.academic.entity.Permission;
 import com.academic.service.PermissionService;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
@@ -62,7 +63,7 @@ public class PermissionController {
             return ApiResponse.success(responseData);
         } catch (Exception e) {
             log.error("Get permissions failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -80,7 +81,7 @@ public class PermissionController {
             return ApiResponse.success(permission);
         } catch (Exception e) {
             log.error("Get permission info failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -104,7 +105,7 @@ public class PermissionController {
             }
         } catch (Exception e) {
             log.error("Add permission failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -136,7 +137,7 @@ public class PermissionController {
             }
         } catch (Exception e) {
             log.error("Update permission failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -155,7 +156,7 @@ public class PermissionController {
             }
         } catch (Exception e) {
             log.error("Delete permission failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -173,7 +174,7 @@ public class PermissionController {
             return ApiResponse.success(permission);
         } catch (Exception e) {
             log.error("Get permission by code failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -188,7 +189,7 @@ public class PermissionController {
             return ApiResponse.success(permissions);
         } catch (Exception e) {
             log.error("Get permissions by status failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -203,7 +204,7 @@ public class PermissionController {
             return ApiResponse.success(permissions);
         } catch (Exception e) {
             log.error("Get all permissions failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -228,7 +229,7 @@ public class PermissionController {
             return ApiResponse.success(count);
         } catch (Exception e) {
             log.error("Get permission count failed: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 }

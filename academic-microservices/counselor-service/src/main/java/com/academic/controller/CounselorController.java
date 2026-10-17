@@ -8,6 +8,7 @@ import com.academic.common.entity.CommunicationLog;
 import com.academic.common.entity.Student;
 import com.academic.common.util.UpdateBodyGuard;
 import com.academic.common.entity.AcademicWarning;
+import com.academic.common.util.ExceptionMessages;
 import com.academic.entity.CounselorClassApplication;
 import com.academic.entity.ClassInfo;
 import com.academic.service.CounselorService;
@@ -203,7 +204,7 @@ public class CounselorController {
             return ApiResponse.success(dashboard);
         } catch (Exception e) {
             log.error("获取仪表板数据失败: {}", e.getMessage());
-            return ApiResponse.serverError("获取仪表板数据失败: " + e.getMessage());
+            return ApiResponse.serverError("获取仪表板数据失败: " + ExceptionMessages.describe(e));
         }
     }
 
@@ -217,7 +218,7 @@ public class CounselorController {
             return ApiResponse.success(counselors);
         } catch (Exception e) {
             log.error("获取辅导员列表失败: {}", e.getMessage());
-            return ApiResponse.serverError("获取辅导员列表失败: " + e.getMessage());
+            return ApiResponse.serverError("获取辅导员列表失败: " + ExceptionMessages.describe(e));
         }
     }
 
@@ -244,7 +245,7 @@ public class CounselorController {
             }
         } catch (Exception e) {
             log.error("获取辅导员信息失败: {}", e.getMessage());
-            return ApiResponse.serverError("获取辅导员信息失败: " + e.getMessage());
+            return ApiResponse.serverError("获取辅导员信息失败: " + ExceptionMessages.describe(e));
         }
     }
 
@@ -262,7 +263,7 @@ public class CounselorController {
             return ApiResponse.success(students);
         } catch (Exception e) {
             log.error("获取学生列表失败: {}", e.getMessage());
-            return ApiResponse.serverError("获取学生列表失败: " + e.getMessage());
+            return ApiResponse.serverError("获取学生列表失败: " + ExceptionMessages.describe(e));
         }
     }
 
@@ -350,7 +351,7 @@ public class CounselorController {
             return ApiResponse.success(warnings);
         } catch (Exception e) {
             log.error("获取预警列表失败: {}", e.getMessage());
-            return ApiResponse.serverError("获取预警列表失败: " + e.getMessage());
+            return ApiResponse.serverError("获取预警列表失败: " + ExceptionMessages.describe(e));
         }
     }
 
@@ -380,7 +381,7 @@ public class CounselorController {
             }
         } catch (Exception e) {
             log.error("更新辅导员信息失败: {}", e.getMessage());
-            return ApiResponse.serverError("更新辅导员信息失败: " + e.getMessage());
+            return ApiResponse.serverError("更新辅导员信息失败: " + ExceptionMessages.describe(e));
         }
     }
 
@@ -408,7 +409,7 @@ public class CounselorController {
             }
         } catch (Exception e) {
             log.error("删除辅导员信息失败: {}", e.getMessage());
-            return ApiResponse.serverError("删除辅导员信息失败: " + e.getMessage());
+            return ApiResponse.serverError("删除辅导员信息失败: " + ExceptionMessages.describe(e));
         }
     }
 
@@ -432,7 +433,7 @@ public class CounselorController {
             }
         } catch (Exception e) {
             log.error("创建帮扶计划失败: {}", e.getMessage());
-            return ApiResponse.serverError("创建帮扶计划失败: " + e.getMessage());
+            return ApiResponse.serverError("创建帮扶计划失败: " + ExceptionMessages.describe(e));
         }
     }
 
@@ -450,7 +451,7 @@ public class CounselorController {
             return ApiResponse.success(plans);
         } catch (Exception e) {
             log.error("获取学生帮扶计划列表失败: {}", e.getMessage());
-            return ApiResponse.serverError("获取学生帮扶计划列表失败: " + e.getMessage());
+            return ApiResponse.serverError("获取学生帮扶计划列表失败: " + ExceptionMessages.describe(e));
         }
     }
 
@@ -472,7 +473,7 @@ public class CounselorController {
             return ApiResponse.success(plans);
         } catch (Exception e) {
             log.error("获取辅导员帮扶计划列表失败: {}", e.getMessage());
-            return ApiResponse.serverError("获取辅导员帮扶计划列表失败: " + e.getMessage());
+            return ApiResponse.serverError("获取辅导员帮扶计划列表失败: " + ExceptionMessages.describe(e));
         }
     }
 
@@ -496,7 +497,7 @@ public class CounselorController {
             return ApiResponse.success(assistanceEvaluationMapper.selectByPlanId(planId));
         } catch (Exception e) {
             log.error("获取帮扶计划评价失败: planId={}, {}", planId, e.getMessage());
-            return ApiResponse.serverError("获取帮扶计划评价失败: " + e.getMessage());
+            return ApiResponse.serverError("获取帮扶计划评价失败: " + ExceptionMessages.describe(e));
         }
     }
 
@@ -515,7 +516,7 @@ public class CounselorController {
             return ApiResponse.success(assistanceEvaluationMapper.selectByCounselorId(counselorId));
         } catch (Exception e) {
             log.error("获取辅导员帮扶评价失败: counselorId={}, {}", counselorId, e.getMessage());
-            return ApiResponse.serverError("获取辅导员帮扶评价失败: " + e.getMessage());
+            return ApiResponse.serverError("获取辅导员帮扶评价失败: " + ExceptionMessages.describe(e));
         }
     }
 
@@ -537,7 +538,7 @@ public class CounselorController {
             }
         } catch (Exception e) {
             log.error("更新帮扶计划失败: {}", e.getMessage());
-            return ApiResponse.serverError("更新帮扶计划失败: " + e.getMessage());
+            return ApiResponse.serverError("更新帮扶计划失败: " + ExceptionMessages.describe(e));
         }
     }
 
@@ -569,7 +570,7 @@ public class CounselorController {
             }
         } catch (Exception e) {
             log.error("删除帮扶计划失败: {}", e.getMessage());
-            return ApiResponse.serverError("删除帮扶计划失败: " + e.getMessage());
+            return ApiResponse.serverError("删除帮扶计划失败: " + ExceptionMessages.describe(e));
         }
     }
 
@@ -597,7 +598,7 @@ public class CounselorController {
             return ApiResponse.badRequest(e.getMessage());
         } catch (Exception e) {
             log.error("更新帮扶计划状态失败: {}", e.getMessage());
-            return ApiResponse.serverError("更新帮扶计划状态失败: " + e.getMessage());
+            return ApiResponse.serverError("更新帮扶计划状态失败: " + ExceptionMessages.describe(e));
         }
     }
 
@@ -629,7 +630,7 @@ public class CounselorController {
             return ApiResponse.badRequest(e.getMessage());
         } catch (Exception e) {
             log.error("更新帮扶计划进度失败: {}", e.getMessage());
-            return ApiResponse.serverError("更新帮扶计划进度失败: " + e.getMessage());
+            return ApiResponse.serverError("更新帮扶计划进度失败: " + ExceptionMessages.describe(e));
         }
     }
 
@@ -654,7 +655,7 @@ public class CounselorController {
             }
         } catch (Exception e) {
             log.error("创建沟通记录失败: {}", e.getMessage());
-            return ApiResponse.serverError("创建沟通记录失败: " + e.getMessage());
+            return ApiResponse.serverError("创建沟通记录失败: " + ExceptionMessages.describe(e));
         }
     }
 
@@ -672,7 +673,7 @@ public class CounselorController {
             return ApiResponse.success(logs);
         } catch (Exception e) {
             log.error("获取学生沟通记录列表失败: {}", e.getMessage());
-            return ApiResponse.serverError("获取学生沟通记录列表失败: " + e.getMessage());
+            return ApiResponse.serverError("获取学生沟通记录列表失败: " + ExceptionMessages.describe(e));
         }
     }
 
@@ -690,7 +691,7 @@ public class CounselorController {
             return ApiResponse.success(logs);
         } catch (Exception e) {
             log.error("获取辅导员沟通记录列表失败: {}", e.getMessage());
-            return ApiResponse.serverError("获取辅导员沟通记录列表失败: " + e.getMessage());
+            return ApiResponse.serverError("获取辅导员沟通记录列表失败: " + ExceptionMessages.describe(e));
         }
     }
 
@@ -712,7 +713,7 @@ public class CounselorController {
             }
         } catch (Exception e) {
             log.error("更新沟通记录失败: {}", e.getMessage());
-            return ApiResponse.serverError("更新沟通记录失败: " + e.getMessage());
+            return ApiResponse.serverError("更新沟通记录失败: " + ExceptionMessages.describe(e));
         }
     }
 
@@ -740,7 +741,7 @@ public class CounselorController {
             }
         } catch (Exception e) {
             log.error("删除沟通记录失败: {}", e.getMessage());
-            return ApiResponse.serverError("删除沟通记录失败: " + e.getMessage());
+            return ApiResponse.serverError("删除沟通记录失败: " + ExceptionMessages.describe(e));
         }
     }
 
@@ -758,7 +759,7 @@ public class CounselorController {
             return ApiResponse.success(students);
         } catch (Exception e) {
             log.error("获取辅导员管理的学生列表失败: {}", e.getMessage());
-            return ApiResponse.serverError("获取辅导员管理的学生列表失败: " + e.getMessage());
+            return ApiResponse.serverError("获取辅导员管理的学生列表失败: " + ExceptionMessages.describe(e));
         }
     }
 
@@ -779,7 +780,7 @@ public class CounselorController {
             }
         } catch (Exception e) {
             log.error("获取学生详情失败: {}", e.getMessage());
-            return ApiResponse.serverError("获取学生详情失败: " + e.getMessage());
+            return ApiResponse.serverError("获取学生详情失败: " + ExceptionMessages.describe(e));
         }
     }
 
@@ -807,7 +808,7 @@ public class CounselorController {
             }
         } catch (Exception e) {
             log.error("更新学生信息失败: {}", e.getMessage());
-            return ApiResponse.serverError("更新学生信息失败: " + e.getMessage());
+            return ApiResponse.serverError("更新学生信息失败: " + ExceptionMessages.describe(e));
         }
     }
 
@@ -825,7 +826,7 @@ public class CounselorController {
             return ApiResponse.success(classes);
         } catch (Exception e) {
             log.error("获取班级列表失败: {}", e.getMessage());
-            return ApiResponse.serverError("获取班级列表失败: " + e.getMessage());
+            return ApiResponse.serverError("获取班级列表失败: " + ExceptionMessages.describe(e));
         }
     }
 
@@ -861,7 +862,7 @@ public class CounselorController {
             return ApiResponse.success(result);
         } catch (Exception e) {
             log.error("获取班级申请列表失败: {}", e.getMessage());
-            return ApiResponse.serverError("获取班级申请列表失败: " + e.getMessage());
+            return ApiResponse.serverError("获取班级申请列表失败: " + ExceptionMessages.describe(e));
         }
     }
 
@@ -875,7 +876,7 @@ public class CounselorController {
             return ApiResponse.success(classes);
         } catch (Exception e) {
             log.error("搜索班级失败: {}", e.getMessage());
-            return ApiResponse.serverError("搜索班级失败: " + e.getMessage());
+            return ApiResponse.serverError("搜索班级失败: " + ExceptionMessages.describe(e));
         }
     }
 
@@ -889,7 +890,7 @@ public class CounselorController {
             return ApiResponse.success(classes);
         } catch (Exception e) {
             log.error("获取无辅导员班级失败: {}", e.getMessage());
-            return ApiResponse.serverError("获取无辅导员班级失败: " + e.getMessage());
+            return ApiResponse.serverError("获取无辅导员班级失败: " + ExceptionMessages.describe(e));
         }
     }
 
@@ -932,7 +933,7 @@ public class CounselorController {
             return ApiResponse.success(message);
         } catch (Exception e) {
             log.error("申请班级失败: {}", e.getMessage());
-            return ApiResponse.serverError("申请班级失败: " + e.getMessage());
+            return ApiResponse.serverError("申请班级失败: " + ExceptionMessages.describe(e));
         }
     }
 
@@ -963,7 +964,7 @@ public class CounselorController {
             return ApiResponse.success("班级管理权限已解除");
         } catch (Exception e) {
             log.error("解除班级管理权限失败: {}", e.getMessage());
-            return ApiResponse.serverError("解除班级管理权限失败: " + e.getMessage());
+            return ApiResponse.serverError("解除班级管理权限失败: " + ExceptionMessages.describe(e));
         }
     }
 
@@ -994,7 +995,7 @@ public class CounselorController {
             return ApiResponse.success(applications);
         } catch (Exception e) {
             log.error("获取辅导员班级申请失败: {}", e.getMessage());
-            return ApiResponse.serverError("获取辅导员班级申请失败: " + e.getMessage());
+            return ApiResponse.serverError("获取辅导员班级申请失败: " + ExceptionMessages.describe(e));
         }
     }
 
@@ -1028,7 +1029,7 @@ public class CounselorController {
             return ApiResponse.success(status == 1 ? "申请已批准" : "申请已拒绝");
         } catch (Exception e) {
             log.error("审核辅导员班级申请失败: {}", e.getMessage());
-            return ApiResponse.serverError("审核辅导员班级申请失败: " + e.getMessage());
+            return ApiResponse.serverError("审核辅导员班级申请失败: " + ExceptionMessages.describe(e));
         }
     }
 
@@ -1084,7 +1085,7 @@ public class CounselorController {
             return ApiResponse.success(creditData);
         } catch (Exception e) {
             log.error("获取学分监控数据失败: {}", e.getMessage());
-            return ApiResponse.serverError("获取学分监控数据失败: " + e.getMessage());
+            return ApiResponse.serverError("获取学分监控数据失败: " + ExceptionMessages.describe(e));
         }
     }
 
@@ -1175,7 +1176,7 @@ public class CounselorController {
             return ApiResponse.success(result);
         } catch (Exception e) {
             log.error("获取学分不足学生列表失败: {}", e.getMessage());
-            return ApiResponse.serverError("获取学分不足学生列表失败: " + e.getMessage());
+            return ApiResponse.serverError("获取学分不足学生列表失败: " + ExceptionMessages.describe(e));
         }
     }
 
@@ -1193,7 +1194,7 @@ public class CounselorController {
             return ApiResponse.success(count);
         } catch (Exception e) {
             log.error("统计辅导员数量失败: {}", e.getMessage());
-            return ApiResponse.error(e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }
 
@@ -1224,7 +1225,7 @@ public class CounselorController {
             return ApiResponse.success(scores);
         } catch (Exception e) {
             log.error("获取班级成绩失败: {}", e.getMessage());
-            return ApiResponse.serverError("获取班级成绩失败: " + e.getMessage());
+            return ApiResponse.serverError("获取班级成绩失败: " + ExceptionMessages.describe(e));
         }
     }
 
@@ -1307,7 +1308,7 @@ public class CounselorController {
             return ApiResponse.success(distribution);
         } catch (Exception e) {
             log.error("获取成绩分布失败: {}", e.getMessage());
-            return ApiResponse.serverError("获取成绩分布失败: " + e.getMessage());
+            return ApiResponse.serverError("获取成绩分布失败: " + ExceptionMessages.describe(e));
         }
     }
 
@@ -1330,7 +1331,7 @@ public class CounselorController {
                     scoreMapper.getLowScoresByCounselorId(counselorId, ScoreCaliber.ATTENTION_LINE));
         } catch (Exception e) {
             log.error("获取低分学生失败: {}", e.getMessage());
-            return ApiResponse.serverError("获取低分学生失败: " + e.getMessage());
+            return ApiResponse.serverError("获取低分学生失败: " + ExceptionMessages.describe(e));
         }
     }
 
@@ -1346,7 +1347,7 @@ public class CounselorController {
             return ApiResponse.success(scores);
         } catch (Exception e) {
             log.error("获取学生成绩趋势失败: {}", e.getMessage());
-            return ApiResponse.serverError("获取学生成绩趋势失败: " + e.getMessage());
+            return ApiResponse.serverError("获取学生成绩趋势失败: " + ExceptionMessages.describe(e));
         }
     }
 
@@ -1385,7 +1386,7 @@ public class CounselorController {
             return ApiResponse.success(result);
         } catch (Exception e) {
             log.error("获取学分不足率失败: {}", e.getMessage());
-            return ApiResponse.serverError("获取学分不足率失败: " + e.getMessage());
+            return ApiResponse.serverError("获取学分不足率失败: " + ExceptionMessages.describe(e));
         }
     }
 
@@ -1401,7 +1402,7 @@ public class CounselorController {
             return ApiResponse.success(distribution);
         } catch (Exception e) {
             log.error("获取预警分布失败: {}", e.getMessage());
-            return ApiResponse.serverError("获取预警分布失败: " + e.getMessage());
+            return ApiResponse.serverError("获取预警分布失败: " + ExceptionMessages.describe(e));
         }
     }
 
@@ -1421,7 +1422,7 @@ public class CounselorController {
             return ApiResponse.success(efficiency);
         } catch (Exception e) {
             log.error("获取预警处理效率失败: {}", e.getMessage());
-            return ApiResponse.serverError("获取预警处理效率失败: " + e.getMessage());
+            return ApiResponse.serverError("获取预警处理效率失败: " + ExceptionMessages.describe(e));
         }
     }
 
@@ -1454,7 +1455,7 @@ public class CounselorController {
             return ApiResponse.success(ranking);
         } catch (Exception e) {
             log.error("获取学分达标排名失败: {}", e.getMessage());
-            return ApiResponse.serverError("获取学分达标排名失败: " + e.getMessage());
+            return ApiResponse.serverError("获取学分达标排名失败: " + ExceptionMessages.describe(e));
         }
     }
 
@@ -1470,7 +1471,7 @@ public class CounselorController {
             return ApiResponse.success(trend);
         } catch (Exception e) {
             log.error("获取预警趋势失败: {}", e.getMessage());
-            return ApiResponse.serverError("获取预警趋势失败: " + e.getMessage());
+            return ApiResponse.serverError("获取预警趋势失败: " + ExceptionMessages.describe(e));
         }
     }
 
@@ -1502,7 +1503,7 @@ public class CounselorController {
             return ApiResponse.success(result);
         } catch (Exception e) {
             log.error("获取帮扶完成率失败: {}", e.getMessage());
-            return ApiResponse.serverError("获取帮扶完成率失败: " + e.getMessage());
+            return ApiResponse.serverError("获取帮扶完成率失败: " + ExceptionMessages.describe(e));
         }
     }
 
@@ -1543,7 +1544,7 @@ public class CounselorController {
             return ApiResponse.success(resp);
         } catch (Exception e) {
             log.error("处理预警失败: {}", e.getMessage());
-            return ApiResponse.serverError("处理预警失败: " + e.getMessage());
+            return ApiResponse.serverError("处理预警失败: " + ExceptionMessages.describe(e));
         }
     }
 
@@ -1581,7 +1582,7 @@ public class CounselorController {
             return ApiResponse.success(resp);
         } catch (Exception e) {
             log.error("批量处理预警失败: {}", e.getMessage());
-            return ApiResponse.serverError("批量处理预警失败: " + e.getMessage());
+            return ApiResponse.serverError("批量处理预警失败: " + ExceptionMessages.describe(e));
         }
     }
 
@@ -1658,7 +1659,7 @@ public class CounselorController {
             return ApiResponse.badRequest(e.getMessage());
         } catch (Exception e) {
             log.error("通知学生失败: {}", e.getMessage(), e);
-            return ApiResponse.serverError("通知学生失败: " + e.getMessage());
+            return ApiResponse.serverError("通知学生失败: " + ExceptionMessages.describe(e));
         }
     }
 
@@ -1682,7 +1683,7 @@ public class CounselorController {
                     counselorId, page == null ? 1 : page, size == null ? 10 : size));
         } catch (Exception e) {
             log.error("获取通知历史失败: {}", e.getMessage(), e);
-            return ApiResponse.serverError("获取通知历史失败: " + e.getMessage());
+            return ApiResponse.serverError("获取通知历史失败: " + ExceptionMessages.describe(e));
         }
     }
 
@@ -1699,7 +1700,7 @@ public class CounselorController {
             return ApiResponse.success(new ArrayList<>());
         } catch (Exception e) {
             log.error("获取通知模板失败: {}", e.getMessage(), e);
-            return ApiResponse.serverError("获取通知模板失败: " + e.getMessage());
+            return ApiResponse.serverError("获取通知模板失败: " + ExceptionMessages.describe(e));
         }
     }
 
@@ -1717,7 +1718,7 @@ public class CounselorController {
             return ApiResponse.success(counselorNotificationService.weeklyCount(counselorId));
         } catch (Exception e) {
             log.error("获取每周通知数量失败: {}", e.getMessage(), e);
-            return ApiResponse.serverError("获取每周通知数量失败: " + e.getMessage());
+            return ApiResponse.serverError("获取每周通知数量失败: " + ExceptionMessages.describe(e));
         }
     }
 
@@ -1747,7 +1748,7 @@ public class CounselorController {
             return ApiResponse.success(result);
         } catch (Exception e) {
             log.error("获取选课信息失败: {}", e.getMessage());
-            return ApiResponse.serverError("获取选课信息失败: " + e.getMessage());
+            return ApiResponse.serverError("获取选课信息失败: " + ExceptionMessages.describe(e));
         }
     }
 
@@ -1764,7 +1765,7 @@ public class CounselorController {
             return ApiResponse.success(classes);
         } catch (Exception e) {
             log.error("获取班级列表失败: {}", e.getMessage());
-            return ApiResponse.serverError("获取班级列表失败: " + e.getMessage());
+            return ApiResponse.serverError("获取班级列表失败: " + ExceptionMessages.describe(e));
         }
     }
 
@@ -1786,7 +1787,7 @@ public class CounselorController {
             return ApiResponse.success(new ArrayList<>());
         } catch (Exception e) {
             log.error("获取班级活动失败: {}", e.getMessage(), e);
-            return ApiResponse.serverError("获取班级活动失败: " + e.getMessage());
+            return ApiResponse.serverError("获取班级活动失败: " + ExceptionMessages.describe(e));
         }
     }
 
@@ -1811,7 +1812,7 @@ public class CounselorController {
             return ApiResponse.success(detail);
         } catch (Exception e) {
             log.error("获取班级详情失败: {}", e.getMessage());
-            return ApiResponse.serverError("获取班级详情失败: " + e.getMessage());
+            return ApiResponse.serverError("获取班级详情失败: " + ExceptionMessages.describe(e));
         }
     }
 
@@ -1827,7 +1828,7 @@ public class CounselorController {
             return ApiResponse.success(students);
         } catch (Exception e) {
             log.error("获取班级学生失败: {}", e.getMessage());
-            return ApiResponse.serverError("获取班级学生失败: " + e.getMessage());
+            return ApiResponse.serverError("获取班级学生失败: " + ExceptionMessages.describe(e));
         }
     }
 
@@ -1881,7 +1882,7 @@ public class CounselorController {
             return ApiResponse.success(overview);
         } catch (Exception e) {
             log.error("获取班级预警失败: {}", e.getMessage());
-            return ApiResponse.serverError("获取班级预警失败: " + e.getMessage());
+            return ApiResponse.serverError("获取班级预警失败: " + ExceptionMessages.describe(e));
         }
     }
 
@@ -1920,7 +1921,7 @@ public class CounselorController {
             return ApiResponse.success(comparison);
         } catch (Exception e) {
             log.error("获取班级预警对比失败: {}", e.getMessage());
-            return ApiResponse.serverError("获取班级预警对比失败: " + e.getMessage());
+            return ApiResponse.serverError("获取班级预警对比失败: " + ExceptionMessages.describe(e));
         }
     }
 
