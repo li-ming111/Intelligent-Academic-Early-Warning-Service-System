@@ -272,6 +272,14 @@
           }
         },
         {
+          "path": "notifications",
+          "style": {
+            "navigationStyle": "custom",
+            "navigationBarTitleText": "通知中心",
+            "navigationBarBackgroundColor": "#2563eb"
+          }
+        },
+        {
           "path": "profile",
           "style": {
             "navigationStyle": "custom",

@@ -401,10 +401,14 @@ class ApiClient {
     /** ⚠️ 参数是 **profile id**。 */
     getStudentDetail: (profileId) => this._get(`/counselors/students/${profileId}`),
     /**
-     * 更新学生档案。⚠️ 请求体就是 `student_profile` 那张表：
-     * 能改的只有 name/gender/collegeId/majorId/classId（userId 与 studentId 也映射到列上，
-     * 但改学号等于改身份，不要碰）。实体上的 `phone`/`email` 标了 `@TableField(exist = false)`，
-     * **传了也不会落库**（通讯方式在 users 表，这里改不到）。
+     * 更新学生档案。⚠️ 请求体映射到 **`Student` 实体**（`@TableName("student_profile")`），
+     * 能落库的只有实体上真有的列：**name / collegeId / majorId / classId / privacyLevel**
+     * （另 `userId`/`studentId` 也在实体上，但改学号等于改身份，不要碰）。
+     * ⚠️ **`gender` 改不了**：`student_profile` 表里有 `gender` 列、班级花名册也显示它，
+     * 但 `Student` 实体**没有**这个字段 ⇒ 只发 `{gender}` 会被 `UpdateBodyGuard` 判成
+     * "没有任何可更新的字段"、回 **HTTP 400**（**不会**伪装成功）。要改性别得先给实体加字段。
+     * 实体上的 `phone`/`email` 标了 `@TableField(exist = false)`，**传了也不会落库**
+     * （通讯方式在 users 表，这里改不到）。
      */
     updateStudent: (profileId, data) => this._put(`/counselors/students/${profileId}`, data),
 
@@ -593,11 +597,45 @@ class ApiClient {
      */
     getAssistanceCompletion: (counselorId) => this._get(`/counselors/analytics/assistance-completion?counselor_id=${counselorId}`),
 
-    // `notifyStudents`（POST /counselors/students/notify）**已删除**：
-    // 实现只 `log.info` 后返回 {success:true}，一行库都不写、一条通知都不发。
-    // 同理 `/counselors/notifications/{history,templates,weekly-count}` 三个都是纯桩
-    // （history 恒空、templates 写死 3 条、weekly-count 恒 0），故通知中心整页不做。
-    // 要与学生沟通请用 `createCommunicationLog`（真写库）或预警处理意见。
+    // —— 通知中心（2026-10-14 起**有界面了**）——
+    //
+    // ⚠️ 这里原有一段注释说「`notifyStudents` 已删除（实现只 log.info、一行库都不写）」，
+    //    并据此下结论「三个通知端点都是纯桩，故通知中心整页不做」——
+    //    **那段话已经全部过期**，不要再照着它判断：
+    //      · `POST /counselors/students/notify` 现在是**真实现**：写 `communication_logs`
+    //        （辅导员侧发送记录）+ 通过 `studentNotifier` 投递到学生通知中心
+    //        （尊重学生的开关）。见 `CounselorNotificationServiceImpl.send`。
+    //      · `GET /counselors/notifications/history` 不再恒空 —— 读 `communication_logs` 里
+    //        通知类别的行，按「同一次群发」归并成 `{id,content,category,createdAt,recipientCount,studentIds}`。
+    //      · `GET /counselors/notifications/weekly-count` 不再恒 0 —— 按真实行数统计。
+    //      · `GET /counselors/notifications/templates` 现在**如实回空列表**（系统没有"可配置模板"
+    //        这个功能，原来硬编码的 3 条是假数据）—— 仍**不要接进 UI**。
+    //    PC 端 `CounselorNotifications.vue` 早就在用 history + notifyStudents 了。
+
+    /**
+     * 通知发送历史（辅导员视角）。
+     * 返回 `{total, page, size, list[], note}`；
+     * `list[] = {id, content, category('warning'|'important'|'normal'), createdAt, recipientCount, studentIds[]}`。
+     * ⚠️ `communication_logs` **没有"标题"列**，群发是每人一行、按「内容+时间戳」归并，
+     *    所以行里没有 title —— 页面不要摆标题列。
+     */
+    getNotificationHistory: (counselorId, page = 1, size = 10) =>
+      this._get(`/counselors/notifications/history?counselor_id=${counselorId}&page=${page}&size=${size}`),
+
+    /**
+     * 给名下学生发通知（**真写库 + 真投递**）。
+     * 体：`{counselorId(users.id), title?, content, type('warning'|'important'|'normal'), recipients:['all'|'warning-students']}`
+     * 返回 `{message, recipients, delivered, recorded, skipped[], undeliverable[], scopeNote}` ——
+     * **要按 `delivered` 如实汇报**（0 人送达不能弹「已发送」），`skipped`/`undeliverable` 是没送到的原因。
+     * `recipients:'warning-students'` 的口径 = 名下有 status=0（未处理）预警的学生。
+     */
+    notifyStudents: (data) => this._post('/counselors/students/notify', data),
+
+    /**
+     * 本周 / 上周 / 累计通知条数（辅导员视角）。返回 `{thisWeek, lastWeek, total, weekStart, note}`。
+     * 口径 = `communication_logs` 里通知类别的行数（**按人计**：一次群发发给 N 个学生算 N 条）。
+     */
+    getWeeklyNotificationCount: (counselorId) => this._get(`/counselors/notifications/weekly-count?counselor_id=${counselorId}`),
 
     /**
      * 账号级接口：`/users/**` 不分角色，随便什么 token 都能读，
