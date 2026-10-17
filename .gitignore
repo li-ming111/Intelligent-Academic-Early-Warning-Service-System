@@ -58,6 +58,29 @@ testsprite/local-check/*.prev
 # 跑通的流程，值得跟着仓库走）；只有 settings.local.json 是个人本地覆盖，不入库。
 .claude/settings.local.json
 
+# 第三方 skill 的**安装产物**不入库（2026-10-14）。`npx skills add <owner>/<repo>` 会把
+# 同一份内容铺到多个 agent 目录：真身落 `.agents/skills/`，`.claude|.codebuddy|.qoder/skills/`
+# 下再挂**符号链接**。
+# ⚠️ 本机 `core.symlinks=false` ⇒ git 不认这些链接，`git add` 会把它们当**普通文件**
+#    提交一整份副本（`.agents/` 7.2MB，darwin-skill 单条就 5.2MB；且每条 skill 自带
+#    14 个 png/gif 文档图）—— 上游一更新就整目录翻一遍。
+# ⇒ 复现性交给仓库根的 `skills-lock.json`（记 source + skillPath + sha256，**这一份要入库**），
+#    内容本身按需 `npx skills add` 复原。
+# 注意 `.agents/skills/testsprite-onboard|verify` 虽在同一目录，但它们是**本仓自己**写的、
+# 早已随 `.claude/skills/` 入库（实体目录，不是链接）——所以这条只点第三方那 5 条，
+# 不整目录忽略，免得把本仓自己的 skill 一起挡在门外。
+# ⚠️ 2026-10-14 复核：`.agents/skills/testsprite-onboard|verify` 是那两条的**逐字节副本**
+#    （`diff -rq` 无输出，30335 字节一致），规范位置已入库 ⇒ 整个 `.agents/` 都是可复原的
+#    安装产物，整目录忽略。本仓自写的 skill 规范位置一律是 `.claude/skills/`（**入库**）。
+.agents/
+.claude/skills/darwin-skill
+.claude/skills/finesse-ui
+.claude/skills/finesse-brief
+.claude/skills/frame-smith
+.claude/skills/finesse-term
+.qoder/skills/
+.codebuddy/skills/
+
 # 运行时产物目录（`export.dir` 默认 ./exports）：管理员导出 Excel、以及
 # 2026-10-02 起 mysqldump 生成的真备份 .sql 都落在这里。它们**不是**交付物 ——
 # 备份是"这台机器上当前那一刻的数据快照"，入库只会让仓库里躺着一份会和活库漂移的副本。

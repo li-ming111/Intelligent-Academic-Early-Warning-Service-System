@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "skills": {
+    "darwin-skill": {
+      "source": "alchaincyf/darwin-skill",
+      "sourceType": "github",
+      "skillPath": "SKILL.md",
+      "computedHash": "47b2ffa3009c41c0b2958c8353a7cfe59b1dac28ba13177704099c16450c57ec"
+    },
+    "finesse-brief": {
+      "source": "mouse-lin/finesse-brief",
+      "sourceType": "github",
+      "skillPath": "skills/finesse-brief/SKILL.md",
+      "computedHash": "4b8eea376da4204252427efc7832e493af772c9ed483d91832fe671a64c00ee7"
+    },
+    "finesse-term": {
+      "source": "mouse-lin/finesse-term",
+      "sourceType": "github",
+      "skillPath": "skills/finesse-term/SKILL.md",
+      "computedHash": "d5bd7a679bc861a2d7d6a7f534ec7a26741f6cb979153f3caa82f3e987de2d87"
+    },
+    "finesse-ui": {
+      "source": "mouse-lin/finesse-skill",
+      "sourceType": "github",
+      "skillPath": "skills/finesse-ui/SKILL.md",
+      "computedHash": "2b00fdd39d6a5dac292a105c318873c82ac508195bc5f4ffe7f23c394b1e3d88"
+    },
+    "frame-smith": {
+      "source": "mouse-lin/frame-smith",
+      "sourceType": "github",
+      "skillPath": "skills/frame-smith/SKILL.md",
+      "computedHash": "bfbf9f317f6c68f7dbefd7ca917f21664dd9ca72a7a9762c2301d0c53647fbf3"
+    }
+  }
+}
