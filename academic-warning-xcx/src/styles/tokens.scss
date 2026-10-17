@@ -15,8 +15,9 @@
 page {
   /* 默认取学生绿。角色页会在根节点覆盖，未登录页（登录/注册）用中性色。 */
   --color-primary: #{$role-student};
-  --color-primary-weak: #e8f5e9;
-  --gradient-hero: linear-gradient(135deg, #{$role-student}, #81c784);
+  --color-primary-weak: #{$role-student-weak};
+  /* 纵向深→主微渐变，视觉近似平涂（改版前是 135° 斜渐变）。 */
+  --gradient-hero: linear-gradient(180deg, #{$role-student-deep}, #{$role-student});
 
   /* 语义色：含义跨角色固定 */
   --color-success: #{$color-success};

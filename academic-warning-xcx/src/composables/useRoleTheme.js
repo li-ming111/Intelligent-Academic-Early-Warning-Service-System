@@ -11,19 +11,22 @@
 import { roleKey } from '@/constants/roles.js'
 
 /**
- * 五个角色的主色与渐变。
- * **与 PC 端 academic-warning-frontend/src/config/theme.js 取同一组值**，
- * 同一个角色在两端必须同色。
+ * 五个角色的主色、浅底与渐变。
+ * 与 uni.scss 的 $role-* / $role-*-deep / $role-*-weak **同一组值**（两处
+ * 声明：uni.scss 给编译期 SCSS 用，这里给运行期 JS 用——switch 等原生
+ * 组件只吃字面量色值）。改色必须两处一起改。
  *
- * collegeAdmin 是原先缺的一个：PC 端 theme.js 的 roleMap 没有 '5'，
- * 学院管理员落到 default 紫，与 admin 完全同色。这里显式给足五个。
+ * 2026-10-14 finesse 改版：色相五向拉开（绿/橙/靛/紫/青），弃用原先的
+ * Material/Tailwind 默认色（教师蓝 #2196f3 与辅导员蓝 #2563eb 不可分）。
+ * gradient 从 135° 双色斜渐变改为**纵向深→主微渐变**，视觉近似平涂色块。
+ * ⚠️ PC 端 theme.js 暂未同步：本轮只改小程序端出效果，认可后同步两端。
  */
 export const ROLE_THEME = {
-  student:      { primary: '#4caf50', weak: '#e8f5e9', gradient: 'linear-gradient(135deg, #4caf50, #81c784)' },
-  teacher:      { primary: '#2196f3', weak: '#e3f2fd', gradient: 'linear-gradient(135deg, #2196f3, #64b5f6)' },
-  counselor:    { primary: '#2563eb', weak: '#eff6ff', gradient: 'linear-gradient(135deg, #2563eb, #60a5fa)' },
-  admin:        { primary: '#667eea', weak: '#f0f2f8', gradient: 'linear-gradient(135deg, #667eea, #764ba2)' },
-  collegeAdmin: { primary: '#0ea5e9', weak: '#f0f9ff', gradient: 'linear-gradient(135deg, #0ea5e9, #38bdf8)' }
+  student:      { primary: '#217a46', deep: '#185c34', weak: '#e7f4ec', gradient: 'linear-gradient(180deg, #185c34 0%, #217a46 100%)' },
+  teacher:      { primary: '#c05621', deep: '#9c451a', weak: '#faeee4', gradient: 'linear-gradient(180deg, #9c451a 0%, #c05621 100%)' },
+  counselor:    { primary: '#4349b8', deep: '#353a94', weak: '#ebeefa', gradient: 'linear-gradient(180deg, #353a94 0%, #4349b8 100%)' },
+  admin:        { primary: '#6b3fa0', deep: '#563281', weak: '#f0eafb', gradient: 'linear-gradient(180deg, #563281 0%, #6b3fa0 100%)' },
+  collegeAdmin: { primary: '#0f7b8a', deep: '#0b606c', weak: '#e4f3f6', gradient: 'linear-gradient(180deg, #0b606c 0%, #0f7b8a 100%)' }
 }
 
 /** 取某角色的主题对象；识别不出返回 null（调用方可用默认值）。 */

@@ -155,7 +155,7 @@ const EMPTY = '—'
  * 色值从 ROLE_THEME 取 —— 原先这里手抄了一份五角色色表，
  * 改色要两处一起改，抄漏就是「同一个角色在设置页和其它页不同色」。
  */
-const switchColor = primaryOf(role, '#4caf50')
+const switchColor = primaryOf(role, '#217a46')
 
 const statusText = computed(() => dictText(USER_STATUS_TEXT, info.value.status))
 

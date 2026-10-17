@@ -69,7 +69,8 @@ defineProps({
   flex-shrink: 0;
   margin-right: $spacing-md;
   border-radius: 50%;
-  background: rgba(255, 255, 255, 0.25);
+  background: rgba(255, 255, 255, 0.16);
+  box-shadow: inset 0 0 0 1rpx rgba(255, 255, 255, 0.22);
   @include flex-center;
   font-size: $font-xl;
   font-weight: 600;
@@ -88,7 +89,7 @@ defineProps({
    靠继承迟早会出岔子。 */
 .hero-title {
   font-size: $font-2xl;
-  font-weight: 600;
+  font-weight: 700;
   line-height: 1.3;
   color: #fff;
 }
@@ -96,14 +97,14 @@ defineProps({
 .hero-sub {
   margin-top: $spacing-xs;
   font-size: $font-base;
-  color: rgba(255, 255, 255, 0.85);
+  color: rgba(255, 255, 255, 0.82);
 }
 
 .hero__stats {
   display: flex;
   margin-top: $spacing-xl;
   padding-top: $spacing-lg;
-  border-top: 1rpx solid rgba(255, 255, 255, 0.25);
+  border-top: 1rpx solid rgba(255, 255, 255, 0.2);
 }
 
 .hero__stat {
@@ -117,20 +118,23 @@ defineProps({
 
 /* 用 margin 画分隔线而不是 gap：小程序对 flex gap 有基础库/系统版本门槛 */
 .hero__stat--divided {
-  border-left: 1rpx solid rgba(255, 255, 255, 0.25);
+  border-left: 1rpx solid rgba(255, 255, 255, 0.18);
 }
 
+/* 统计数字是 hero 的主角：加大加粗 + 等宽数字。
+   tabular-nums 让 8 和 128 等宽，四个数排一排不会跳。 */
 .hero__stat-value {
-  font-size: $font-xl;
-  font-weight: 600;
+  font-size: $font-2xl;
+  font-weight: 700;
   color: #fff;
   line-height: 1.2;
+  font-variant-numeric: tabular-nums;
 }
 
 .hero__stat-label {
   margin-top: 6rpx;
   font-size: $font-xs;
-  color: rgba(255, 255, 255, 0.85);
+  color: rgba(255, 255, 255, 0.78);
   @include ellipsis;
   max-width: 100%;
 }

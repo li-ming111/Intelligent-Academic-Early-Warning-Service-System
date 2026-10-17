@@ -50,7 +50,7 @@ const props = defineProps({
 const stroke = computed(() => {
   if (props.color) return props.color
   const theme = themeOf(uni.getStorageSync('role'))
-  return (theme && theme.primary) || '#4caf50'
+  return (theme && theme.primary) || '#217a46'
 })
 
 const src = computed(() => {

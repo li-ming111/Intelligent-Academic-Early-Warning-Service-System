@@ -147,7 +147,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { apiClient, collegeAdminAPI } from '@/services/api.js'
 import { useUser, logout } from '@/composables/useUser.js'
-import { roleThemeStyle } from '@/composables/useRoleTheme.js'
+import { roleThemeStyle, primaryOf } from '@/composables/useRoleTheme.js'
 import { go } from '@/utils/navigate.js'
 
 const { userId, userName } = useUser()
@@ -185,7 +185,7 @@ const pwd = ref({ oldPassword: '', newPassword: '', confirm: '' })
 const changing = ref(false)
 
 /** switch 是原生组件，不解析 CSS 变量，color 必须给字面量（与 ROLE_THEME 同源） */
-const switchColor = '#0ea5e9'
+const switchColor = primaryOf('collegeAdmin', '#0f7b8a')
 
 const displayNameText = computed(() => profile.value.name || userName || '学院管理员')
 

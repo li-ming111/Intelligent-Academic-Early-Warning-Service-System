@@ -161,7 +161,7 @@
       <template #footer>
         <view class="acts">
           <view class="act" @tap="goWarnings">
-            <app-icon name="alert" :size="30" color="#0ea5e9" />
+            <app-icon name="alert" :size="30" />
             <text class="act__text">去预警总览</text>
           </view>
         </view>

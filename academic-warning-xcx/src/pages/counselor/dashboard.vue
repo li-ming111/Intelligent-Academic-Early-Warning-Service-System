@@ -185,7 +185,9 @@ const quickLinks = computed(() => [
   { label: '预警处理', icon: 'alert', url: '/pages/counselor/warnings', badge: pendingCount.value || '' },
   { label: '帮扶计划', icon: 'target', url: '/pages/counselor/assistance' },
   { label: '学生管理', icon: 'users', url: '/pages/counselor/students' },
-  { label: '数据分析', icon: 'chart', url: '/pages/counselor/analytics' }
+  { label: '数据分析', icon: 'chart', url: '/pages/counselor/analytics' },
+  // 2026-10-14：通知中心先前在小程序端**没有入口**（PC 端有页面）。后端 history/notify 都已是真实现。
+  { label: '通知中心', icon: 'bell', url: '/pages/counselor/notifications' }
 ])
 
 function numOr(v) {

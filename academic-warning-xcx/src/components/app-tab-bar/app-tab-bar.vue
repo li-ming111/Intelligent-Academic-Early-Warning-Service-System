@@ -79,7 +79,7 @@ const activeOverride = ref('')
 
 const role = computed(() => roleKey(props.role || uni.getStorageSync('role')))
 const tabs = computed(() => TAB_SETS[role.value] || [])
-const primary = computed(() => (themeOf(role.value) || {}).primary || '#4caf50')
+const primary = computed(() => (themeOf(role.value) || {}).primary || '#217a46')
 
 /**
  * 由当前页面路由推导高亮项，而不是让每个页面手传 `current`。

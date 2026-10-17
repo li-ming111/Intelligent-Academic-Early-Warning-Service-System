@@ -179,7 +179,7 @@ const pwd = ref({ oldPassword: '', newPassword: '', confirm: '' })
 const changing = ref(false)
 
 /** switch 是原生组件，不解析 CSS 变量，color 必须给字面量（色值取 ROLE_THEME） */
-const switchColor = primaryOf(role, '#2196f3')
+const switchColor = primaryOf(role, '#c05621')
 
 const displayNameText = computed(() => profile.value.name || userName || '教师')
 

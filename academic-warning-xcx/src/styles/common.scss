@@ -10,6 +10,9 @@ page {
   font-size: $font-base;
   font-family: -apple-system, BlinkMacSystemFont, 'Helvetica Neue', 'PingFang SC', sans-serif;
   -webkit-font-smoothing: antialiased;
+  /* 全站数字等宽：成绩/学分/GPA 这类并排比较的数字，比例字宽会让
+     "8" 和 "128" 视觉重量不同。对中文无影响。 */
+  font-variant-numeric: tabular-nums;
 }
 
 view,
@@ -141,6 +144,11 @@ textarea {
   color: #fff;
   font-size: $font-md;
   font-weight: 500;
+}
+
+/* 唯一允许的动效：按压反馈。松手即回，无过渡动画。 */
+.btn-primary:active {
+  opacity: 0.82;
 }
 
 .btn-primary--disabled {

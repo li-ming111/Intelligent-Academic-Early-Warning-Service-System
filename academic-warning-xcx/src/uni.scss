@@ -29,24 +29,43 @@ $level-1: #f59e0b; /* 轻度 */
 $level-2: #f97316; /* 中度 */
 $level-3: #ef4444; /* 严重 */
 
-/* ---------- 中性色 ---------- */
-$color-bg: #f5f5f7;
-$color-card: #ffffff;
+/* ---------- 中性色 ----------
+   卡片不再用纯白：#fdfdfb 带一点暖调，落在冷调 #f4f4f6 底上，
+   「白色是卡片」靠色温差而不是靠纯白猛料 —— 纯白在浅灰底上是
+   最廉价的那种"亮"。 */
+$color-bg: #f4f4f6;
+$color-card: #fdfdfb;
 $color-text: #1d1d1f;
 $color-text-secondary: #86868b;
 $color-text-hint: #aeaeb2;
 $color-border: #e5e5ea;
-$color-divider: #f0f0f2;
+$color-divider: #efeff1;
 
 /* ---------- 角色主色 ----------
-   与 PC 端 academic-warning-frontend/src/config/theme.js 取同一组值，
-   两端同一角色必须同色。college-admin 在 PC 端曾经缺失、落到 default 紫
-   与 admin 撞色，这里显式给足五个角色。 */
-$role-student: #4caf50;
-$role-teacher: #2196f3;
-$role-counselor: #2563eb;
-$role-admin: #667eea;
-$role-college-admin: #0ea5e9;
+   2026-10-14 finesse 改版：色相五向拉开（绿/橙/靛/紫/青），
+   换掉原先的 Material/Tailwind 默认色——尤其教师 #2196f3 与辅导员
+   #2563eb 两个几乎不可分的蓝。**每色都验过白字对比度 ≥ 4.4:1**
+   （hero 头是纯色底白字）。
+   ⚠️ 与 PC 端 theme.js 暂时**不同源**：本次只改小程序端看效果，
+   用户认可后需把同一组值同步回 PC 端，两端同色的约定仍然成立。
+   深色变体（$role-*-deep）用于纵向微渐变的起点，视觉近似平涂。 */
+$role-student: #217a46;
+$role-student-deep: #185c34;
+$role-teacher: #c05621;
+$role-teacher-deep: #9c451a;
+$role-counselor: #4349b8;
+$role-counselor-deep: #353a94;
+$role-admin: #6b3fa0;
+$role-admin-deep: #563281;
+$role-college-admin: #0f7b8a;
+$role-college-admin-deep: #0b606c;
+
+/* 角色浅底（weak）：与上方主色成对，useRoleTheme.js 里同一组值。 */
+$role-student-weak: #e7f4ec;
+$role-teacher-weak: #faeee4;
+$role-counselor-weak: #ebeefa;
+$role-admin-weak: #f0eafb;
+$role-college-admin-weak: #e4f3f6;
 
 /* ---------- 未登录页（登录 / 注册）的品牌色 ----------
    登录页不属于任何角色，但不能因此自成一个调色板。
@@ -88,10 +107,12 @@ $font-lg: 32rpx;
 $font-xl: 36rpx;
 $font-2xl: 44rpx;
 
-/* ---------- 阴影 ---------- */
-$shadow-card: 0 2rpx 8rpx rgba(0, 0, 0, 0.04);
-$shadow-raised: 0 4rpx 16rpx rgba(0, 0, 0, 0.06);
-$shadow-overlay: 0 8rpx 32rpx rgba(0, 0, 0, 0.1);
+/* ---------- 阴影 ----------
+   阴影统一染一点暖调深色（28,26,22），比纯黑 rgba(0,0,0) 柔；
+   卡片阴影刻意轻，层级感主要靠底色/卡片色差 + hairline。 */
+$shadow-card: 0 2rpx 8rpx rgba(28, 26, 22, 0.05);
+$shadow-raised: 0 4rpx 16rpx rgba(28, 26, 22, 0.07);
+$shadow-overlay: 0 8rpx 32rpx rgba(28, 26, 22, 0.12);
 
 /* ---------- 层级 ---------- */
 $z-base: 10;
@@ -120,10 +141,13 @@ $tap-min: 88rpx;
   -webkit-line-clamp: $lines;
 }
 
-/* 卡片 */
+/* 卡片：暖白底 + hairline 描边 + 轻阴影。
+   hairline（半透明深色 1rpx）让卡片在浅灰底上有"切出来"的边缘，
+   阴影只负责浮起，不负责描形。 */
 @mixin card {
   background: $color-card;
   border-radius: $radius-lg;
+  border: 1rpx solid rgba(28, 26, 22, 0.045);
   box-shadow: $shadow-card;
 }
 
