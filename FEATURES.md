@@ -1733,5 +1733,66 @@ W45 把 340 处 `ApiResponse.error(前缀 + e.getMessage())` 统一改成 `Excep
 
 ---
 
+### 8.23 ⭐ 活库 vs 种子「逐格实为一致」：清 W42–W46 探针残迹 + 订正 W43 的 8 小时时区错写（2026-10-17 W47）
+
+**缘起**：W41（10-13）清库并重生成根种子后，W42→W46 六轮走查又各自留下残留。
+先按"行数"扫（**[W47-A]**）：audit_logs / notifications / score_audit_log / export_history / login_logs
+5 张表多了探针行（W41 那版脚本只清「悬空行」，探针行 id 不悬空 ⇒ 全留下了；
+且 `verify_invariants.py` 只查「自洽/不悬空」，**绿色 ≠ 数据干净**）。
+清完 5 表回种子行数（apply/rollback：`db_backups/w47_dataclean_20261017_*.sql`）。
+
+**但真正的发现是第二层 —— 内容漂移（[W47-B]）**：把**已入库种子**逐行逐列与活库对照，
+发现 9 行 15 个格子不同。关键是**先破了时区幻觉，才看得清**：
+
+> ⚠️ **先别信"渲染值"**。同一个 TIMESTAMP，在 `+00:00` 会话读出 `06:31:54`、在 `+08:00` 会话
+> 读出 `14:31:54`。前期我拿 `seed` 与 `live` 的字面量对比，得到的"差异"里**混了一堆纯 8 小时偏移**，
+> 差点把"种子那一侧"当成脏数据去改。
+> **判据必须钉在存储 epoch**（`UNIX_TIMESTAMP()`，与会话时区无关）：
+> 全库 1665 个时间格子里**恰有 9 格** epoch 不同 ⇒ 这才是真实的改动面。
+
+破幻之后，15 个格子分两组，两类**都该还原到种子**：
+
+| 组 | 格子 | 性质 | 证据 |
+|---|---|---|---|
+| **A. 时区错写**（早 8h） | `users.27.updated_at`、`student_profile.3.updated_at`、`assistance_plans.1001.updated_at`、`notifications.1002.updated_at` | W43 的 `tmp/w43/cleanup.sql` 先用 dump 里的 **UTC 字面量**在 +08 会话写回，`fix_tz.sql` 又在 +00 会话重写同一字面量 ⇒ 两步下来写早了 8h | ⭐ **批次不一致**：users 表里 **28 个账号共享同一字面量与 epoch `1789568596`**（同一注册批），**唯独 id=27(司明) 早 8 小时** ⇒ 活库那格才离群，种子是对的 |
+| **B. 探针残迹** | `academic_warning.395.updated_by/updated_at`、`feedback.1.update_time`、`teacher_profile.1.updated_at` | W44 等探针在**真实演示行**上 touch 了 `updated_at`；探针只复原业务列、没复原 `updated_at` | `feedback.1` / `teacher_profile.1` 的残值 = `2026-10-14 02:54:04` **本地**，正是 W44 写探针的运行时刻 |
+
+**顺带查清的 4 个「语义漂移」其实是 W42/W43 探针改过业务列**（都在探针的 cleanup 清单里，
+只因 cleanup 的 `updated_at` 写错而整行 md5 仍不等）：`notifications.1003`(is_read/is_deleted=1)、
+`subscription_preferences.1`(subscribe_medium/push_email=0)、`academic_warning.395.updated_by='10001'`；
+`users.27.password` 的哈希不同 **不是改口令** —— 两版哈希都能过 `123456`（BCrypt **随机盐**，
+同口令不同哈希），W42 `supp_probe.py` 做过"改密码→改回"往返，改的是盐。
+
+**处理**：`db_backups/w47b_tzrestore_20261017_apply.sql`（15 格写回种子值，`SET time_zone='+00:00'`
+与字面量配套）/ `..._rollback.sql`；备份 `..._full_20261017_2203_before_w47b_tzrestore.sql`。
+
+**判据全绿**（跑完逐条核）：
+
+| 判据 | 结果 |
+|---|---|
+| **种子 vs 活库逐格比对**（全 49 表，epoch 口径） | **0 差异**（改前 9 行 15 格） |
+| 5 表行数回种子基线 | audit_logs **2** / notifications **8** / score_audit_log **1** / export_history **27** / login_logs **342** |
+| 挂科门数基线 | **3:3, 13:2, 20:3, 26:3** 不变 |
+| `verify_invariants.py` | **41/41** |
+| `tmp/w40/xcheck.py` | **8/8** |
+| 探针残留文本全库扫描 | **0 命中** |
+| 口令核验 | `users.27` 两版哈希都匹配 `123456` |
+| **apply/rollback 往返** | 回滚回到改动前活库值、再 apply 回种子基线，**逐格复核对上** |
+
+**⭐ 结论：根种子 `academic_warning_system.sql` 本来就是对的，不需要重生成** ——
+漂的是活库，不是种子。这也再次印证「**说法 vs 事实**」：台账此前默认"活库≈种子"，
+但那层「逐格一致」从没被 epoch 口径核过。
+
+**⭐ 顺带修掉一个会反复咬人的坑**：种子的文件头声明 `SET TIME_ZONE='+00:00'`、字面量却是 UTC，
+**两条必须配套读**（`mysql < 本文件` 会自动执行文件头那条）。已在种子头部加"🕐 时区口径"说明，
+并标注 W43 那次就是**在 +08 会话里写这些字面量**才错 8 小时 —— 下轮别再踩。
+
+**探针产物**：`tmp/w47/`（`gen_dataclean.py` / `rowdiff.py` / `classify.py` / `diff_full.py` /
+`epochdiff.py` / `epochdiff2.py` / `genfix.py` / `scan_probe2.py`）；
+本轮 4 个临时库（`aws_seedcheck` / `aws_seedlocal` / `aws_w41` / `aws_fix1x_*`）已全部 DROP，收尾只剩
+`academic_warning_system`。**红线遵守**：改动前先 `mysqldump` 快照；apply/rollback 成对且往返实测。
+
+---
+
 > **文档维护者：** 系统自动生成  
-> **最后更新：** 2026-10-14（W46）
+> **最后更新：** 2026-10-17（W47）

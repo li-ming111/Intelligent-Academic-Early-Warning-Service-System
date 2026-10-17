@@ -27,6 +27,14 @@
 --    `academic-common/src/main/resources/init_schema.sql` + `init_data.sql`。
 --    本文件是"活库长什么样"的人工参考件。
 --
+-- 🕐 **时区口径（务必按原样加载，别改）**：本文件是 mysqldump 默认导出 —— 文件头声明
+--    `/*!40103 SET TIME_ZONE='+00:00' */`，且所有 TIMESTAMP 字面量都是 **UTC**。
+--    两条必须配套：`mysql -D academic_warning_system < 本文件` 会执行文件头那条指令，
+--    于是字面量按 +00 解析，还原出与活库**逐 epoch 相同**的 TIMESTAMP。
+--    ⛔ 若在 +08 会话里按本地时间解析这些字面量（或手工把某行时间在 +08 下写回），
+--       **每个 TIMESTAMP 都会整体偏移 8 小时** —— W43 那次 cleanup/fix_tz 正是这么把
+--       若干 TIMESTAMP 写早了 8 小时（见 FEATURES §8.23），W47B 才把活库还原回来。
+--
 -- ⚠️ 含 `DROP TABLE IF EXISTS`，**会删表**。只用于重建演示库，不要对着要保留的库跑。
 -- ========================================
 
