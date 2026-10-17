@@ -1267,12 +1267,471 @@ teacher-service 的 `ScoreRecordMapper`（名字是历史残留）里每一条 S
 
 收尾 `cp` 从备份还原，`diff` 确认字节一致。
 
-**未修边界**：① 磁盘上那份未跟踪的 `db_backups/_verify_invariants.txt`（2026-10-03 的旧产物）
-**没删**，它继续留着会误导下一个人；根治办法是让脚本把它写进一个明确标日期的路径，属独立改动，未做。
+**未修边界**：① ~~磁盘上那份未跟踪的 `db_backups/_verify_invariants.txt`（2026-10-03 的旧产物）
+**没删**，它继续留着会误导下一个人；根治办法是让脚本把它写进一个明确标日期的路径，属独立改动，未做。~~
+⇒ **已收口（2026-10-13 W40）**：脚本改写成 `_verify_invariants_<YYYYMMDD>.txt`，并在正文顶部记一行
+`# 生成于 <时刻>`，旧的那份固定名产物已删。这样"这次跑的"与"上次留的"在文件名上就分得开，
+不会再出现"读到的文件是上一轮写的"。
 ② 分支从未推送（无 upstream），所以历史提交 `dbdabb69` 的信息里那句"42/42"**改不掉**（改它要重写
 `fe8c468d` 的哈希，而 §8.14 正以 `fe8c468d` 作为"删文件取回点"）⇒ 只能在本节如实订正，未 amend。
 
 ---
 
+### 8.17 「只留真实数据」：清掉历轮探针在演示库里的残留（2026-10-13 W41）
+
+**缘起**：演示前复查"所有用户端数据是否准确"，发现**绿色不变量全过，但管理员端能看到几处探针残留** ——
+它们是历轮 W8/W26/W32/W33 的写路径/权限探针在演示库里留下的行，与业务无关却出现在页面上。
+
+**清掉的（每处都先备份、可整套回滚）**：
+
+| 表 | 删掉的行 | 为什么 | 用户端可见性 |
+|---|---|---|---|
+| `audit_logs` | 83 → **2** | 81 行是探针审计：反复"创建/删除 admin_tasks「probe-任务A/B」"、`W32PRBxcx1/nocol1` 建号、`W33PRB_login` / `W33UI_probe` 改角色、`ZZTEST911` / `uiprobe` 建删号。**只留 id 41/59**（两条真实"通过/驳回成绩申诉"复核） | **管理员「个人设置 → 操作日志」直接看得到** |
+| `messages` | 4 → **0** | 全是"写路径验证-临时广播"（sender=1 → 学院管理员 56/57） | **管理员「消息管理」直接看得到** |
+| `notifications` | 9 → **8** | 删 id 1008（title/content 都是「你好」、type=class） | 学生（司明）通知中心 |
+| `communication_logs` | 4 → **3** | 删 id 2004（category=normal、内容「你好」） | 辅导员对司明的沟通记录 |
+| `login_logs` | 358 → **342** | 删 16 行指向**已删探针账号**的悬空 row（`uiprobetmp`/`probe_w26_*`/`W33PRB_login`） | 不直接可见（账号已删），但属悬空数据 |
+
+备份 `db_backups/academic_warning_system_full_20261013_1023_before_dataclean.sql`，
+应用 / 回滚 `db_backups/dataclean_20261013_{apply,rollback}.sql`（回滚脚本**已在事务里验证**能还原到 83 行再回退）。
+
+**判据（全部实测）**：清理后 `verify_invariants.py` **41/41**；`audit_db.py` 的 `login_logs.user_id` 悬空 **16 → 0**；
+跨端核对脚本（`tmp/w40/xcheck.py`）**8/8** 通过 —— 预警 `fail_count` 逐行 == 权威 `scores` 口径的挂科门数、
+预警通知收件人 == 预警学生账号、已处理申诉都有结论通知、教师课程无"有课无成绩"、帮扶计划 `counselor_id` 都能解析到 `users`。
+
+**顺带核过的"看着像但其实是好的"**（免得下一个人再查一遍）：`communication_record` 的措辞都经得起追问 ——
+「邱琳紫各科均在 80 以上」实测为她 10 门权威成绩**最低 80**；「韩坤数据结构不理想」实测其数据结构 **59** 分确为挂科。
+`feedbacks`/`feedback` 引用的学生与成绩对得上。
+
+**同步更新**：根种子 `academic_warning_system.sql` 已按清理后的活库整份重生（49 表、逐表行数与活库一致）。
+⚠️ 变的是**数据**不是**结构**：表集/列集/外键仍与 `init_schema.sql` 完全一致（496 列字节级比对通过）。
+
+**未修边界**：① 历史迁移留下的 `*_bak_20260916` 等 21 张备份表仍在活库里（**不在**种子文件里，不影响页面）；
+② 若干"探针"账号行（如 `W33PRB_login` wildcard 登录留下的 `login_logs`）本就随账号删除而悬空，本轮按"悬空即清"处理。
+
+---
+
+### 8.18 ⭐ 「有一个已登录用户可对他人账号写入」的两个端点（2026-10-13 W42，已修）
+
+**缘起**：把学生端 64 个端点逐条打一遍（读 44 / 写 17），读全过、写也全部真写库 —— 但**顺带查出两个越权写**。
+
+**为什么前面几轮没发现**：W11 收的是「属主 id 型」参数（路径里直接给 `users.id` / `student_profile.id`），
+W12 收的是「资源 id 型」（一条**已存在**的申诉 / 通知 / 计划，查一次库才知道主人）。这两轮的闸都只装在
+**读**和**操作已有资源**上。而这两个端点做的是**创建新行** —— 库里没有"先查一次库"可查，于是**两个都没有任何归属校验**。
+
+| 端点 | 修前判据 | 实测复现（经网关） |
+|---|---|---|
+| `POST /students/appeals/submit`（及旧路径 `/students/appeal`） | 签名 `submitAppeal(@RequestBody Object request)` —— 没有 `HttpServletRequest`，身份**只取自请求体的 `studentId`** | 邱琳紫（`users.id=30`）发 `{studentId:27,…}` ⇒ **HTTP 200**，`score_appeals` 真的多出一条挂在司明名下的申诉（`id=10`） |
+| `POST /students/evaluations/submit` | 服务层拿请求体的 `studentId` 去和 plan 比（`StudentServiceImpl:1756`），**从不看登录人** ⇒ 自证 | 同一人发 `{planId:3, studentId:52}` ⇒ **HTTP 200**，写出挂在**张健**帮扶计划上的评价（`assistance_evaluations.id=3`） |
+
+**修法（两条闸的判据形状刻意不同）**：
+- **申诉**：请求体 `studentId` 认的是 **`users.id`**（PC 五处提交点发的都是它、小程序发 `userId`），
+  故**直接与网关注入的登录人比一次**。⚠️ **刻意不做"换算成档案 id 再比"** —— 本仓两套 id 空间大量重叠，
+  一旦换算，伪造者只要把 `studentId` 填成"档案 id 恰好等于他 userId"的受害者就能绕过（W11/W12 反复强调过的坑）。
+- **评价**：判据是 **`planId` 指的那份计划是不是我的**（复用既有的 `denyUnlessMyPlan`）。请求体 `studentId` **不参与**
+  —— 它是自证的，改它就能改结论；小程序提交时**根本不发 `studentId`**，这一维也是唯一对 PC + 小程序两端都成立的。
+- 两处都：缺参数时**不在这里拦**（交给服务层按既有语义回 `{error:"缺少…"}`，HTTP 200）；
+  管理员（`X-Role:4`）旁路放行；被拒形状 = **HTTP 200 + body `code:403`**（前端 axios 因此走 reject 分支，页面提示失败）。
+
+**判据（全部实测）**：
+- 新增 `StudentControllerSubmitOwnershipTest` **14 例**（`student-service` 全量 **90 例**、全量 reactor **672 例 / 0 失败**）。
+- **反向打靶**（证明断言承重，不是"恒绿"）：M1 把申诉闸的比对改成恒放行 ⇒ **恰好 4 条申诉断言变红**（越权/旧路径/无身份/空间负对照），评价那 8 条仍绿；
+  M2 把评价闸整段拆掉 ⇒ **恰好 5 条评价断言变红**，申诉仍绿。收尾 `diff` 确认字节级还原、`grep SABOTAGE` 零残留。
+- **端到端复打**（string-service 直连 :8079、自补 `X-User-Id`/`X-Role`，Nacos 当时已被系统回收）：`tmp/w42/verify_fix.py` **11/11**
+  —— A1/B1 越权回 `code:403` **且打前打后库里行数不变**；A2/B2 本人提交成功**且库里真的多一行**；A3 旧路径同闸；A4 管理员旁路；B3 不带 `studentId` 也放行。
+- 探针行已全删（申诉 12/13、评价 `W42验证%`），`verify_invariants.py` **41/0**。
+
+**未修边界**：① 评价端点的闸只在 `planId` 能解析出来时生效；`planId` 缺失/非数字时落到服务层（它会回「缺少 planId」）——
+这是有意的，闸只回答"是不是你"，不接管参数校验。② 本轮只动了 `student-service` 这两个端点；辅导员端/教师端是否有同类"创建型"端点未加闸，**未逐个核**。
+
+---
+
+### 8.19 学生端 63 个端点全量走查 + `/students/list` 补闸（2026-10-13 W43）
+
+**缘起**：W42 修完两个"创建型"越权端点后，把 `StudentController` **全部 63 个 handler**（读 41 / 写 22）
+逐条打了一遍 —— 经网关以司明（users.id=27）身份，每条写**回库核对**，每条都配越权负向对照。
+**结论：63 条里只有 1 条真缺陷**（下表），其余 62 条要么正常，要么是**我的探针口径错了**（见"探针自身踩的坑"）。
+
+| 端点 | 修前 | 实测复现（学生 邱琳紫 users.id=30） |
+|---|---|---|
+| `GET /students/list` | **全 `StudentController` 里唯一没有任何归属闸的读端点** | ⇒ HTTP 200 + **24 行** `student_profile` 整行（**姓名 / 学号 / 性别 / 班级 / 学院**），且 `collegeId` 缺省时是"全库" |
+| `GET /students/count-by-college` | 同族，管理口径，无闸 | ⇒ 200 + `24` |
+
+**为什么它此前"看起来有闸"**：`/students/**` 其余 61 条都能写归属闸（比路径 `{id}` 是不是登录人，或查一次库看资源主人是谁）；
+这两条**没有可比的对象** —— 服务层直接回 `student_profile` 整表，于是当时**全靠网关**那条
+`path.startsWith(PREFIX_STUDENT) && role != ROLE_STUDENT`。那条对**任何一个学生**都是放行的（学生的家就是 `/api/students`）。
+
+**修法**：两条都补 `isAdminOrCollegeAdmin`（放行 **4 / 5**；**刻意不放教师** —— 教师看名单走 `/teachers/students/{id}`）。
+后端唯一调用方是 admin-service 的 Feign `getStudentsByCollege(null)`（`AdminController.getAllStudents`，请求头透传 role=4）；
+**前端两侧零调用方**（PC/小程序都没有这条封装；小程序 `services/api.js:811` 那个 `getStudents: () => '/admin/students'` 从无页面在用，
+W16 已记）。被拒形状 = **HTTP 200 + body `code:403`**；**缺身份头**则是**下游 Spring Security 的 403 空体**（拦在映射之前）—— 两种要分开断言。
+
+**判据**：
+- 新增 `StudentControllerAdminFaceGuardTest` **9 例**（student-service 全量 **99 例**；全量 reactor **681 例 / 0 失败**，W42 是 672 ⇒ +9）。
+- **反向打靶两个方向各一条承重断言**：M1 把闸改成恒真 ⇒ **恰好 6 条拒绝断言红**（学生/教师/辅导员/缺头 × 两个端点）、3 条放行断言仍绿；
+  M2 改成恒拒 ⇒ **恰好 3 条放行断言红**、6 条拒绝仍绿。收尾 `diff` 字节级还原、`SABOTAGE` 零残留。
+- **端到端**（重编 jar 重起 :8079、直连自补 `X-User-Id`/`X-Role`）：`tmp/w43/guard_e2e.py` **12/12**
+  —— 学生/教师/辅导员/自定义角色 ⇒ 403；缺头 ⇒ 403 空体；管理员/学院管理员 ⇒ 200 + 真 24 行 / 真 24。
+- **经网关闭环**（**跑的就是修好的那份 jar** —— 进程启动 16:39:01 晚于 jar 构建 16:38:52，用 `Get-CimInstance Win32_Process` 核过，不是"旧 jar 上量新分支"）：
+  `tmp/w43/gw_recheck.py` **12/12** —— 学生 司明(users.id=27) 走真登录拿 JWT ⇒ 打这两条 **HTTP 200 + body `code:403`**
+  （`仅管理员可查看学生名册 / 仅管理员可查看学院统计`），同时 **9 条正对照**（档案 / 成绩 29 行 / 预警 1 条 / 通知中心 / 订阅(档案口径) / 订阅偏好 / 设置 / 申诉 2 条 / 班级排名）
+  全部仍 200 且非空 ⇒ 证明闸**只收紧了该收紧的两条、没有误伤学生自助面**。
+
+**探针自身踩的坑（记下来，避免下次误报成缺陷）**：
+① **`/auth/login` 前面还有一道服务端验证码**（W1.12）：不带 `captchaId`/`captcha` 一律回 `code:500 验证码错误或已过期`，
+而**签发接口给的键名是 `captchaId` / `captchaText`**（不是 `id`/`code`），登录体里却叫 `captcha` ⇒ 我第一版探针连拿两次 401「缺少认证信息」，
+一度误读成"网关把学生拦了"。凡要真登录的探针，先 `GET /auth/captcha` 再回填，且**键名要抄接口的返回体**（"让被测方替你挑键名"的第 5 次）。
+② **登录信封**：`POST /auth/login` 无论成败外层都是 `code:200, success:true`，真结果只在 `data`（成功有 `data.token`，失败只有 `data.message`，
+`Login.vue:223` 有原注释）⇒ 我第一版按 `success` 判，把"改密码后旧口令仍能登录"报成缺陷，**实际口令已正确改掉、也正确复原**（新旧哈希不等是 BCrypt 每次加盐，不是没写库）。
+③ **`mysqldump` 的 TIMESTAMP 按 UTC 导出**（dump 头 `SET TIME_ZONE='+00:00'`），而应用/CLI 是 +08:00 ⇒ 拿 dump 字面量在本地会话里 `UPDATE updated_at` 会**写早 8 小时**
+（识破：一条**没被任何探针碰过**的 `score_appeals.id=8` 也差 8h）⇒ 复原要在 `SET time_zone='+00:00'` 下重跑。
+④ **越权被拒的形状比判据宽**：帮扶进度越权回 **HTTP 400 + `code:500`**（服务层 `IllegalArgumentException` 走 `GlobalExceptionHandler`，非 403），
+申诉越权回 200 + `code:403` ⇒ 只断言 403 会把"被拒"读成 FAIL（两条真值都是**被拒且未写库**，已复核确认）。
+⑤ **"HTTP 403 + 空体"在本轮出现了两次、但成因不同**：缺身份头时是**下游 Spring Security** 拦在映射之前（不是我的闸），
+而我这条闸只会回 **200 + body `code:403`** ⇒ 判"闸生效"必须看 **body 的 `code`**，只看 HTTP 状态码会把两者混成一体。
+⑥ **判"跑的是新代码"要拿进程启动时刻对 jar 构建时刻**：本轮用 `Get-CimInstance Win32_Process` 取 `CreationDate`
+（16:39:01）与 `target/*.jar` mtime（16:38:52）比，才敢说经网关闭环那 12 条量的是**修好的那份**。
+⑦ `student_profile.privacy_level` 上次被探针留在 2，本轮复原前先看**备份真值**是 0（不是探针读到的 2）。
+
+**未修边界**：① 同族的 `GET /students/{id}/class-info`、`class-members`、`class-ranking` **刻意不动** ——
+前者是内容很短的个人摘要（`{name, studentNo, rankInClass:"21/24", totalStudents}`），后两者是**同班公开面**（`utils/classRanking.js` 已记这是有意设计）；
+它们都按 `{studentId}` 属主闸（他人打 ⇒ 403，实测过）。② `college-service` 的按学院计数**已不再走** student-service（第十八轮删了那三个 Feign），
+故 `count-by-college` 现在只有 admin-service 一个后端调用方；`/students/list` 同。
+
+---
+
+### 8.20 教师端 57 个 handler 全量走查 + 5 条越权收口（2026-10-14 W44）
+
+**缘起**：接着 W43（学生端 63 条）把 `TeacherController` **全部 57 个 handler**（读 38 / 写 19）逐条打了一遍 ——
+经网关以于凤海（`users.id=29`，`teacher_profile.id=1`）身份，每条写**回库核对**，每条配越权负向对照。
+**结论：57 条里 1 条真缺陷 + 4 条同族**，都在下表；其余是全绿或**探针口径错了**（见"探针自身踩的坑"）。
+
+| 端点 | 修前 | 实测复现（教师 于凤海 `users.id=29`） |
+|---|---|---|
+| `PUT /teachers/{id}` | **整个方法没有 `HttpServletRequest`、没有闸**（对比同路径 `GET /{id}` 有 `isSelfProfile`、`DELETE /{id}` 有 `isAdmin`） | body `{"name":"W44越权改名"}` ⇒ **200 + `code:200`，真写库**；打的是**别人**的 `teacher_profile.id=990002` |
+| `POST /teachers/communications` | `teacherId` 取自请求体，**照单全收** | body `teacherId=18` ⇒ 以**另一位教师**的名义落 `communication_record` |
+| `POST /teachers/class-management/apply` | 同上 | body `teacherId=18` ⇒ 以他人名义落 `teacher_class_application` |
+| `POST /teachers/class-management/cancel` | 同上（**三条里最重 —— 它当场写库**） | body `teacherId=18` ⇒ **真把班里 `teacher_id` 置空**，解除的是**别人的**班级管理 |
+| `POST /teachers/courses/assign` | 零调用方、无闸，`teacher_course.teacher_id` 是 **`teacher_profile.id`** | body `teacherId=2` ⇒ 建出 `16\|2\|7`（**以别人的课程关系名义**） |
+
+**为什么这几条此前"看起来没问题"**：辅导员侧的同名双胞胎（`CounselorController.java:904/946` 的 `applyForClass`/`cancelClassManagement`）
+**W13 就装了 `denyUnlessSelfCounselor`**，教师侧这两条**从来没跟上** —— 这是"同一个业务在两套角色下各写一遍"留下的偏移，
+而不是有意设计。`PUT /{id}` 那条更简单：它是**零调用方**（PC/小程序两侧都没有封装），前端改教师资料走的是
+user-service `createTeacherProfile` 和 admin-service `PUT /admin/teachers/{id}`，所以这条一直没人替它补闸。
+
+**修法**：
+- **删** `PUT /teachers/{id}` + `POST /teachers/courses/assign`（**零调用方 ⇒ 删**，不给无闸端点补闸、也不留"能力在、没人能到"的死代码）。
+  两条都在原位置留注释块，写清"删了什么、谁在替它做这件事、原缺口长什么样"（`TeacherController.java:149` / `:213`），
+  并在 service 接口与实现里同步删掉 `updateProfile` / `assignCourse`（不留无人调用的方法）。
+- **补 `isSelf`**（比 `users.id`，**不是** `teacher_profile.id`）到三条写端点：`communications` / `class-management/apply` / `class-management/cancel`。
+  拒绝形状 = **HTTP 200 + body `code:403`**（控制器业务拒绝），不是 403 空体。
+- ⚠️ `cancelClassManagement` 的 service 层**本来就有一句** `classInfo.getTeacherId().equals(realTeacherId)`，看着像闸
+  —— 它是**恒真的重言式**：`realTeacherId` 就是**从请求体解析出来的那个 `teacherId`**（自己跟自己比）⇒ 补闸必须补在**控制器**，
+  比的是**网关身份**（`getUserIdFromGateway`）而不是请求体。这是"闸装反/闸是空壳"的又一个变体。
+
+**判据**：
+- `TeacherControllerResourceOwnershipTest` 新增 **7 例**（`saveCommunication_*` ×3、`submitClassApplication_othersName_denied`、
+  `cancelClassManagement_*` ×2、`bodyTeacherIdWrites_adminBypass`），该测试类 **39 例 / 0 失败**；全量 reactor **688 例 / 0 失败**。
+- **反向打靶两个方向各一条承重断言**：M1（把 3 条 `isSelf` 整段删掉）⇒ **恰好 4 条拒绝断言红**、放行断言仍绿；
+  M2（`isSelf` 改恒拒）⇒ **恰好 3 条放行断言红**。收尾 `diff` 字节级还原、mutation 标记零残留。
+- **运行时复核**（`tmp/w44/verify_live.py`，**9/9 PASS**，经网关 `:8076`，跑的是重编后的新 jar）：
+  ① `PUT /api/teachers/990002` ⇒ **HTTP 405**（**不是 404** —— 同一路径下还有 `GET`/`DELETE`，映射仍在）；
+  负对照 `GET /api/teachers/990002` ⇒ 200 + `code:403`（证明 405 是"这个动词没了"而不是"整条路径没了"）。
+  ② `POST /api/teachers/courses/assign` ⇒ 405，且 `teacher_course` 仍 **7** 行。
+  ③ 三条补闸：以他人名义 ⇒ 200 + `code:403` **且回库行数不变**（`communication_record` 5→5、`teacher_class_application` 6→6、
+  班级 `teacher_id` 18→18 未被置空）；负对照以本人名义 ⇒ 200 + `code:200` **且真写库**（`rows=['1']`）。
+  跑完残留全 0。
+
+**探针自身踩的坑（这一轮最该记的）**：
+① ⭐ **我的负对照打到了真实演示数据**：`cancel` 的"放行面"用的是**真实班 `classes.id=1`**，它确实有 `teacher_id`，
+  于是这条负对照**真的把班 1 的 `teacher_id` 写成了 NULL**（`update_time` 也被 `ON UPDATE CURRENT_TIMESTAMP` 顶到当天）。
+  这正是我台账里 W31 那条红线——"**写探针的每一个写目标都必须是自建行或"不存在的 id"，连"只改一个字段"也不行**"。
+  负对照为了证明"闸不误伤**自己**的班"，本应先自建一个 `teacher_id=<我>` 的探针班再打**它**。
+  事后按备份 dump 复原：班 1 原值 `teacher_id=29`（dump 元组 `(1,'计科2306班',1,2,29,53,…)`），已写回。
+  ⚠️ 残留边界：`created_at` 一直是 2025-12-22（未被触）；`updated_at` 被顶到当天 11:40:34 —— 复原脚本里改它时
+  **又撞上 W43 记的第③条**（`mysqldump` 的 TIMESTAMP 是 UTC，本地会话直接写会早 8 小时），故**取其同批兄弟行的 `updated_at`**
+  （`id=30` 值为 `2026-09-16 22:07:32`）作基准回填，避免引入新的时间偏移。
+② **`teacher_course.teacher_id` 是 `teacher_profile.id` 不是 `users.id`**（FK `fk_teacher_course_teacher_id → teacher_profile.id`）：
+  我第一版探针给 `assign` 传 `18`（users.id）⇒ 500 外键报错，一度像"接口坏了"；换成真 `teacher_profile.id=2` 才暴露真缺口（建出 `16|2|7`）。
+  这条 id 空间差异 **W36 记过一次**，这次是同一坑的第二次。
+③ **`courses.type` 是 NOT NULL 无默认值**：建课程探针少传 `type` ⇒ `Field 'type' doesn't have a default value` 500。
+  **不是缺陷**，是探针漏字段。
+④ **`POST /teachers/scores` 的 `courseId` 要放进每一行里**，不是顶层：网关闸按行校验归属，顶层给 `courseId` 的探针被**正确拒绝**（403）。
+  改成与小程序真实请求同形状后 ⇒ 200。判"闸错"前先确认**自己发的是不是真实 UI 的形状**（"让被测方替你挑键名/取值"的第 6 次）。
+⑤ **`PUT /scores/{id}` 有意只改 `score_total`**（并重算 `grade`/`gpa`），**不动** `final_score`/`regular_score`。
+  我的断言读的是 `final_score` ⇒ 报"没生效"；换 `score_total` 才是真口径。**与 W36 同一个"读错列"的坑**。
+
+**未修边界**：① `GET /teachers/counselor/by-class` 无归属闸，是 §6.51 D 的**遗留决定**（教师目录/聚合读），**刻意不并**，本轮也未改。
+② 教师端仍有一条"读任意班整份成绩单"的历史行为已按**班级归属**收紧（W30），本轮未再动。
+③ `admin` 侧导入仍写 `score_record`（W36 遗留），与教师端本次迁移无关。
+
+---
+
+### 8.21 辅导员端 58 个 handler 全量走查（**无越权漏洞**）+ 两条跨模块收口（2026-10-14 W45）
+
+**缘起**：接着 W43（学生端）、W44（教师端），把 `CounselorController` **全部 58 个 handler**
+（读 41 / 写 17：POST 8 + PUT 4 + PATCH 2 + DELETE 3）逐条打了一遍——经网关 `:8076`、
+以辅导员 **司明（`users.id=53`）** 身份，每条写**回库核对**，每条配越权负向对照。
+
+**结论：58 条里 0 条越权漏洞**（闸族 `denyUnlessMy*` 是 W13 装的真闸、fail-closed，逐条读实现核实过），
+但**另查出 2 条跨模块的真缺陷**——都不在本模块，而在"说法与事实不符 / 信息泄露"族。
+
+#### 走查结果
+
+| 面 | 方法 | 结果 |
+|---|---|---|
+| 读端点 | `tmp/w45/read_probe.py`，41 GET | 48/51 PASS；3 个 "FAIL" 全是**探针假设错**（E6/E7 那两行本就归 53 管、E8 路径只有 POST/PUT/DELETE ⇒ 405 合理） |
+| 归属负方向 | `tmp/w45/neg_probe.py` | **22/22 PASS**（全库只有 53 一个辅导员、24 生全归 53 ⇒ 真实数据里没有"别人的资源"，**自建 `W45PROBE` 探针行**才打出负方向） |
+| 写端点正向 | `tmp/w45/write_probe.py` | 17/18 PASS（唯一 FAIL 见"发现 C"） |
+| 前端调用图 | PC `counselorAPI` 33 + XCX 40 | 全部对得上，**0 断链** |
+| 门控实现 | `denyUnlessAdmin/SelfCounselor/MyPlan/MyLog/MyClass/MyStudent/MyWarning` | 逐条读实现：真实、fail-closed（`isClassOfCounselor` 走 `classes.counselor_id = users.id`） |
+
+#### 发现 A：宽 `catch` 把本模块自己那条「防 SQL 泄漏」分支变成死代码（**全仓病**，已修）
+
+`counselor-service` 里 **57 处**、形状**完全统一**：
+```java
+} catch (Exception e) {
+    log.error("xx失败: {}", e.getMessage());
+    return ApiResponse.serverError("xx失败: " + e.getMessage());   // ← 原文直达客户端
+}
+```
+它绕过了本模块 `GlobalExceptionHandler` 里那条**专为此而写**的分支
+（`@ExceptionHandler(DataAccessException.class)` 注释原话："避免把 SQL 细节随 `e.getMessage()` 泄漏给客户端"）。
+
+**实测**（`tmp/w45/fk_probe.py`，打自建探针学生）：`PUT /counselors/students/{id}` 发不存在的
+`majorId=3` / `collegeId=9` / `classId=999` ⇒ **HTTP 200 + code 500**，message 是
+`更新学生信息失败: ### Error updating database. Cause: java.sql.SQLIntegrityConstraintViolationException: Cannot add or update a child row: a foreign key constraint fails (...)`，
+而 `client.js:49` **直接把 message 弹给用户**（辅导员/学生/教师都能看见）。
+
+⚠️ **这不是辅导员端独有的**——我第一版按"`serverError(前缀 + e.getMessage())`"一种写法扫描，
+报"其他模块 0 处"，**错**（只认一种写法，W25 教训）。按家族重数：无前缀的 `ApiResponse.error(e.getMessage())`
+还有 **admin 72 / student 58 / teacher 42 / auth 30 / course 19 / ai 18 / user 17 / college 11 / warning 8**。
+其中**真正透传原文的站点 = 340 处**（机械改写一次成型，16 文件、11 模块）；家族计数里另有十余处是
+**结构性变形**（如 `friendly != null ? friendly : …` 的 W22 已修写法、`deny.getMessage()` 的 403 业务拒绝、
+`response.getMessage()` 的 Feign 业务消息）**本就不该动**。
+
+**修法**（`academic-common/util/ExceptionMessages.java`，新增）：类型感知的洗白函数
+```java
+log.error("xx失败: {}", e.getMessage(), e);              // 排查细节留服务端
+return ApiResponse.error("xx失败: " + ExceptionMessages.describe(e));   // 给用户看的话
+```
+判据（**性质上归类**，机械改写 340 处、16 文件、一次成型）：
+- **业务异常如实回**：`IllegalArgumentException`（含 `NumberFormatException`）、`com.academic` 包下的类型、
+  以及**裸**的 `RuntimeException`/`IllegalStateException`（精确类、无 cause——本仓用它承载业务文案，
+  如「旧密码错误」「模板不存在」）。洗掉它们会让用户看到无用的"服务器出错"。
+- **其余一律通用话术**（`DataAccessException`/`SQLException`/`NullPointerException`/第三方……），原文只进日志。
+- ⚠️ **整条 cause 链都要干净**：只要链上挂着框架异常（`BackupService` 把 DB 异常包成 `IllegalStateException` 再抛）就按服务端故障处理。
+
+**验证**：
+- 新单测 `ExceptionMessagesTest` **8 例**（SQL 原文/表名/约束名一个字都不露、裸 RuntimeException 透传、
+  带 cause 的包装异常洗白、自引用 cause 不死循环…）。
+  其中**一例先红才写对**：我最初的"自引用不死循环"断言写反了——匿名子类定义在 `com.academic.common.util` 包下
+  ⇒ 按包名规则它**就是**本工程异常，`isBusiness` 返回 true 是对的。
+- 机械改写**四不变量自检**（行数/行尾不混/括号/引号）：16 文件每个**恰好 +1 行**（新增的 import），
+  括号引号**全不变**。⚠️ 自检**逮到**新 import 行落成**裸 LF**（与文件 CRLF 规范不符），已补齐。
+- 连带修 **2 条 admin 测试**：`AdminControllerTaskTest:157` 原来断言 `"db down"` **必须透传**——那正是在断言要修掉的行为；
+  且它 mock 的是**裸 `RuntimeException`**（恰好是业务文案形状）⇒ 改成真实形状 `DataAccessResourceFailureException`，
+  断言只回中性文案。`AdminControllerGenerateReportTest` 断言 `"模板不存在"` 要回给用户 ⇒ 分类器修对后**自然回绿**（证明"业务文案不被误洗"）。
+- **M1 反打靶**：把 admin `createTask` 的 catch 改回泄漏原文 ⇒ `create_reportsInsertFailure` **恰好红**、其余仍绿 ⇒ 接线承重。
+- 全量 reactor **696 例 / 0 失败**（含新 8 例）。
+- ⚠️ 收尾又踩 W24 家族：`mv` 恢复被改文件后 **mtime 变旧 ⇒ Maven 不重编、跑的还是打靶版 class**（"测试仍红"是假象）；`touch` 后复绿。
+
+#### 发现 B：小程序「通知中心」因一段**三重过期注释**被跳过（已修）
+
+`academic-warning-xcx/src/services/api.js:596` 原注释说：
+「`notifyStudents` **已删除**（实现只 `log.info`、一行库都不写）；`notifications/{history,templates,weekly-count}` 三个都是纯桩
+⇒ **故通知中心整页不做**」。**四句话全过期**：
+- `POST /students/notify` 早就是**真实现**（W2 已改成真写 `communication_logs` + 投递学生通知中心）；
+- `history` 不再恒空、`weekly-count` 不再恒 0（都读真实行数）、`templates` 从"写死 3 条"改成**如实回空**（端点注释 `:1669/:1692/:1707` 都写着）；
+- **PC 端 `CounselorNotifications.vue`（187 行）每句都在用** history + notifyStudents。
+
+**修法**：订正注释为事实，并**给小程序补上通知中心页** `pages/counselor/notifications.vue`
+（发送表单：类型/范围/内容 + 按 `delivered` 如实汇报"0 人送达"；发送历史按"同一次群发"归并），
+注册进 `pages.json`、加进辅导员工作台 `quickLinks`。
+验收：`npm run check`（页面 53=53 / 样式声明干净 / `counselorAPI` 46 方法调用点全有实现）+ `npm run build:mp-weixin` **BUILD 通过**。
+
+#### 发现 C：两处"注释/一致性"小账（已修）
+
+- `GET /count-by-college` 的 catch 回 `ApiResponse.error(e.getMessage())`（**唯一没加前缀**的一处，与其余 57 处不一致），已并入统一写法。
+- XCX `updateStudent` 注释把 **`gender`** 列进"能改的字段"——`student_profile` 表**有** `gender` 列、
+  班级花名册也显示它，但 `Student` 实体**没有**这个字段 ⇒ 只发 `{gender}` 会被 `UpdateBodyGuard`
+  判成"没有任何可更新的字段"回 **HTTP 400**（**不伪装成功**，所以是**注释说谎、接口诚实**）。注释已订正。
+  （该端点两端**零调用方**。）
+
+**未修边界**：① `GET /counselors/class-management/applications` 有 `denyUnlessAdmin`（管理员面），辅导员看列表走 `/requests`——**刻意不并**。
+② 夜班扫描等 `counselor-service` 内既有 `@Transactional` 缺失（balance 等域），非本轮范围。
+
+---
+
+### 8.22 管理员端 133 个 handler 全量走查 + 2 条静默丢弃/半写收口（2026-10-14 W46）
+
+**缘起**：接着 W43（学生端 63）、W44（教师端 57）、W45（辅导员端 58），把管理员端两个控制器
+**全部 133 个 handler** 逐条打了一遍 —— `AdminController`（**114** 条：GET 53 + POST 30 +
+PUT 15 + DELETE 16）与 `CollegeAdminController`（**19** 条：GET 17 + POST 1 + DELETE 1）。
+经网关 `:8076`、以 `admin`（`users.id=1`，role=4）与 `collegeadmin1/2`（role=5）身份，
+每条写**回库核对**，每条配越权负向对照。
+
+**结论：0 条越权漏洞；2 条真缺陷（都是"接口说成功、库里没变"族）已修；5 处信息泄露已修。**
+
+> ⚠️ **本节事后订正（同一轮内）**：初稿把 133 条**一锅端**地写成"全量走查"，
+> 但 `CollegeAdminController` 那 19 条当时**规格低一档** —— 只做了单测 + 经网关的**负方向**探针，
+> 两条写端点（`process-warning` / `delete-warning`）**从没 live 打过**，14 条读端点也只断言了 HTTP 200、
+> **没断言载荷非空**（恒空端点也能过）。已补测，见下「学院管理端补测」。
+> ⇒ 这正是本仓自己的账：「**说法比事实满**」，这次犯的是我。
+
+#### 走查结果
+
+| 面 | 方法 | 结果 |
+|---|---|---|
+| 读端点 | `tmp/w46/read_probe.py`，**87 条断言** | **87/0**（A 管理员全读面、A2 导出 9 个 blob、B 学院管理员本人/跨人、C 学生越权） |
+| 写端点正向 | `tmp/w46/write_probe.py`，**31 条** | **31/0** |
+| `assign-role` 双闸 | `tmp/w46/assign_role_probe.py`，**19 条** | **19/0** |
+| **学院管理端写面**（补测） | `tmp/w46/ca_write_probe.py`，**25 条** | **25/0** |
+| **学院管理端读面非空**（补测） | `tmp/w46/ca_read_nonempty.py`，**16 条** | **16/0** |
+| 半写复现（脏读+锁行） | `tmp/w46/half_write_probe.py` | 复现 → 修后不复现 |
+| 空值丢弃全仓扫描 | `tmp/w46/scan_null_drop.py`（带自测靶） | 修后 `setXxx(null)`+`updateById` 形状在活代码里**绝迹** |
+| 全量 reactor | — | **704 例 / 0 失败**（W45 是 696 ⇒ +8：两条新测试类 4+4） |
+
+#### 学院管理端补测（19 条，本轮补齐）
+
+| 项 | 结果 |
+|---|---|
+| 写端点 live 探针 | `POST /process-warning`、`DELETE /delete-warning/{uid}/{wid}`：自建 `W46PROBE` 探针行（学院 990001 / 班 990201 / 档案 990202 / 预警 990203），**每条写都回库核对**，探针结束全删 |
+| 负方向 ① **路径 uid 是别人**（56=别院管理员） | 两条都 **200 + body `code:403`「无权限」**，且**库中 status 未变 / 行仍在** |
+| 负方向 ② **预警属于别的学院** | 两条都 `code:403`「该预警不属于本院」，**且 status 未变 / 行仍在** |
+| 负方向 ③ 不存在的预警 id | 两条都 `code:403` |
+| 正方向 `process-warning` | 本院预警 ⇒ 200，**回库 `status` 真的从 0 变成 7** |
+| 正方向 `delete-warning` | 本院预警 ⇒ 200，**回库该行真的没了** |
+| admin(role4) 豁免对照 | `isSelf` 被 role 4 豁免（用**别人的** uid=57 能处理院 1 的预警 ⇒ 200 + 回库 `status=5`）；但**归属闸不豁免** —— 同一个 admin 拿院 2 的 uid=56 打院 1 的预警**仍回 403、status 不被覆盖** |
+| 读面 16 条载荷非空 | `dashboard` obj=7 / `classes` list=6 / `students` list=24 / `teachers` list=5 / `warnings` list=4 / `score-query` **list=238** / `class-students` list=24 / `student-detail` obj=11 / `teacher-detail` obj=9 …**全非空** |
+| 真实数据红线 | 真实 4 条预警（395–398）**一字未动**，四条都是 `status=0` |
+
+**打靶（承重）**：把 `ownsWarning` 改成恒真（`return warningId != null`）重建 ⇒
+**N3/N4/N7 由 403 翻成 200**、跨院预警**真的被删掉**（`rows=[]`）⇒ 这三条断言**确由归属闸承重**。
+（`mv` 恢复后必须 `touch`，否则 Maven 不重编、跑的还是打靶版 —— W24 家族；本轮靠 `md5sum` 对回原值确认还原干净。）
+
+⚠️ **补测时又踩的两次「我口径错」**（都不是缺陷）：
+① `student-detail/{profileId}` 我传 `1/2` ⇒「学生不存在」；**活库 `student_profile` id≤3 只有 id=3 一行**，
+换成 3 即 200。
+② `teacher-detail/{teacherId}` 我传 `users.id=29/18` ⇒「教师不存在」；
+**该参数是 `teacher_profile.id`**（实现里 `teacherProfileMapper.selectById`），换 1 即 200
+—— **`id` 空间每轮都会再来一遍**（W44 同款，第 3 次）。
+
+
+#### 越权面：`AdminController` **一条闸都没有**，防护是"单层挂在网关上"
+
+114 条 handler 里**零**身份/权限判断（不放 `HttpServletRequest`、不读 `X-Role`），
+唯一的例外是 `assignRole`（L5244）有一条 in-method 的 `X-Role` 判断。
+安全性**完全**依赖网关 `AuthenticationFilter.hasPermission()`：role=4 第一行 `return true`；
+role=5 **刻意**去掉了 `PREFIX_ADMIN`（W33）；role 1/2/3 命中 `PREFIX_ADMIN` 直接 `return false`。
+实测这层真的挡得住（B1/C 全 403）。**但这意味着：任何绕过网关的直连（Docker 内网、Feign）
+都可无身份打这 114 条**——与 W42/W43 记的"创建型端点没有可查的库行"是同一个结构性风险面。
+`CollegeAdminController` 则相反，**双闸完备**：身份闸（`isSelf()`，admin role=4 豁免）
++ 资源归属闸（`getCollegeId(userId)` 取不到就 403、`ownsClass`、`ownsWarning`），跨院/跨人实测全拒。
+
+#### 发现 A：`PUT /admin/classes/{id}/remove-teacher` 是**静默空操作**（已修）
+
+```java
+clazz.setTeacherId(null);
+classesMapper.updateById(clazz);        // ← 一个字段都没写进库
+return ApiResponse.success("教师已从班级移除");   // ← 却报成功
+```
+根因：MyBatis-Plus 默认更新策略是 `NOT_NULL`，**值为 null 的字段根本不进 SET 子句**。
+本仓 `application.yml` 只设了 `map-underscore-to-camel-case`，**从没覆盖过这个策略**
+⇒ `setTeacherId(null)` 被整条丢弃，UPDATE 里只有 `id`，实际什么都没改。
+与 `ClassManagementService.java:192-224` 记的那条**同族**（那边已修，这边漏网）。
+
+**证据**：开 MySQL `general_log` 抓 ORM 真实 SQL，看到的就是
+`UPDATE classes SET id=? WHERE id=?` —— **`teacher_id` 一个字都没有**。
+（这是本仓第一次把"静默丢弃"钉在**实发 SQL 文本**上。）
+
+**修法**（`UpdateWrapper` 显式 set + **读回校验**）：
+```java
+UpdateWrapper<Classes> update = new UpdateWrapper<>();
+update.eq("id", classId).set("teacher_id", null);
+classesMapper.update(null, update);
+
+Classes saved = classesMapper.selectById(classId);
+if (saved != null && saved.getTeacherId() != null) {
+    return ApiResponse.error("移除教师未生效，班级仍绑定教师 " + saved.getTeacherId());  // 不假装成功
+}
+```
+**新测试** `AdminRemoveTeacherTest` **4 例**，承重的是拿 `ArgumentCaptor<Wrapper>` 拆 `getSqlSet()`
+断言 **`SET 子句里必须出现 teacher_id`** —— 这正是 `updateById` 做不到的那条。
+
+#### 发现 B：`POST /admin/class-management/approve/{id}` 是**无事务的双表写**（已修）
+
+写两张表：先 `counselor_class_application.status=1`，再 `classes.counselor_id=…`，
+**没有 `@Transactional`**。第二笔失败时第一笔不回滚，库里留下"申请已通过、班级却没换辅导员"
+的半截状态，接口照旧回 `"已批准辅导员班级申请"`。
+
+**复现手法**（脏读 + 锁行，不碰任何真实演示行）`tmp/w46/half_write_probe.py`：
+自建 `W46PROBE` 探针行（users 990050 / classes 990003 / counselor_class_application 990001），
+另开连接对 `classes` 那行 `SELECT … FOR UPDATE` 持锁 8 秒；持锁期间调 approve ——
+第一笔写立刻提交、第二笔卡在锁上；此时**再开第三条连接读**申请行：
+- 读到 `status=1` ⇒ 第一笔已落库 ⇒ 无事务（半截状态可达）
+- 读不到（仍是 0）⇒ 有事务
+
+修前实测读到 `status=1`（复现），修后不复现。
+
+**修法**：加 `@Transactional(rollbackFor = Exception.class)`，并把 catch 从 `return error` 改成**抛出去**
+（catch-and-return 会被事务拦截器当成"正常返回"照样提交 ⇒ 假事务）。
+**新测试** `AdminClassApproveTransactionalTest` **4 例**：反射断言方法上**真的挂了** `@Transactional`；
+第二笔写抛 `DataAccessResourceFailureException` 时异常**必须冒出去**；正常路径两笔都写；记录不存在时两笔都不写。
+
+⚠️ **台账本身不完整**：先前记的是"counselor-service 那 4 条无事务多表写（已修）"，
+`AdminController` 这一条**漏在账外**。⇒ 又一次印证 W37 的教训：**"已修/未修"的清单也会过期、也会漏，
+要读现役代码复核，不能拿台账当事实**。
+
+#### 发现 C：`e.getMessage()` 直传客户端 —— W45 那次机械改写漏掉的**第 4 种形状**（已修）
+
+W45 把 340 处 `ApiResponse.error(前缀 + e.getMessage())` 统一改成 `ExceptionMessages.describe(e)`，
+但**文件下载/导出端点的另一种写法漏了**：它们不返回 `ApiResponse`，而是
+`writeFileEndpointError(response, "xx失败: " + e.getMessage())` 往 `HttpServletResponse` 里写原文。
+- `admin-service` **×3**：L3292 下载模板、L3358 / L3446 两处导出；
+- `student-service` **×1**：`StudentController:111`「导出失败」；
+另补 `admin-service` 两处 **Sentinel fallback**（L505 `getStatisticsFallback`、L1362 `getUsersByPageFallback`
+直接用 `t.getMessage()`）与 `ai-service` 一处嵌套 map 写入（`AIController:286`
+`request.put("scoresUnavailable", … ex.getMessage())`）——这些都不是 `ApiResponse` 形状，
+所以 W45 的家族扫描没扫到。
+
+#### 两条打靶（M1/M2）——每条新断言都确认承重
+
+| 打靶 | 动作 | 期望 | 实测 |
+|---|---|---|---|
+| M1-A | `remove-teacher` 改回 `updateById(clazz)` | `SET 子句含 teacher_id` 那条红 | **恰 1 条红** |
+| M1-B | 让 `updateById` 分支重新出现（守卫恒不生效） | 同上那条红、其余绿 | **恰 1 条红** |
+| M2-A | 摘掉 `approveClassRequest` 的 `@Transactional` | 注解断言红 | **恰 1 条红** |
+| M2-B | catch 改回 `return error` | 「异常必须抛出」那条红 | **恰 1 条红** |
+
+⚠️ **M2-B 第一次没打红**：heredoc 写的 mutation 被拦下没生效，测试**仍绿**——
+差点读成"测试不承重"。用 Edit 工具重写 mutation 后**立刻红**。⇒ 打靶不红，先怀疑**mutation 到底落没落到文件里**。
+
+#### 探针自身踩的坑（与"报 0 必须打靶"同族）
+
+- **静态扫描器假 0**：第一版正则 `\b(mapper|Service|service)\.\w+\(` 报
+  "114 条 handler **全部** 0 次库调用"。用已知含 `userMapper.` 的站点打靶后修正正则为
+  `\b\w*(?:Mapper|Client|Repository|Service|service|mapper)\.\w+\(` ⇒ 只有 3 条 handler 是真无库调用。
+  **若不先打靶，这个"0"会被当成"114 条全是纯桩"写进台账。**
+- **列口径又错一次**：探针用实体字段名 `rule_name` / `warning_level` 打 `warning_rules`，
+  活库真列是 `name` / `level`（实体靠 `@TableField("name")` 映射）⇒ `ERROR 1054 Unknown column`。
+  `classes` 也没有 `grade` / `student_count` 列。⇒ **列口径每轮都会再来一遍，读 `SHOW COLUMNS`，别读实体**。
+- **5 条"读失败"其实是我自己的锅**：`/api/admin/students`、`/messages` 等 500 是因为
+  student-service(8079) / message-service(8077) **没起**；`/warnings/1` 404 是因为**真实预警 id 是 395–398**
+  （探针 id 写错）。`/students/3` 回全 null 的 Student 对象是 `@TableField(exist=false)` 的
+  className/email/phone/credits/gpa/userStatus——**不是缺陷**。
+
+**探针产物**：`tmp/w46/`（`login.py` / `read_probe.py` 87 / `write_probe.py` 31 /
+`assign_role_probe.py` 19 / `half_write_probe.py` / `sqlpin.py` / `diag.py` / `scan_null_drop.py`）；
+日志 `w46_admin.log` / `w46_student.log` / `w46_message.log` / `w46_general.log`（MySQL general log）。
+**红线遵守**：每个写目标都是 `W46PROBE` 自建行或"不存在的 id"，探针结束全删；
+收尾核对基线 users 35 / student_profile 24 / classes 8 / academic_warning 4 / college_admin_profile 2，**零残留**。
+
+**未修边界**：`AdminController` 那 114 条**无 in-code 闸**的问题**刻意不修** ——
+它是"防护全押在网关一层"的架构选择，不是本轮的漏装闸；要改就是 114 处一起动，
+属于架构决策，需先与作者确认（W46 只记事实，不擅自改架构）。
+
+---
+
 > **文档维护者：** 系统自动生成  
-> **最后更新：** 2026-10-12（W39）
+> **最后更新：** 2026-10-14（W46）
