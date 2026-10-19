@@ -101,7 +101,10 @@ const ROLES = {
     pass: '123456',
     landed: LANDED('teacher'),
     pages: [
-      { path: '/pages/teacher/dashboard', expect: '待办事项', data: '带 2 个班 · 24 名学生' },
+      // ⚠️ 2026-10-19（W49b）：这两条判据自入库起就没更新过，数据变了判据没跟 ——
+      // 实测库与页面都是「1 个班」，判据还写着「2 个班」，于是稳定 MISS。
+      // 按本仓纪律：**先分清"产品坏了"和"判据过期了"**，改的是判据，不是页面。
+      { path: '/pages/teacher/dashboard', expect: '待办事项', data: '带 1 个班 · 24 名学生' },
       { path: '/pages/teacher/scores', expect: '标准差', data: '76.90' },
       { path: '/pages/teacher/students', expect: '有挂科', data: '2023020524' },
       { path: '/pages/teacher/credit-prediction', expect: '全班学分进度', data: '毕业要求' },
@@ -109,7 +112,9 @@ const ROLES = {
       { path: '/pages/teacher/warnings', expect: '只读视图', data: '李爽同学已累计3门课程不及格' },
       { path: '/pages/teacher/analysis', expect: '标准差', data: '24/24 人已出成绩' },
       { path: '/pages/teacher/feedback-management', expect: '未回复', data: '数据结构的课后作业太难了' },
-      { path: '/pages/teacher/class-management', expect: '我的班级', data: '空班' },
+      // 「空班」同样过期：该教师名下**有**班级（库 classes.teacher_id=29 → 计科2306班），
+      // 所以"空班"这个空态字面量永远不会出现。改用只有真数据才可能有的班名 + 人数。
+      { path: '/pages/teacher/class-management', expect: '我的班级', data: '计科2306班' },
       { path: '/pages/teacher/profile', expect: '教师资料', data: '13397583736@qq.com' },
       // W48 新增「我的课表」。教师 10001 是于凤海(users.id=29)，course_plans 里
       // teacher_id=29 有 3 条（id 1/4/10）。data 取「教学楼A301」——

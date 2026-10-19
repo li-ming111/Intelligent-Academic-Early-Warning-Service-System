@@ -39,6 +39,19 @@ export default defineConfig({
       '/api': {
         target: 'http://localhost:8076',
         changeOrigin: true
+      },
+      // 2026-10-19（W49b）：`/ws` 必须**单独一条**，与 PC 端 `academic-warning-frontend/vite.config.js`
+      // 同款（那边 W3.2 就补过，小程序端一直没跟上）。
+      //
+      // 为什么不能靠上面那条 `/api`：`utils/stompClient.js` 在 H5 下连的是
+      // `ws://${window.location.host}/ws`，即 `ws://localhost:5180/ws` —— 不经过 `/api`。
+      // 少了这条，vite 把升级请求当普通 GET 返回 200 空页，握手永远建不起来，
+      // 表现是"连得上又好像没连上、一条消息都收不到"（STOMP 客户端会静默重连）。
+      // 小程序真机/开发者工具没有 proxy，走 `ws://localhost:8076/ws` 直连，不受影响。
+      '/ws': {
+        target: 'ws://localhost:8076',
+        ws: true,
+        changeOrigin: true
       }
     }
   }
