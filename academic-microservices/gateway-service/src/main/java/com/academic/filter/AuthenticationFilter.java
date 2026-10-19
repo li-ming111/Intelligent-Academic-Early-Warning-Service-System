@@ -93,6 +93,11 @@ public class AuthenticationFilter implements GlobalFilter, Ordered {
             //    连同 auth-service `SecurityConfig` 里那句 `permitAll` —— 两处是同一次改动的两半。
             "/api/colleges/all",
             "/actuator/health",
+            // WebSocket 实时推送（STOMP）。2026-10-19（W49）修：原来这条是 `"/ws/**"`，
+            // 配上当时用 `String.matches` 的写法（全串匹配）**匹配不上客户端实际连的 `/ws`**
+            // ⇒ 浏览器在网关这一跳就被 401 挡下，整条实时推送链从未成立（W48 发现）。
+            // 现在 `globMatches` 把结尾的 `/**` 解释成"零段或多段"，所以这条同时覆盖
+            // `/ws`、`/ws/`、`/ws/info`、`/ws/**`。⚠️ 别把 glob 改回 replace("**",".*")。
             "/ws/**"
     );
 
@@ -596,9 +601,61 @@ public class AuthenticationFilter implements GlobalFilter, Ordered {
         return null;
     }
 
-    private boolean isWhiteListed(String path) {
-        return WHITE_LIST.stream().anyMatch(pattern ->
-                path.matches(pattern.replace("**", ".*")));
+    static boolean isWhiteListed(String path) {
+        return WHITE_LIST.stream().anyMatch(pattern -> globMatches(pattern, path));
+    }
+
+    /**
+     * 白名单 glob 匹配（W49，2026-10-19 修正）。
+     *
+     * <p><b>修之前是什么样</b>：{@code path.matches(pattern.replace("**", ".*"))}。
+     * {@link String#matches} 是**全串匹配**，于是清单里的 {@code "/ws/**"} 变成正则
+     * {@code /ws/.*} —— **匹配不上客户端实际请求的 {@code /ws}**（没有尾段）。
+     * 浏览器连 PC 端实时推送时请求的正是 {@code ws://host/ws}，于是在网关鉴权这一跳
+     * 就被 401 挡下，**根本到不了下游 message-service**。
+     * 实测（W48）：无 token 打 {@code /ws} → 401，打 {@code /ws/}、{@code /ws/info} → 101。
+     * 这就是整条 STOMP 推送链从未成立的承重原因。
+     *
+     * <p>另外 {@code replace} 只是字符串替换：白名单里任何 {@code .} 都会变成正则通配符。
+     * 现在清单里没有这种条目，但这是个只会等别人踩的坑，一并按字面量转义。
+     *
+     * <p>本方法的语义（只覆盖白名单真正用到的两种写法，够用且可测）：
+     * <ul>
+     *   <li>{@code *} → 单个路径段内任意字符（不含 {@code /}）；</li>
+     *   <li>{@code **} → 任意字符；出现在**结尾**的 {@code /**} 允许**零段** ——
+     *       即 {@code "/ws/**"} 同时匹配 {@code /ws} 与 {@code /ws/anything}
+     *       （这正是修 {@code /ws} 的关键）；</li>
+     *   <li>其余字符一律按字面量转义。</li>
+     * </ul>
+     *
+     * <p>⚠️ 别把这条改成"再补一条精确的 {@code "/ws"}"：那样只治好这一个地址，
+     * 下一个 `/**` 白名单还会踩同一坑。修的是**尺子**，不是某一格。
+     */
+    static boolean globMatches(String pattern, String path) {
+        StringBuilder re = new StringBuilder("^");
+        for (int i = 0; i < pattern.length(); i++) {
+            char c = pattern.charAt(i);
+            if (c == '/' && pattern.startsWith("/**", i) && i + 3 == pattern.length()) {
+                // 结尾的 `/**`：零段或多段
+                re.append("(?:/.*)?");
+                i += 2;
+            } else if (c == '*') {
+                if (i + 1 < pattern.length() && pattern.charAt(i + 1) == '*') {
+                    re.append(".*");
+                    i++;
+                } else {
+                    re.append("[^/]*");
+                }
+            } else {
+                // 正则元字符一律转义（`/` 本身不需要，但它也不在表里）
+                if ("\\.[]{}()+-^$|?".indexOf(c) >= 0) {
+                    re.append('\\');
+                }
+                re.append(c);
+            }
+        }
+        re.append('$');
+        return path.matches(re.toString());
     }
 
     private Mono<Void> unauthorized(ServerWebExchange exchange, String message) {

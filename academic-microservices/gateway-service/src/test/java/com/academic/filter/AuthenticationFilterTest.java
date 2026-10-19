@@ -392,6 +392,65 @@ class AuthenticationFilterTest {
         assertNull(AuthenticationFilter.rbacFamilyOf("/api/college-admin/classes/1"));
     }
 
+    // ==================== 白名单 glob（W49，2026-10-19） ====================
+    //
+    // 背景（W48 现场取证，见 testsprite/local-check/probe-w48-ws.mjs.findings.md）：
+    // 原来 `isWhiteListed` 用 `path.matches(pattern.replace("**", ".*"))`。`String.matches`
+    // 是**全串匹配**，于是 `"/ws/**"` 变成正则 `/ws/.*` —— **匹配不上浏览器实际连的 `/ws`**。
+    // 浏览器连 WebSocket 时 URL 就是 `ws://host/ws`（没有尾段），于是在网关鉴权这一跳被 401，
+    // 请求根本到不了 message-service。**这是整条 STOMP 实时推送链从未成立的承重原因。**
+    //
+    // 下面这组是**回归护栏**：把 glob 改回 `replace("**", ".*")` 时第一条会立刻红。
+
+    @Test
+    @DisplayName("W49：`/ws/**` 必须匹配客户端实际连的 `/ws`（无尾段）—— 实时推送的承重点")
+    void whiteList_wsWithoutTrailingSegment_isWhiteListed() {
+        assertTrue(AuthenticationFilter.isWhiteListed("/ws"),
+                "浏览器 WebSocket 连的就是 /ws；不匹配 ⇒ 网关 401 ⇒ 实时推送永远连不上");
+        // 握手可能的几种形态都要放行（SockJS 的 info 探测、带尾段的路径）
+        assertTrue(AuthenticationFilter.isWhiteListed("/ws/"));
+        assertTrue(AuthenticationFilter.isWhiteListed("/ws/info"));
+        assertTrue(AuthenticationFilter.isWhiteListed("/ws/websocket"));
+    }
+
+    @Test
+    @DisplayName("W49：`/ws/**` 不能顺带放行 `/wsx` 这类邻居（放宽了尺子 ≠ 放开了闸）")
+    void whiteList_wsGlobDoesNotLeakNeighbours() {
+        assertFalse(AuthenticationFilter.isWhiteListed("/wsx"));
+        assertFalse(AuthenticationFilter.isWhiteListed("/ws-secret"));
+        assertFalse(AuthenticationFilter.isWhiteListed("/wsadmin"));
+        // 普通前缀不能被"零段"规则误伤成"前缀就放行"
+        assertFalse(AuthenticationFilter.isWhiteListed("/api/students"));
+        assertFalse(AuthenticationFilter.isWhiteListed("/api/students/1"));
+    }
+
+    @Test
+    @DisplayName("W49：既有白名单条目逐条不变（放宽 glob 不能顺手改别人的判定）")
+    void whiteList_existingEntriesUnchanged() {
+        assertTrue(AuthenticationFilter.isWhiteListed("/api/auth/login"));
+        assertTrue(AuthenticationFilter.isWhiteListed("/api/auth/captcha"));
+        assertTrue(AuthenticationFilter.isWhiteListed("/api/auth/register/student"));
+        assertTrue(AuthenticationFilter.isWhiteListed("/api/colleges/all"));
+        assertTrue(AuthenticationFilter.isWhiteListed("/actuator/health"));
+        // 精确条目仍然只认逐字相等 —— 别让 `*`/`**` 的规则污染到它们
+        assertFalse(AuthenticationFilter.isWhiteListed("/api/auth/login/extra"));
+        assertFalse(AuthenticationFilter.isWhiteListed("/api/auth/logi"));
+        assertFalse(AuthenticationFilter.isWhiteListed("/api/colleges/all/extra"));
+        assertFalse(AuthenticationFilter.isWhiteListed("/actuator/healthz"));
+    }
+
+    @Test
+    @DisplayName("W49：glob 自身 —— `*` 不跨段、`**` 跨段、正则元字符按字面量")
+    void globMatches_semantics() {
+        assertTrue(AuthenticationFilter.globMatches("/ws/**", "/ws"));
+        assertTrue(AuthenticationFilter.globMatches("/ws/**", "/ws/a/b/c"));
+        assertTrue(AuthenticationFilter.globMatches("/a/*/c", "/a/b/c"));
+        assertFalse(AuthenticationFilter.globMatches("/a/*/c", "/a/b/x/c"), "`*` 不该跨 `/`");
+        // `replace` 时代 `.` 会变成正则通配符；这里必须按字面量
+        assertTrue(AuthenticationFilter.globMatches("/v1.0/x", "/v1.0/x"));
+        assertFalse(AuthenticationFilter.globMatches("/v1.0/x", "/v1x0/x"), "`.` 必须是字面点");
+    }
+
     /** 让 IDE 知道 MockServerWebExchange 是可用的（探针里用它造 exchange，这里保留 import）。 */
     @SuppressWarnings("unused")
     private void unusedExchangeHelper() {

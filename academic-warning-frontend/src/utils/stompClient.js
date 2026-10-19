@@ -11,6 +11,12 @@ class StompClient {
     // 明文 ws 升级请求发出去（混合内容），控制台只留一行 SecurityError，
     // 表现同样是"推送收不到"。按当前页面协议选 ws / wss。
     const wsProtocol = window.location.protocol === 'https:' ? 'wss' : 'ws'
+    // 2026-10-19（W49）：**这里刻意不带 `?token=`**。
+    // 身份不在握手这一跳装 —— 浏览器 WebSocket API 设不了 Authorization 头，
+    // 真正的验票在 message-service 的 `JwtStompAuthInterceptor`（STOMP CONNECT 帧上
+    // 读 `Authorization` native header，验完给会话装 Principal）。握手只需要**能连上**，
+    // 而那取决于网关白名单能否匹配 `/ws`（W49 已修 `globMatches`）。
+    // 把 JWT 塞进 URL 反而会把它写进访问日志/浏览器历史，且对身份没有任何帮助。
     this.wsUrl = `${wsProtocol}://${this.baseUrl}/ws`
     this.reconnectTimer = null
     this.manualDisconnect = false
