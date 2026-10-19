@@ -48,6 +48,25 @@
           </view>
         </view>
 
+        <!-- 功能入口 -->
+        <view class="card card--flush">
+          <view class="menu-head">
+            <section-title title="常用功能" />
+          </view>
+          <view class="menu">
+            <view
+              v-for="m in menus"
+              :key="m.url"
+              class="menu-item"
+              @tap="go(m.url)"
+            >
+              <app-icon :name="m.icon" :size="36" />
+              <text class="menu-item__label">{{ m.label }}</text>
+              <app-icon name="chevron" :size="28" class="menu-item__arrow" />
+            </view>
+          </view>
+        </view>
+
         <!-- 学生反馈：只在这里给入口，回复动作统一在「反馈管理」页做 -->
         <view class="card">
           <section-title title="学生反馈" :extra="unread ? `${unread} 条未回复` : '全部已回复'" arrow @extra="goFeedback" />
@@ -218,6 +237,20 @@ const profileRows = computed(() => {
 
 const statusText = computed(() => dictText(USER_STATUS_TEXT, info.value.status))
 
+/**
+ * 常用功能入口。
+ * 只放**不在底栏 tabBar 里**的页面 —— 成绩/学生/预警已经占了三个 tab，
+ * 再在「我的」里重复一遍会让同一个去处有两处入口。
+ */
+const menus = [
+  { label: '我的课表', icon: 'calendar', url: '/pages/teacher/timetable' },
+  { label: '课程管理', icon: 'book', url: '/pages/teacher/courses' },
+  { label: '班级管理', icon: 'building', url: '/pages/teacher/class-management' },
+  { label: '班级分析', icon: 'chart', url: '/pages/teacher/analysis' },
+  { label: '学分预测', icon: 'trend', url: '/pages/teacher/credit-prediction' },
+  { label: '反馈管理', icon: 'mail', url: '/pages/teacher/feedback-management' }
+]
+
 const statusTagClass = computed(() => {
   const n = Number(info.value.status)
   if (n === 1) return 'tag--success'
@@ -368,6 +401,48 @@ async function load() {
   margin-bottom: $spacing-md;
   padding: $spacing-lg;
   @include card;
+}
+
+/* ---------- 功能入口 ---------- */
+/* ⚠️ 这里的 .card--flush 必须在本文件里再写一遍：本页有一条 scoped 的
+   `.card { padding: $spacing-lg }`，它的属性选择器优先级高于全局
+   `.card--flush { padding: 0 }` ⇒ 不覆盖的话卡片会多出一圈内边距，
+   菜单行与卡片边缘之间凭空多出空隙（全局类"没生效"看起来就像样式错乱）。 */
+.card--flush {
+  padding: 0;
+  overflow: hidden;
+}
+
+.menu-head {
+  padding: $spacing-lg $spacing-lg 0;
+}
+
+.menu {
+  padding: 0 $spacing-lg $spacing-md;
+}
+
+.menu-item {
+  display: flex;
+  align-items: center;
+  min-height: $tap-min;
+  border-bottom: 1rpx solid $color-divider;
+}
+
+.menu-item:last-child {
+  border-bottom: none;
+}
+
+.menu-item__label {
+  flex: 1;
+  min-width: 0;
+  margin-left: $spacing-md;
+  font-size: $font-base;
+  color: $color-text;
+}
+
+.menu-item__arrow {
+  flex-shrink: 0;
+  opacity: 0.35;
 }
 
 /* ---------- 键值行 ---------- */

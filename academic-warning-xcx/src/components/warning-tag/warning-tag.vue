@@ -1,5 +1,5 @@
 <template>
-  <view class="tag" :class="cls">{{ display }}</view>
+  <view class="tag" :class="cls"><text v-if="shape" class="tag__shape">{{ shape }}</text>{{ display }}</view>
 </template>
 
 <script setup>
@@ -47,6 +47,16 @@ const display = computed(() => {
 })
 
 /**
+ * 等级形状前缀：▲严重 / ●中度 / ■轻度。
+ * 轻度（琥珀 #f59e0b）与中度（橙 #f97316）两个色相太近，色弱用户无法区分，
+ * 用「色 + 形」双编码补一档。只在有等级时显示（纯文案/中性标签不加）。
+ */
+const shape = computed(() => {
+  if (props.plain || props.text) return ''
+  return { 3: '▲', 2: '●', 1: '■' }[resolved.value] || ''
+})
+
+/**
  * 类名直接用 level 数字（tag--level-1/2/3），与 styles/common.scss 的同名类一一对应。
  * 不走 score.js 的 `warningLevelKey()` —— 那个产出 danger/medium/low，
  * 与本文件的类名不同源，多一次映射就多一个写错的地方。
@@ -60,3 +70,11 @@ const cls = computed(() => {
   return 'tag--pending'
 })
 </script>
+
+<style lang="scss" scoped>
+/* 形状前缀比正文小一号、字距收一点，视觉上是记号不是文字 */
+.tag__shape {
+  margin-right: 6rpx;
+  font-size: $font-xs;
+}
+</style>

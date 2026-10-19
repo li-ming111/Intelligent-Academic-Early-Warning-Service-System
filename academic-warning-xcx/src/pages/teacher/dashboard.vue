@@ -31,14 +31,14 @@
               :class="{ 'todo-row--divided': i > 0 }"
               @tap="go(todoUrl(t))"
             >
-              <view class="todo-row__icon">
-                <app-icon :name="t.type === 'warning' ? 'alert' : 'mail'" :size="40" />
+              <view class="todo-row__icon" :class="t.type === 'warning' ? 'todo-row__icon--alert' : ''">
+                <app-icon :name="t.type === 'warning' ? 'alert' : 'mail'" :size="40" :color="t.type === 'warning' ? '#ef4444' : ''" />
               </view>
               <view class="todo-row__main">
                 <text class="todo-row__title">{{ t.title }}</text>
                 <text class="todo-row__hint">{{ todoHint(t) }}</text>
               </view>
-              <text class="todo-row__count">{{ t.count }}</text>
+              <text class="todo-row__count" :class="t.type === 'warning' ? '' : 'todo-row__count--soft'">{{ t.count }}</text>
               <app-icon name="chevron" :size="34" color="#cbd5e1" />
             </view>
           </view>
@@ -154,8 +154,8 @@ const todoItems = computed(() =>
 )
 
 const heroStats = computed(() => [
-  { label: '我的班级', value: numOr(dash.value.totalClasses) },
-  { label: '我的学生', value: numOr(dash.value.totalStudents) },
+  { label: '我的班级', value: numOr(dash.value.totalClasses), onTap: () => go('/pages/teacher/class-management') },
+  { label: '我的学生', value: numOr(dash.value.totalStudents), onTap: () => go('/pages/teacher/students') },
   { label: '预警总数', value: summary.value.total, onTap: () => go('/pages/teacher/warnings') },
   { label: '待处理', value: summary.value.pending, onTap: () => go('/pages/teacher/warnings') }
 ])
@@ -268,6 +268,17 @@ async function load() {
   background: var(--color-primary-weak, #{$color-bg});
   @include flex-center;
   flex-shrink: 0;
+}
+
+/* 预警类待办更重：红染底 + 左侧等级色条。反馈类保持角色浅色。
+   两类待办的紧急度不同，视觉上不该同级。 */
+.todo-row__icon--alert {
+  background: rgba(239, 68, 68, 0.1);
+}
+
+.todo-row__count--soft {
+  /* 反馈类待办的数字：不与预警类抢红色 */
+  color: $color-warning;
 }
 
 .todo-row__main {

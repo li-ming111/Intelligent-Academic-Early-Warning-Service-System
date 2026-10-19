@@ -17,7 +17,7 @@
         v-for="(s, i) in stats"
         :key="s.label"
         class="hero__stat"
-        :class="{ 'hero__stat--divided': i > 0 }"
+        :class="{ 'hero__stat--divided': i > 0, 'hero__stat--tap': !!s.onTap }"
         @tap="s.onTap && s.onTap()"
       >
         <text class="hero__stat-value">{{ s.value }}</text>
@@ -116,6 +116,15 @@ defineProps({
   align-items: center;
 }
 
+/* 可点的统计（有 onTap）：末尾跟一个小箭头，与不可点的区分开。
+   「看起来能点」是这个 affordance 的全部意义——四个格子长得一样时，
+   用户不会去试第三个能不能点。 */
+.hero__stat--tap {
+  .hero__stat-label::after {
+    content: ' ›';
+  }
+}
+
 /* 用 margin 画分隔线而不是 gap：小程序对 flex gap 有基础库/系统版本门槛 */
 .hero__stat--divided {
   border-left: 1rpx solid rgba(255, 255, 255, 0.18);
@@ -134,7 +143,8 @@ defineProps({
 .hero__stat-label {
   margin-top: 6rpx;
   font-size: $font-xs;
-  color: rgba(255, 255, 255, 0.78);
+  /* 0.78 在焦糖橙这类中明度主色上对小字临界（约 4.0:1），提到 0.85 稳过 AA */
+  color: rgba(255, 255, 255, 0.85);
   @include ellipsis;
   max-width: 100%;
 }

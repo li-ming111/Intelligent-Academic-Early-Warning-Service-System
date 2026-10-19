@@ -39,23 +39,40 @@
               <text class="ana__sub">{{ numOr(ana.totalStudents) }} 名学生 · 已出成绩 {{ numOr(ana.gradedCount) }} 人</text>
             </view>
 
-            <view class="ana__grid">
-              <view class="ana__cell">
+            <!-- 主角行：平均分（教师看一门课先看的数）+ 及格率/优秀率进度条。
+                 次行才放最高/最低/标准差——它们是佐证，不是结论。 -->
+            <view class="ana__main">
+              <view class="ana__hero">
                 <text class="ana__label">平均分</text>
-                <text class="ana__value">{{ dec(ana.averageScore) }}</text>
+                <text class="ana__hero-value">{{ dec(ana.averageScore) }}</text>
               </view>
-              <view class="ana__cell">
-                <text class="ana__label">最高分</text>
-                <text class="ana__value">{{ dec(ana.maxScore, 0) }}</text>
+              <view class="ana__rates">
+                <view class="rate">
+                  <view class="rate__top">
+                    <text class="rate__label">及格率</text>
+                    <text class="rate__num">{{ pct(ana.passRate) }}</text>
+                  </view>
+                  <view class="rate__track">
+                    <view class="rate__fill" :style="{ width: ratePct(ana.passRate) + '%' }" />
+                  </view>
+                </view>
+                <view class="rate">
+                  <view class="rate__top">
+                    <text class="rate__label">优秀率</text>
+                    <text class="rate__num">{{ pct(ana.excellentRate) }}</text>
+                  </view>
+                  <view class="rate__track">
+                    <view class="rate__fill rate__fill--soft" :style="{ width: ratePct(ana.excellentRate) + '%' }" />
+                  </view>
+                </view>
               </view>
-              <view class="ana__cell">
-                <text class="ana__label">最低分</text>
-                <text class="ana__value">{{ dec(ana.minScore, 0) }}</text>
-              </view>
-              <view class="ana__cell">
-                <text class="ana__label">标准差</text>
-                <text class="ana__value">{{ dec(ana.standardDeviation) }}</text>
-              </view>
+            </view>
+
+            <view class="ana__sub">
+              <text class="ana__sub-item">最高 <text class="ana__sub-num">{{ dec(ana.maxScore, 0) }}</text></text>
+              <text class="ana__sub-item">最低 <text class="ana__sub-num">{{ dec(ana.minScore, 0) }}</text></text>
+              <text class="ana__sub-item">标准差 <text class="ana__sub-num">{{ dec(ana.standardDeviation) }}</text></text>
+              <text class="ana__sub-item">挂科 <text class="ana__sub-num ana__sub-num--danger">{{ numOr(ana.failedCount) }}</text> 人</text>
             </view>
 
             <view class="bars">
@@ -66,13 +83,6 @@
                 </view>
                 <text class="bar__num">{{ b.count }}</text>
               </view>
-            </view>
-
-            <!-- passRate / excellentRate 后端给的是 0~1 小数，必须乘以 100 -->
-            <view class="ana__foot">
-              <text class="ana__foot-item">及格率 <text class="ana__foot-num">{{ pct(ana.passRate) }}</text></text>
-              <text class="ana__foot-item">优秀率 <text class="ana__foot-num">{{ pct(ana.excellentRate) }}</text></text>
-              <text class="ana__foot-item">挂科 <text class="ana__foot-num ana__foot-num--danger">{{ numOr(ana.failedCount) }}</text> 人</text>
             </view>
           </view>
 
@@ -307,6 +317,12 @@ function pct(v) {
   const n = Number(v)
   if (!Number.isFinite(n)) return '--'
   return `${(n * 100).toFixed(1)}%`
+}
+
+/** 进度条宽度：同 pct 的口径，返回 0~100 数字；取不到给 0（空条比 -- 好读）。 */
+function ratePct(v) {
+  const n = Number(v)
+  return Number.isFinite(n) ? Math.max(0, Math.min(100, Math.round(n * 100))) : 0
 }
 
 /**
@@ -591,29 +607,109 @@ async function submitCreate() {
   color: $color-text-hint;
 }
 
-.ana__grid {
+/* ---------- 分析卡主角行 ---------- */
+.ana__main {
   display: flex;
+  align-items: center;
   margin-top: $spacing-md;
 }
 
-.ana__cell {
+.ana__hero {
+  flex-shrink: 0;
+  min-width: 200rpx;
+}
+
+.ana__hero-value {
+  display: block;
+  margin-top: 4rpx;
+  font-size: $font-2xl;
+  font-weight: 700;
+  line-height: 1.1;
+  color: var(--color-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.ana__rates {
   flex: 1;
   min-width: 0;
+  margin-left: $spacing-xl;
+}
+
+.rate + .rate {
+  margin-top: $spacing-md;
+}
+
+.rate__top {
+  display: flex;
+  justify-content: space-between;
+}
+
+.rate__label {
+  font-size: $font-xs;
+  color: $color-text-hint;
+}
+
+.rate__num {
+  font-size: $font-sm;
+  font-weight: 600;
+  color: $color-text;
+  font-variant-numeric: tabular-nums;
+}
+
+.rate__track {
+  margin-top: 6rpx;
+  height: 10rpx;
+  border-radius: $radius-pill;
+  background: $color-bg;
+  overflow: hidden;
+}
+
+.rate__fill {
+  height: 100%;
+  border-radius: $radius-pill;
+  background: var(--color-primary);
+}
+
+/* 优秀率条比及格率浅一档：同为结论指标，及格率是主。 */
+.rate__fill--soft {
+  opacity: 0.45;
+}
+
+/* ---------- 次行：佐证指标 ---------- */
+.ana__sub {
+  display: flex;
+  margin-top: $spacing-lg;
+  padding-top: $spacing-md;
+  border-top: 1rpx solid $color-divider;
+}
+
+.ana__sub-item {
+  flex: 1;
+  min-width: 0;
+  font-size: $font-xs;
+  color: $color-text-hint;
+  text-align: center;
+}
+
+.ana__sub-item + .ana__sub-item {
+  border-left: 1rpx solid $color-divider;
+}
+
+.ana__sub-num {
+  font-size: $font-sm;
+  font-weight: 600;
+  color: $color-text;
+  font-variant-numeric: tabular-nums;
+}
+
+.ana__sub-num--danger {
+  color: $color-danger;
 }
 
 .ana__label {
   display: block;
   font-size: $font-xs;
   color: $color-text-hint;
-}
-
-.ana__value {
-  display: block;
-  margin-top: 4rpx;
-  font-size: $font-xl;
-  font-weight: 700;
-  color: $color-text;
-  font-variant-numeric: tabular-nums;
 }
 
 .bars {
@@ -647,10 +743,10 @@ async function submitCreate() {
   border-radius: $radius-pill;
 }
 
-.bar__fill--excellent { background: #16a34a; }
-.bar__fill--good      { background: #2563eb; }
-.bar__fill--medium    { background: #94a3b8; }
-.bar__fill--pass      { background: #f59e0b; }
+.bar__fill--excellent { background: #9c451a; }
+.bar__fill--good      { background: #c05621; }
+.bar__fill--medium    { background: #d98a5f; }
+.bar__fill--pass      { background: #efcdae; }
 .bar__fill--fail      { background: $color-danger; }
 
 .bar__num {
@@ -661,29 +757,6 @@ async function submitCreate() {
   color: $color-text;
   text-align: right;
   font-variant-numeric: tabular-nums;
-}
-
-.ana__foot {
-  display: flex;
-  margin-top: $spacing-lg;
-  padding-top: $spacing-md;
-  border-top: 1rpx solid $color-divider;
-}
-
-.ana__foot-item {
-  flex: 1;
-  min-width: 0;
-  font-size: $font-xs;
-  color: $color-text-hint;
-}
-
-.ana__foot-num {
-  color: $color-text;
-  font-weight: 600;
-}
-
-.ana__foot-num--danger {
-  color: $color-danger;
 }
 
 /* ---------- 列表头 ---------- */
