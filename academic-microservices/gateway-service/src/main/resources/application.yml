@@ -94,6 +94,18 @@ spring:
             - Path=/api/courses/**
           filters:
             - StripPrefix=1
+        # 排课面（W48，2026-10-17）：CoursePlanController 的 `/course-plans/**`。
+        # ⚠️ 必须**单独一条**：`/api/courses/**` 前缀**不覆盖** `/api/course-plans/**`
+        #    （`courses` ≠ `course-plans`，差在 `-plans`）。StripPrefix=1 与上面同型
+        #    （剥掉 `/api` ⇒ 下游 `/course-plans/**`，正是 CoursePlanController 的映射）。
+        #    配套闸：网关 `PREFIX_COURSE_PLANS` + course-service SecurityConfig 的
+        #    `/course-plans/**` —— **先闸后路由**，别只加路由。
+        - id: course-plans-service
+          uri: lb://course-service
+          predicates:
+            - Path=/api/course-plans/**
+          filters:
+            - StripPrefix=1
         - id: auth-service
           uri: lb://auth-service
           predicates:

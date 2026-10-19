@@ -115,6 +115,10 @@ public class TeacherController {
     @Autowired
     private com.academic.mapper.AcademicWarningCourseMapper academicWarningCourseMapper;
 
+    // 「我的课表」（W48）。读 course_plans，走 mapper 直连。
+    @Autowired
+    private com.academic.mapper.CourseTimetableMapper courseTimetableMapper;
+
     // ==================== 注册（已删，2026-10-08 W27） ====================
     // 这里原来有一条 `POST /teachers/register`：它只往 `teacher_profile` 插一行档案，
     // **不建账号、不设口令、不经 `userService.register`** —— 而 `teacher_profile.user_id`
@@ -1168,6 +1172,29 @@ public class TeacherController {
             return forbidden("请先登录");
         }
         return ApiResponse.success(courseRecommendationMapper.listByTeacher(me));
+    }
+
+    /**
+     * 「我的课表」（W48，2026-10-17）。
+     *
+     * <p>数据源 {@code course_plans}（排课计划）。这块能力此前**后端齐备但无入口** ——
+     * 教师看不到自己的上课时间/教室。身份**只取网关注入的 X-User-Id**（不回落请求体），
+     * 查的是 {@code course_plans.teacher_id = 我}，所以不存在"传别人的 id 看别人课表"这条路。
+     * ⚠️ {@code course_plans.teacher_id} 是 {@code users.id}（**不是** {@code teacher_profile.id}），
+     * 与 {@code isSelf} 同源，故这里直接比 X-User-Id 即可；详见
+     * {@link com.academic.mapper.CourseTimetableMapper}。
+     */
+    @GetMapping("/courses/timetable")
+    public ApiResponse<Object> getMyTimetable(HttpServletRequest request) {
+        Long me = getUserIdFromGateway(request);
+        if (me == null) {
+            return forbidden("请先登录");
+        }
+        try {
+            return ApiResponse.success(courseTimetableMapper.listForTeacher(me));
+        } catch (Exception e) {
+            return ApiResponse.serverError("获取课表失败: " + ExceptionMessages.describe(e));
+        }
     }
 
     /**

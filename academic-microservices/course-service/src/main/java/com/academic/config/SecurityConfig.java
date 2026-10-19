@@ -73,6 +73,19 @@ public class SecurityConfig {
                 // `role == ROLE_COLLEGE_ADMIN` 段末尾），两层口径一致。
                 .requestMatchers("/courses/**").access((authentication, context) ->
                         new AuthorizationDecision(isCourseManager(context.getRequest().getHeader("X-Role"))))
+                // ==================== 排课面（W48，2026-10-17） ====================
+                //
+                // `CoursePlanController`（`@RequestMapping("/course-plans")`）此前整个面
+                // **既无网关路由、也无前端入口** —— 但同时它也不在任何闸内：`/course-plans/**`
+                // 落进下面的 `anyRequest().authenticated()`，而 `GatewayAuthFilter` 是按请求头
+                // 建认证、不验签的 ⇒ **本机直连 8075 带一个 X-Role 头就能建/改/删排课**。
+                // 与 `/courses/**` 是同一族（网关那层已同步补 `PREFIX_COURSE_PLANS`）。
+                //
+                // 放行面与 `/courses/**` 一致：管理员（4）+ 自定义角色（≥ 6）。排课是课程管理
+                // 的一部分，口径不该分叉。学生/教师不直连这里 —— 他们的「我的课表」走
+                // student-service / teacher-service 的自助端点（那边各自有归属闸）。
+                .requestMatchers("/course-plans/**").access((authentication, context) ->
+                        new AuthorizationDecision(isCourseManager(context.getRequest().getHeader("X-Role"))))
                 .anyRequest().authenticated()
             )
             .addFilterBefore(gatewayAuthFilter, UsernamePasswordAuthenticationFilter.class);

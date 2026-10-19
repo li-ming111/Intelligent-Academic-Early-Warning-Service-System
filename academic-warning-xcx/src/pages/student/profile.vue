@@ -151,6 +151,7 @@ const warningBadge = ref('')
 
 const menus = computed(() => [
   { label: '成绩查询', icon: 'doc', url: '/pages/student/scores' },
+  { label: '我的课表', icon: 'calendar', url: '/pages/student/timetable' },
   { label: '预警记录', icon: 'alert', url: '/pages/student/warnings', badge: warningBadge.value },
   { label: '帮扶计划', icon: 'target', url: '/pages/student/assistance' },
   { label: '成绩申诉', icon: 'edit', url: '/pages/student/appeals' },

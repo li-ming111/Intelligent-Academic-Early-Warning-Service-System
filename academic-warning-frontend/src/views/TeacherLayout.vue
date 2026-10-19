@@ -14,12 +14,19 @@
           >
             <span>首页</span>
           </router-link>
-          <router-link 
-            to="/teacher/courses" 
+          <router-link
+            to="/teacher/courses"
             class="nav-item"
             :class="{ active: isActive('/teacher/courses') }"
           >
             <span>课程管理</span>
+          </router-link>
+          <router-link
+            to="/teacher/timetable"
+            class="nav-item"
+            :class="{ active: isActive('/teacher/timetable') }"
+          >
+            <span>我的课表</span>
           </router-link>
           <router-link 
             to="/teacher/scores" 

@@ -122,6 +122,21 @@ export const studentAPI = {
   getClassRankingList: (userId) => {
     return apiClient.get(`/students/class-ranking/${userId}`)
   },
+  // ========== 我的课表 ==========
+  // 2026-10-17（W48）新增。数据源 `course_plans`（排课计划）——这张表和后端
+  // `CoursePlanController` 一直都在，但**既没有网关路由、也没有前端入口**，
+  // 所以学生此前看不到"我选的课什么时候、在哪儿上"。
+  //
+  // 参数是 users.id（与 /students/** 其余端点同一套 id 空间）；
+  // 归属由服务端从网关注入的 X-User-Id 判定，**不需要也不应该**由前端传别人的 id
+  // ——传了也会被 `denyUnlessSelf` 判 403。
+  //
+  // 注意「学期」两个口径不通用：`course_plans.semester` 是 '2025-2026-2' 这种串，
+  // 而 `enrollments.semester` 是数字。后端**不按学期过滤**（过滤会把课表滤空），
+  // 这里也别在响应里按数字学期比。
+  getTimetable: (userId) => {
+    return apiClient.get(`/students/timetable/${userId}`)
+  },
   // ========== 通知管理 ==========
   
   getUnreadNotifications: (userId) => {
@@ -338,6 +353,16 @@ export const teacherAPI = {
   },
   getAllCourses: () => {
     return apiClient.get(`/teachers/courses`)  // 不传teacher_id，后端返回全部课程
+  },
+  // ========== 我的课表 ==========
+  // 2026-10-17（W48）新增，与 `studentAPI.getTimetable` 同一次接线。
+  // **不收参数**：身份只取网关注入的 X-User-Id，后端查 `course_plans.teacher_id = 我`
+  // —— 传别人的 id 这条路在设计上就不存在（传了也没人看）。
+  // ⚠️ `course_plans.teacher_id` 是 users.id（**不是** teacher_profile.id），
+  // 与 `/teachers/**` 其余端点的口径一致，但别和 `teacher_course.teacher_id` 混。
+  // 返回里的 `maxStudents` 是**计划容量**、`enrolledCount` 是**实际选课人数**，两个数含义不同。
+  getTimetable: () => {
+    return apiClient.get(`/teachers/courses/timetable`)
   },
   updateCourse: (courseId, data) => {
     return apiClient.put(`/teachers/courses/${courseId}`, data)
@@ -884,6 +909,32 @@ export const adminAPI = {
   },
   getCourses: () => {
     return apiClient.get(`/admin/courses`)
+  },
+  // ============= 排课管理 API（W48，2026-10-17）=============
+  //
+  // ⚠️ 这一组**不走 admin-service**，打的是 course-service 的 `CoursePlanController`，
+  // 经网关新增的 `course-plans-service` 路由（`/api/course-plans/**` → StripPrefix=1
+  // → 下游 `/course-plans/**`）。所以它们和上面 `/admin/courses` 同一屏展示，
+  // 却分属两个服务、两张表（`course_plans` vs `courses`）——别按名字推。
+  //
+  // 访问面 = 管理员（4）+ 自定义角色（≥6）。网关 `PREFIX_COURSE_PLANS` 与
+  // course-service `SecurityConfig` 的 `/course-plans/**` 两层同解（**先闸后路由**，
+  // 加路由前闸就装好了）。学生/教师拿不到这组，他们各自的「我的课表」走自助端点。
+  //
+  // 这几个端点的响应**不是** `ApiResponse` 信封，而是 Spring 的 `ResponseEntity`
+  // （`/all` 回裸数组，写端点回 `{success, message}`），且失败用 HTTP 400
+  // ——`client.js` 的响应拦截器只认 `code` 字段，认不出这个形状，所以这里是原样返回。
+  getAllCoursePlans: () => {
+    return apiClient.get(`/course-plans/all`)
+  },
+  createCoursePlan: (data) => {
+    return apiClient.post(`/course-plans/create`, data)
+  },
+  updateCoursePlan: (id, data) => {
+    return apiClient.put(`/course-plans/${id}`, data)
+  },
+  deleteCoursePlan: (id) => {
+    return apiClient.delete(`/course-plans/${id}`)
   },
   createCourse: (data) => {
     return apiClient.post(`/admin/courses`, data)

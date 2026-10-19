@@ -200,6 +200,77 @@ class AuthenticationFilterTest {
         assertFalse(allow(CUSTOM, HttpMethod.POST, "/api/courses/add"));
     }
 
+    // ==================== /api/course-plans/**：W48 接线时同步补的闸（2026-10-17） ====================
+    //
+    // 背景：排课面（下游 `CoursePlanController`）此前**无网关路由、无前端入口**，
+    // 但**同时不被任何前缀检查命中** —— `/api/course-plans` 与 `/api/courses` 差一个
+    // `-plans`，`path.startsWith(PREFIX_COURSE)` 对它恒为假。于是它和当年的
+    // `/api/college-admin` 一模一样：内置角色 1/2/3 一路落到 `hasPermission` 末尾的
+    // `return true`。
+    //
+    // 为什么本轮才暴露：**没有路由 ⇒ 走不到下游**，所以它一直是"零调用方的洞"。
+    // 本轮给前端接课表时加了 `course-plans-service` 路由，一旦只加路由不补闸，
+    // 就等于把一个「建/改/删排课」的写面开给每个登录用户。故**先闸后路由**。
+    //
+    // 与 W31 的 `/api/courses/**` 同族、同解，但**必须分开测**：`-plans` 这个后缀
+    // 就是本条的全部要害，拿 `/api/courses/**` 那组用例是照不到它的。
+
+    @Test
+    @DisplayName("W48：内置角色 1/2/3 进不去排课管理面（`-plans` 让 PREFIX_COURSE 照不到它）")
+    void coursePlansSurface_deniedForBuiltInNonAdminRoles() {
+        filter = filterWithBuiltInBindings();
+
+        // 三个写端点是题眼：只加路由不补闸的话，这三个对任何登录用户都通。
+        assertFalse(allow(STUDENT, HttpMethod.POST, "/api/course-plans/create"));
+        assertFalse(allow(STUDENT, HttpMethod.PUT, "/api/course-plans/1"));
+        assertFalse(allow(STUDENT, HttpMethod.DELETE, "/api/course-plans/1"));
+        assertFalse(allow(TEACHER, HttpMethod.POST, "/api/course-plans/create"));
+        assertFalse(allow(COUNSELOR, HttpMethod.DELETE, "/api/course-plans/1"));
+
+        // 读也一起拒：这是排课管理面。学生/教师看自己的课表走自助端点，
+        // 前端打的是 `/api/students/timetable/{id}` 与 `/api/teachers/courses/timetable`
+        // ——**不是**这一条，别把两个面搞混。
+        assertFalse(allow(STUDENT, HttpMethod.GET, "/api/course-plans/all"));
+        assertFalse(allow(TEACHER, HttpMethod.GET, "/api/course-plans/all"));
+        assertFalse(allow(TEACHER, HttpMethod.GET, "/api/course-plans/1"));
+        assertFalse(allow(TEACHER, HttpMethod.GET, "/api/course-plans/semester"));
+
+        // 学院管理员与 `/api/courses/**` 同解：课程目录是全局表，本院管理员不管。
+        assertFalse(allow(COLLEGE_ADMIN, HttpMethod.GET, "/api/course-plans/all"));
+    }
+
+    @Test
+    @DisplayName("W48：管理员照常通行（新闸不能误伤 4）")
+    void coursePlansSurface_adminUnaffected() {
+        filter = filterWithBuiltInBindings();
+        assertTrue(allow(ADMIN, HttpMethod.GET, "/api/course-plans/all"));
+        assertTrue(allow(ADMIN, HttpMethod.POST, "/api/course-plans/create"));
+        assertTrue(allow(ADMIN, HttpMethod.PUT, "/api/course-plans/1"));
+        assertTrue(allow(ADMIN, HttpMethod.DELETE, "/api/course-plans/1"));
+    }
+
+    @Test
+    @DisplayName("W48：自定义角色仍由 role_permissions 决定（MANAGE 读写都行 / VIEW 只读）")
+    void coursePlansSurface_customRoleStillRbacDriven() {
+        filter = filterWith(Map.of("ROLE_ASSISTANT", List.of("PERM_COURSE_MANAGE")));
+        assertTrue(allow(CUSTOM, HttpMethod.GET, "/api/course-plans/all"));
+        assertTrue(allow(CUSTOM, HttpMethod.POST, "/api/course-plans/create"));
+        filter = filterWith(Map.of("ROLE_ASSISTANT", List.of("PERM_COURSE_VIEW")));
+        assertTrue(allow(CUSTOM, HttpMethod.GET, "/api/course-plans/all"));
+        assertFalse(allow(CUSTOM, HttpMethod.POST, "/api/course-plans/create"));
+    }
+
+    @Test
+    @DisplayName("W48：排课面归入 COURSE 模块 —— 否则自定义角色会被 fail-closed 一律拒掉")
+    void coursePlansSurface_familyIsCourse() {
+        // 上面那条自定义角色用例能通过，靠的正是这个映射：`rbacFamilyOf` 返回 null 时
+        // `customRoleAllows` 直接 false，自定义角色就连读都读不到（fail-closed 的另一面）。
+        assertEquals("COURSE", AuthenticationFilter.rbacFamilyOf("/api/course-plans/all"));
+        assertEquals("COURSE", AuthenticationFilter.rbacFamilyOf("/api/course-plans/1"));
+        // 与课程管理面同族，但两条前缀各自独立映射 —— 别把它们合并成一条 startsWith。
+        assertEquals("COURSE", AuthenticationFilter.rbacFamilyOf("/api/courses/1"));
+    }
+
     // ==================== /api/admin/**：W33 收掉的学院管理员越权面（2026-10-09） ====================
     //
     // 补闸前：`role == ROLE_COLLEGE_ADMIN` 那一支写的是

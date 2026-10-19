@@ -789,8 +789,11 @@ public class StudentServiceImpl implements StudentService {
      * {@code class_total} 是种子数据里写死的常量（每班都一样），所以"班级平均 GPA"
      * 无论哪个班、哪个学期都返回同一个数。改为按 {@link ScoreCaliber} 实算。
      *
-     * <p>{@code semester} 参数目前不参与计算：GPA 排行按"每门课最新一次有效成绩"
-     * 统计（见 {@code LATEST_VALID_SCORE}），是全学程口径。保留参数以兼容已有调用方。
+     * <p><b>2026-10-10（W38）</b>：{@code semester} 现在**真的参与计算**。
+     * 传了学期（数字序号或 {@code "2025-2026-1"} 这类学年学期串）就走
+     * {@link com.academic.common.constant.ScoreCaliber#SEMESTER_STUDENT_GPA} 按学期过滤的排行；
+     * 不传则回退到全学程口径 {@code LATEST_VALID_SCORE}（"每门课最新一次有效成绩"）。
+     * 此前这条注释写的是"参数目前不参与计算"——那是 W38 之前的事实，已过期。
      */
     @Override
     public Object getClassBenchmarkComparison(Long classId, String semester) {

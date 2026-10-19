@@ -75,4 +75,33 @@ class CourseServiceAccessGateTest {
         assertFalse(SecurityConfig.isCourseManager("4x"));
         assertFalse(SecurityConfig.isCourseManager("99999999999999999999"), "超出 int 也不能当成 ≥6");
     }
+
+    // ==================== 排课面（`/course-plans/**`，W48，2026-10-17） ====================
+    //
+    // 排课面与课程管理面**刻意共用同一个判定方法**（`isCourseManager`），所以下面这组
+    // 打印的是"两条前缀同解"。它值得单写一遍的理由是：`SecurityFilterChain` 里
+    // `/course-plans/**` 那条 matcher 是本轮新加的，而它**极易被加错位置** ——
+    // 排在 `.anyRequest()` 之后就等于没加。这一段钉住"两条前缀拿到的答案一样"，
+    // 也就钉住了排课面没有被落到 `authenticated()` 那一档。
+    //
+    // ⚠️ 这只是**第二层**。第一层在网关 `AuthenticationFilter` 的 `PREFIX_COURSE_PLANS`，
+    // 那边另有测试（`GatewayCoursePlansGateTest`）。两层判据相同、实现各自独立，
+    // 任一层单独失效时不至于全开 —— 这正是"网关不是网络边界"那条结论的落地方式。
+
+    @Test
+    @DisplayName("排课面：与 `/courses/**` 同解 —— 管理员 / 自定义角色放行")
+    void coursePlansAllowsSameAsCourses() {
+        for (String role : new String[]{"4", "admin", "6", "7", "100"}) {
+            assertTrue(SecurityConfig.isCourseManager(role), "排课面应放行 role=" + role);
+        }
+    }
+
+    @Test
+    @DisplayName("排课面：与 `/courses/**` 同解 —— 学生/教师/辅导员/学院管理员一律拒")
+    void coursePlansDeniesSameAsCourses() {
+        for (String role : new String[]{"1", "2", "3", "5", "student", "teacher",
+                                        "counselor", "college_admin"}) {
+            assertFalse(SecurityConfig.isCourseManager(role), "排课面应拒绝 role=" + role);
+        }
+    }
 }

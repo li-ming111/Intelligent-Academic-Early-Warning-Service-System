@@ -49,12 +49,19 @@
           >
             <span>消息中心</span>
           </router-link>
-          <router-link 
-            to="/student/benchmark-analysis" 
+          <router-link
+            to="/student/benchmark-analysis"
             class="nav-item"
             :class="{ active: isActive('/student/benchmark-analysis') }"
           >
             <span>对标分析</span>
+          </router-link>
+          <router-link
+            to="/student/timetable"
+            class="nav-item"
+            :class="{ active: isActive('/student/timetable') }"
+          >
+            <span>我的课表</span>
           </router-link>
           <router-link 
             to="/student/settings" 

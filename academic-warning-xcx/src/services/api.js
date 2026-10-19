@@ -65,6 +65,9 @@ class ApiClient {
     /** 同 class-members，保留语义化别名便于阅读 */
     getClassInfoByUser: (userId) => this._get(`/students/class-members/${userId}`),
     getClassRanking: (userId) => this._get(`/students/class-ranking/${userId}`),
+    // 「我的课表」（W48，2026-10-18）。参数是 users.id（与 /students/** 同套）。
+    // 后端 `GET /students/timetable/{userId}` 归 `denyUnlessSelf` 管，换 id 一律 403。
+    getTimetable: (userId) => this._get(`/students/timetable/${userId}`),
     // 通知（本角色唯一的收件箱）
     // ⚠️ 分页返回值里的 `total` **恒为 0**（`ip.getTotal()` 拿到了 0，但 `list` 有数据）。
     // 所以**不要**用 total 驱动分页/无限滚动，否则第一页就会显示"没有更多了"。
@@ -193,6 +196,12 @@ class ApiClient {
     getAllCourses: () => this._get('/teachers/courses'),
     /** 更新课程。体 = Course 实体；`id` 由路径给，body 里不用重复。 */
     updateCourse: (id, data) => this._put(`/teachers/courses/${id}`, data),
+    /**
+     * 我的课表（W48，2026-10-18）。**不收参数** —— 身份只取网关注入的 X-User-Id，
+     * 后端查 `course_plans.teacher_id = 我`，不存在"传别人 id"这条路。
+     * ⚠️ 返回里的 `maxStudents` 是计划容量、`enrolledCount` 是实际选课人数，两个数不同。
+     */
+    getTimetable: () => this._get('/teachers/courses/timetable'),
     /** **纯桩**：只回 `{status:'已推荐', message:'课程推荐成功，学生将收到通知'}`，不写库、不发通知。不要接进 UI。 */
     recommendCourse: (data) => this._post('/teachers/courses/recommend', data),
 

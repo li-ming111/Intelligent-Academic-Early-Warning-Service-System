@@ -20,16 +20,21 @@ import { join } from 'node:path'
 //        `notification-center` 这条路由不存在（导航里也没有）；列着它只会导航到空页 ⇒ 假红。
 //   teacher/feedback-management —— 已删的孤儿路由（见 router/index.js 顶部注释），
 //        现在只有 `feedback`。同理假红。
+// 2026-10-18（W48）：清单一度比 router **少 4 条真路由**（student/timetable、
+//   teacher/timetable、admin/course-plans、admin/appeals）—— 前三条正是本轮新加的排课/课表，
+//   于是"五个角色全绿"这句结论**根本没覆盖新功能**。判法：拿 router/index.js 的
+//   `path:` 逐条与这份 PAGES 对差（别信"上次也是全绿"）。新加的页一律补进来。
 const PAGES = {
   student: ['dashboard','scores','warnings','assistance','appeals','messages',
             'benchmark-analysis','assistance-feedback',
-            'class-members','class-ranking','settings','statistics'],
+            'class-members','class-ranking','timetable','settings','statistics'],
   teacher: ['dashboard','scores','warnings','analysis','credit-prediction','audit-log',
-            'feedback','courses','class-management','messages','settings'],
+            'feedback','courses','timetable','class-management','messages','settings'],
   counselor: ['dashboard','students','warnings','assistance','scores','analytics','courses',
               'credit-monitor','notifications','communication','class-management','settings'],
   admin: ['dashboard','colleges','majors','users','rules','statistics','warnings','courses',
-          'permissions','messages','data-export','class-management','settings'],
+          'course-plans','permissions','messages','data-export','class-management','appeals',
+          'settings'],
   'college-admin': ['dashboard','students','teachers','warnings','classes','analysis',
                     'counselors','export','scores'],
 }
@@ -168,18 +173,36 @@ const main = async () => {
     const uniq = []
     for (const ev of events) if (!uniq.some((u) => u.kind === ev.kind && u.text === ev.text)) uniq.push(ev)
     const hard = uniq.filter((e) => e.kind === '未捕获异常' || /^HTTP 5/.test(e.kind))
-    if (hard.length || !info || info.len < 30) bad++
-    rows.push({ page: p, landed, len: info?.len ?? 0, stuck: info?.stuckLoading, evs: uniq, head: info?.head || '', canvases: info?.canvases ?? 0 })
+    // ⚠️ W48：`landed` 原来只是**记录**、从不参与判定 —— 于是"请求的页被静默重定向到别处"
+    //   （路由守卫把角色不符/别的原因弹回 dashboard）在报表里**长得和 ✓ 完全一样**，
+    //   而且只会记下 landing 页的数据，等于那一格根本没验目标页。
+    //   ⇒ 现在进入判定：落点不是请求的 URL 路径就算失败。
+    const expected = `${PREFIX}/${p}`
+    const redirected = !!landed && landed !== expected
+    if (hard.length || !info || info.len < 30 || redirected) bad++
+    rows.push({ page: p, landed, expected, redirected, len: info?.len ?? 0, stuck: info?.stuckLoading, evs: uniq, head: info?.head || '', canvases: info?.canvases ?? 0 })
   }
 
   // ---- 报表 ----
   for (const r of rows) {
-    const tag = (r.evs.some((e) => e.kind === '未捕获异常' || /^HTTP 5/.test(e.kind)) || r.len < 30) ? '✗' : (r.evs.length ? '·' : '✓')
-    console.log(`${tag} ${(PREFIX + '/' + r.page).padEnd(34)} 正文${String(r.len).padStart(5)}字  ${r.canvases ? `图${r.canvases} ` : ''}${r.stuck ? '⚠加载遮罩未消失 ' : ''}${r.head}`)
+    const badRow = r.evs.some((e) => e.kind === '未捕获异常' || /^HTTP 5/.test(e.kind)) || r.len < 30 || r.redirected
+    const tag = badRow ? '✗' : (r.evs.length ? '·' : '✓')
+    const redir = r.redirected ? `⚠被重定向到 ${r.landed}（目标 ${r.expected}）` : ''
+    console.log(`${tag} ${(PREFIX + '/' + r.page).padEnd(34)} 正文${String(r.len).padStart(5)}字  ${r.canvases ? `图${r.canvases} ` : ''}${r.stuck ? '⚠加载遮罩未消失 ' : ''}${redir}${redir ? '' : r.head}`)
     for (const e of r.evs) console.log(`      ${e.kind.padEnd(14)} ${e.text}`)
   }
   console.log(`\n通过 ${rows.length - bad}/${rows.length}`)
-  if (bad) return done(1, `${bad} 个页面存在未捕获异常 / 5xx / 正文过短`)
+  if (bad) {
+    // 失败原因别写死成"异常/5xx/正文过短"——W48 加了"被重定向"这一档之后，
+    // 那句总结会把重定向说成别的东西（打靶时实测：9 页全因重定向判失败，
+    // 结尾却打印"存在未捕获异常 / 5xx / 正文过短"）。按实际原因归类。
+    const why = []
+    if (rows.some(r => r.redirected)) why.push(`${rows.filter(r => r.redirected).length} 个被重定向`)
+    if (rows.some(r => r.evs.some(e => e.kind === '未捕获异常'))) why.push('未捕获异常')
+    if (rows.some(r => r.evs.some(e => /^HTTP 5/.test(e.kind)))) why.push('5xx')
+    if (rows.some(r => r.len < 30)) why.push('正文过短')
+    return done(1, `${bad} 个页面不合格：${why.join(' / ')}`)
+  }
   return done(0, `全部 ${rows.length} 个页面无异常`)
 }
 

@@ -85,10 +85,13 @@ const ROLES = {
       // 探针这一行没跟着改 ⇒ 页面明明渲染了真数据（data「进度 50%」=true）却报到达失败。
       // 改用「帮扶计划评价」：全仓只此一处（grep 过），且它在 `v-if="evaluatable.length"` 里面
       // ⇒ 没有可评价计划时整块不渲染，判据仍然打得红（不是恒真的静态标签）。
-      { path: '/pages/student/assistance-feedback', expect: '帮扶计划评价', data: '进度 50%' },
+      { path: '/pages/student/assistance-feedback', expect: '帮扶计划评价', data: '进度 60%' },
       // 设置页全是开关，没有"只有真数据才出现"的字面量 —— 留空并让报告显式计入
       // 「没有数据判据」那一栏，别假装它被验过了。
-      { path: '/pages/student/settings', expect: '消息接收', data: '' }
+      { path: '/pages/student/settings', expect: '消息接收', data: '' },
+      // W48（2026-10-18）新增「我的课表」。data 取 司明(enrollments course 1-6) 课表里
+      // 独有的教室串 —— 空态/接口坏掉都不会出现。
+      { path: '/pages/student/timetable', expect: '周课表', data: '教学楼A301' }
     ],
     forbidden: []
   },
@@ -107,7 +110,11 @@ const ROLES = {
       { path: '/pages/teacher/analysis', expect: '标准差', data: '24/24 人已出成绩' },
       { path: '/pages/teacher/feedback-management', expect: '未回复', data: '数据结构的课后作业太难了' },
       { path: '/pages/teacher/class-management', expect: '我的班级', data: '空班' },
-      { path: '/pages/teacher/profile', expect: '教师资料', data: '13397583736@qq.com' }
+      { path: '/pages/teacher/profile', expect: '教师资料', data: '13397583736@qq.com' },
+      // W48 新增「我的课表」。教师 10001 是于凤海(users.id=29)，course_plans 里
+      // teacher_id=29 有 3 条（id 1/4/10）。data 取「教学楼A301」——
+      // 只有他本人那一条排课（id=1）才有，换别人的 token 或空态都不会出现。
+      { path: '/pages/teacher/timetable', expect: '周课表', data: '教学楼A301' }
     ],
     // 教师端的预警处理接口不落库，页面故意不做处理入口。
     forbidden: [

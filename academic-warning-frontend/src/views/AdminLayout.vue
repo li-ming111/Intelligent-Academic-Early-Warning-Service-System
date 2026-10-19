@@ -13,6 +13,7 @@
             <router-link to="/admin/colleges" class="nav-item" :class="{ active: isActive('/admin/colleges') }"><span>学院管理</span></router-link>
             <router-link to="/admin/majors" class="nav-item" :class="{ active: isActive('/admin/majors') }"><span>专业管理</span></router-link>
             <router-link to="/admin/courses" class="nav-item" :class="{ active: isActive('/admin/courses') }"><span>课程管理</span></router-link>
+            <router-link to="/admin/course-plans" class="nav-item" :class="{ active: isActive('/admin/course-plans') }"><span>排课管理</span></router-link>
             <router-link to="/admin/users" class="nav-item" :class="{ active: isActive('/admin/users') }"><span>用户管理</span></router-link>
             <router-link to="/admin/rules" class="nav-item" :class="{ active: isActive('/admin/rules') }"><span>规则管理</span></router-link>
             <router-link to="/admin/warnings" class="nav-item" :class="{ active: isActive('/admin/warnings') }"><span>预警管理</span></router-link>

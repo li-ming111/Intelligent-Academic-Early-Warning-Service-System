@@ -14,6 +14,9 @@ import AppealManagement from '../views/student/AppealManagement.vue'
 import AssistanceFeedback from '../views/student/AssistanceFeedback.vue'
 import ClassMembers from '../views/student/ClassMembers.vue'
 import ClassRanking from '../views/student/ClassRanking.vue'
+// 2026-10-18（W48）：我的课表 —— 读 `course_plans`。这块后端一直齐备
+// （`CoursePlanController` + 10 行排课数据），但此前**无网关路由、无前端入口**。
+import MyTimetable from '../views/student/MyTimetable.vue'
 import StudentLayout from '../views/StudentLayout.vue'
 import TeacherDashboard from '../views/TeacherDashboard.vue'
 import TeacherRegister from '../views/TeacherRegister.vue'
@@ -31,6 +34,7 @@ import TeacherAuditLog from '../views/TeacherAuditLog.vue'
 //   留在菜单里的 TeacherFeedback.vue 发的是 `{ reply }`，是对的 ⇒ 留它、删这个。
 import TeacherFeedback from '../views/TeacherFeedback.vue'
 import TeacherCourses from '../views/TeacherCourses.vue'
+import TeacherTimetable from '../views/TeacherTimetable.vue'
 import TeacherClassManagement from '../views/TeacherClassManagement.vue'
 import TeacherMessages from '../views/TeacherMessages.vue'
 import TeacherSettings from '../views/TeacherSettings.vue'
@@ -55,6 +59,7 @@ import AdminStatistics from '../views/AdminStatistics.vue'
 import AdminWarnings from '../views/AdminWarnings.vue'
 import AdminAppeals from '../views/AdminAppeals.vue'
 import AdminCourses from '../views/AdminCourses.vue'
+import AdminCoursePlans from '../views/AdminCoursePlans.vue'
 import AdminPermissions from '../views/AdminPermissions.vue'
 import AdminMessages from '../views/AdminMessages.vue'
 import AdminDataExport from '../views/AdminDataExport.vue'
@@ -155,6 +160,11 @@ const routes = [
         meta: { requiresAuth: true }
       },
       {
+        path: 'timetable',
+        component: MyTimetable,
+        meta: { requiresAuth: true }
+      },
+      {
         path: 'settings',
         component: Settings,
         meta: { requiresAuth: true }
@@ -228,6 +238,11 @@ const routes = [
         path: 'courses',
         name: 'TeacherCourses',
         component: TeacherCourses
+      },
+      {
+        path: 'timetable',
+        name: 'TeacherTimetable',
+        component: TeacherTimetable
       },
       {
         path: 'class-management',
@@ -366,6 +381,14 @@ const routes = [
         path: 'courses',
         name: 'AdminCourses',
         component: AdminCourses
+      },
+      {
+        // 排课管理（W48）。与上面「课程管理」同一屏的两个维度：
+        // 那条管课程**目录**（admin-service /courses），这条管课程**开课安排**
+        // （course-service /course-plans，经网关 course-plans-service 路由）。
+        path: 'course-plans',
+        name: 'AdminCoursePlans',
+        component: AdminCoursePlans
       },
       {
         path: 'permissions',

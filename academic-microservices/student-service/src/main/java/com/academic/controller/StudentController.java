@@ -31,6 +31,10 @@ public class StudentController {
     @org.springframework.beans.factory.annotation.Autowired
     private com.academic.mapper.CourseRecommendationMapper courseRecommendationMapper;
 
+    /** 「我的课表」的读出口（W48）。同 {@code courseRecommendationMapper}：只查课表，走 mapper 直连。 */
+    @org.springframework.beans.factory.annotation.Autowired
+    private com.academic.mapper.CourseTimetableMapper courseTimetableMapper;
+
     public StudentController(StudentService studentService) {
         this.studentService = studentService;
     }
@@ -438,6 +442,32 @@ public class StudentController {
             return ApiResponse.success(courseRecommendationMapper.listForStudent(Long.parseLong(userId)));
         } catch (Exception e) {
             log.error("Get course recommendations failed: {}", e.getMessage());
+            return ApiResponse.error(ExceptionMessages.describe(e));
+        }
+    }
+
+    /**
+     * 「我的课表」（W48，2026-10-17）。
+     *
+     * <p>数据源 {@code course_plans}（排课计划）。这块能力此前**后端齐备但无入口** ——
+     * 学生端没有任何页面能看到自己选的课"什么时候、在哪儿上"。本端点补上课表读取口。
+     *
+     * <p>路径参数 {@code userId} 是 {@code users.id}（与 {@code /students/**} 同一套口径）。
+     * 归属闸 {@link #denyUnlessSelf}：非本人（且非管理员）一律 403，防止"换 id 看别人课表"。
+     * 关联与学期口径的坑写在 {@link com.academic.mapper.CourseTimetableMapper}。
+     */
+    @GetMapping("/timetable/{userId}")
+    public ApiResponse<Object> getMyTimetable(@PathVariable String userId,
+                                              HttpServletRequest request) {
+        ApiResponse<Object> deny = denyUnlessSelf(Long.parseLong(userId), request, "只能查看本人的课表");
+        if (deny != null) {
+            return deny;
+        }
+        try {
+            log.info("Get timetable for user: {}", userId);
+            return ApiResponse.success(courseTimetableMapper.listForStudent(Long.parseLong(userId)));
+        } catch (Exception e) {
+            log.error("Get timetable failed: {}", e.getMessage());
             return ApiResponse.error(ExceptionMessages.describe(e));
         }
     }

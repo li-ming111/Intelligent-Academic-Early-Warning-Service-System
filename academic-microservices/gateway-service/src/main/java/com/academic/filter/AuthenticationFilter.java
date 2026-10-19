@@ -136,6 +136,10 @@ public class AuthenticationFilter implements GlobalFilter, Ordered {
     // `/api/warnings` 走的是**控制器层**闸（W26 `IntelligentWarningController.isScanAllowed`），
     // 网关这层刻意仍放行 —— 两处的判据不同，别按一边推另一边。
     private static final String PREFIX_COURSE = "/api/courses";
+    // ⚠️ `/api/course-plans` **不是** `/api/courses` 的前缀（差在 `-plans`），必须单列一条 ——
+    //    否则它会像 `/api/college-admin` 当年那样穿过所有前缀检查、被末尾 `return true` 放行。
+    //    2026-10-17（W48）：这一面此前无网关路由，现在接上了 ⇒ 同步补闸，顺序是**先闸后路由**。
+    private static final String PREFIX_COURSE_PLANS = "/api/course-plans";
     private static final String PREFIX_WARNING = "/api/warnings";
 
     // ==================== 学院管理员的自助账号路径 ====================
@@ -469,6 +473,16 @@ public class AuthenticationFilter implements GlobalFilter, Ordered {
             return false;
         }
 
+        // ==================== /api/course-plans/** 的角色门禁（W48，2026-10-17） ====================
+        // 与 `/api/courses/**` 是**同一族**、也是同一次接线的配套：排课面（`CoursePlanController`）
+        // 此前无网关路由、无前端入口，但同时**不被任何前缀检查命中** ⇒ 若直接加路由而不补这一条，
+        // role 1/2/3 会一路落到末尾 `return true`，把一个"建/改/删排课"的写面开给每个登录用户
+        // （正是 W31 `/api/courses/**` 的复刻）。加闸后落到这里的一律是 1/2/3 ⇒ 无条件拒绝 = fail-closed。
+        if (path.startsWith(PREFIX_COURSE_PLANS)) {
+            log.warn("拒绝非管理员访问排课管理端点: role={}, path={}", role, path);
+            return false;
+        }
+
         // ==================== 这里原来有 `/api/auth/register/**` 的角色闸（2026-10-01 删） ====================
         //
         // 历史：`/api/auth/register/admin` 曾经是个真洞 —— 任何已登录角色（含学生）
@@ -570,6 +584,10 @@ public class AuthenticationFilter implements GlobalFilter, Ordered {
             return "SYSTEM";
         }
         if (path.startsWith(PREFIX_COURSE)) {
+            return "COURSE";
+        }
+        // 排课是课程管理的一部分，归同一个功能模块（W48）。
+        if (path.startsWith(PREFIX_COURSE_PLANS)) {
             return "COURSE";
         }
         if (path.startsWith(PREFIX_WARNING)) {
