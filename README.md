@@ -141,3 +141,7 @@ academic-warning-xcx/        # 小程序 / H5（uni-app）
 Windows 设置示例：`setx AI_API_KEY "你的 Key"`（新开终端后生效）。
 
 各服务配置在 `academic-microservices/<service>/src/main/resources/application.yml`，数据库地址、Nacos 地址等可在此调整。
+
+## 许可证
+
+本项目基于 [MIT License](LICENSE) 开源，仅供学习与交流使用。
