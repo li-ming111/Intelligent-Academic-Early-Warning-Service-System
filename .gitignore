@@ -106,3 +106,21 @@ testsprite/local-check/*.prev
 # 与上面 `*.txt/*.png/*.prev` 同族：脚本入库、产物不入库。
 testsprite/local-check/*.bak
 testsprite/local-check/*.xlsx
+
+# 本机临时数据目录：导入用 CSV/xlsx、mysqldump 快照、服务运行日志（含 users 密码哈希）
+/tmp_data/
+
+# PC 前端根目录误落的截图
+academic-warning-frontend/img.png
+
+# 2026-10-30：仓库只保留源码与 README。以下内容改由本地保管，不再入库：
+#   数据库快照与迁移脚本、testsprite 探针与产物、接口/功能说明文档、
+#   agent 的 skill 与工具状态、skill 锁文件。
+# 生效方式：git rm -r --cached <路径>，文件仍留在本机磁盘上。
+/db_backups/
+/testsprite/
+/API_DOCUMENTATION.md
+/FEATURES.md
+/skills-lock.json
+/.claude/
+/.finesse/
