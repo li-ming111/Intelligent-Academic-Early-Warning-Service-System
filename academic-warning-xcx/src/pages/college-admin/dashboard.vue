@@ -36,7 +36,7 @@
 
         <!-- 本院概览：六个数都来自同一支 /college-admin/dashboard 接口 -->
         <view class="section">
-          <section-title title="本院概览" extra="来自 /college-admin/dashboard" />
+          <section-title title="本院概览" />
           <view class="card metric-grid">
             <view class="metric">
               <text class="metric__label">学生</text>
@@ -63,27 +63,11 @@
               <text class="metric__value">{{ numOr(dash.counselorCount) }}</text>
             </view>
           </view>
-          <text class="note">
-            上面这项在接口里叫 `counselorCount`，量的是
-            **本学院里已经分配了辅导员的班级数**（班级的 `counselor_id` 能对上一位真辅导员），
-            不是辅导员人数，也不是学生数。软件学院 6 个班的 `counselor_id` 都指向同一位辅导员，
-            所以这里的 6 是「6 个班」，不是「6 位辅导员」。要看辅导员名单请去「辅导员管理」页。
-          </text>
-          <text class="note">
-            「学生」是按 `student_profile.class_id IN (本院班级)` 数的 ——
-            **没有分班的学生不计入**。学院里若有人还没挂到班上，他不会出现在这个数里，
-            也不会出现在「学生管理」页。
-          </text>
-          <text class="note">
-            「预警记录」来自聚合查询 `selectCollegeWarningStats`，与上方待办条的来源
-            不是同一支 SQL（那个取的是预警行本身）。两者现在都是 4，对得上；
-            若哪天对不上，说明有预警的学生没落进本院班级里。
-          </text>
         </view>
 
         <!-- 成绩情况 -->
         <view class="section">
-          <section-title title="成绩情况" extra="来自成绩聚合" arrow @extra="go('/pages/college-admin/scores')" />
+          <section-title title="成绩情况" extra="查看成绩" arrow @extra="go('/pages/college-admin/scores')" />
           <view class="card metric-grid">
             <view class="metric">
               <text class="metric__label">成绩条数</text>
@@ -102,15 +86,11 @@
               <text class="metric__value">{{ pctText(stats.passRate) }}</text>
             </view>
           </view>
-          <text class="note">
-            电子工程学院这四个数全是 0 —— 它名下有 2 个班、1 位教师，但**没有任何学生和成绩**。
-            这是库里的实情：该学院建了架子没铺数据，不是接口算错。
-          </text>
         </view>
 
         <!-- 档案 -->
         <view class="section">
-          <section-title title="我的档案" extra="来自 /college-admin/profile" arrow @extra="go('/pages/college-admin/profile')" />
+          <section-title title="我的档案" arrow @extra="go('/pages/college-admin/profile')" />
           <view class="card">
             <view v-for="r in profileRows" :key="r.label" class="kv-row">
               <text class="kv-row__label">{{ r.label }}</text>
@@ -160,9 +140,9 @@ const avatarText = computed(() => {
 
 /** Hero 里只放最三行能读完的数，全部是本院口径。 */
 const heroStats = computed(() => [
-  { label: '本院学生', value: numOr(dash.value.studentCount) },
-  { label: '班级', value: numOr(dash.value.classCount) },
-  { label: '待处理预警', value: pendingCount.value }
+  { label: '本院学生', value: numOr(dash.value.studentCount), onTap: () => go('/pages/college-admin/students') },
+  { label: '班级', value: numOr(dash.value.classCount), onTap: () => go('/pages/college-admin/classes') },
+  { label: '待处理预警', value: pendingCount.value, onTap: () => go('/pages/college-admin/warnings') }
 ])
 
 /** 学生/班级/预警在 tabBar 上，不重复放进快捷入口 */
@@ -397,14 +377,4 @@ async function load() {
   @include ellipsis;
 }
 
-.note {
-  display: block;
-  margin: $spacing-md $page-padding 0;
-  padding: $spacing-md;
-  border-radius: $radius-sm;
-  background: rgba(245, 158, 11, 0.1);
-  font-size: $font-xs;
-  line-height: 1.6;
-  color: #92400e;
-}
 </style>

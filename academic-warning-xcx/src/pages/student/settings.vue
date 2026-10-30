@@ -118,7 +118,7 @@ const info = ref({})
 /**
  * 通知开关的表单。
  *
- * 字段名**必须**与 `user_settings` 表的列一致 —— 这五个是
+ * 字段名**必须**与 `user_settings` 表的列一致 —— 这四个是
  * `GET /users/{uid}/settings` 实际返回的键（实测）。
  *
  * ⚠️ 2026-10-08（W28）订正一句**已过期**的理由。这里原来写着
@@ -133,16 +133,14 @@ const form = ref({
   warningNotification: false,
   systemMessage: false,
   classNotification: false,
-  studentFeedback: false,
-  emailReminder: false
+  studentFeedback: false
 })
 
 const toggles = [
   { key: 'warningNotification', label: '学业预警通知', hint: '成绩触发预警规则时推送' },
   { key: 'systemMessage', label: '系统消息', hint: '系统公告与维护通知' },
   { key: 'classNotification', label: '班级通知', hint: '班级事务与集体活动' },
-  { key: 'studentFeedback', label: '帮扶反馈', hint: '帮扶计划进展与回复' },
-  { key: 'emailReminder', label: '邮件提醒', hint: '同时发送一份到邮箱' }
+  { key: 'studentFeedback', label: '帮扶反馈', hint: '帮扶计划进展与回复' }
 ]
 
 const pwd = ref({ oldPassword: '', newPassword: '', confirm: '' })
@@ -192,11 +190,11 @@ function onToggle(key, e) {
 async function saveSetting(key, value, prev) {
   try {
     /**
-     * `PUT /users/{uid}/settings` 是**部分更新**，不是整表覆盖：请求体里没出现的字段
-     * 保持原值不动（MyBatis-Plus 的 NOT_NULL 策略，五个开关都是包装类型 Boolean，
-     * 「传 false」和「没传」分得开）。这里发完整的五个只是让请求体自洽。
+     * `PUT /users/{uid}/settings` 是**部分更新**：请求体里没出现的字段保持原值。
+     * 因此这里只提交被拨动的那一个键 —— 设置读接口失败时表单会停在默认 false，
+     * 整包提交会把其余四个真实开关静默改成 false。
      */
-    const res = await studentAPI.updateSettings(userId, { ...form.value })
+    const res = await studentAPI.updateSettings(userId, { [key]: value })
     if (res && res.success === false) {
       form.value[key] = prev
       uni.showToast({ title: res.message || '保存失败', icon: 'none' })
@@ -259,7 +257,7 @@ async function load() {
     info.value = infoData && typeof infoData === 'object' ? infoData : {}
 
     if (settings && typeof settings === 'object') {
-      // 只挑已知的五个键，避免把 officeLocation 这类无关字段带进表单再写回去
+      // 只挑已知的四个键，避免把 officeLocation 这类无关字段带进表单再写回去
       const next = { ...form.value }
       for (const t of toggles) {
         if (settings[t.key] !== undefined && settings[t.key] !== null) {

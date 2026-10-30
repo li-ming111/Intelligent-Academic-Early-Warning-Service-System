@@ -185,11 +185,17 @@ const heroStats = computed(() => {
   const s = stats.value || {}
   return [
     { label: '申诉总数', value: numOr(s.total) },
-    { label: '待处理', value: numOr(s.pending) },
-    { label: '已通过', value: numOr(s.approved) },
-    { label: '已驳回', value: numOr(s.rejected) }
+    { label: '待处理', value: numOr(s.pending), onTap: () => pick('0', numOr(s.pending)) },
+    { label: '已通过', value: numOr(s.approved), onTap: () => pick('1', numOr(s.approved)) },
+    { label: '已驳回', value: numOr(s.rejected), onTap: () => pick('2', numOr(s.rejected)) }
   ]
 })
+
+/** 点 hero 状态数字 = 切到那个筛选（0 条不响应），与预警页同一交互。 */
+function pick(key, count) {
+  if (!count) return
+  statusKey.value = statusKey.value === key ? '' : key
+}
 
 const statusOptions = computed(() => {
   const counts = {}

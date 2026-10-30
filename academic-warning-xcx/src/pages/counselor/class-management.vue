@@ -1,10 +1,10 @@
 <template>
   <view class="page-root" :style="themeStyle">
-    <app-navbar title="班级管理" :show-back="false" />
+    <app-navbar title="班级管理" />
 
     <role-hero
       :title="counselorName || '班级管理'"
-      subtitle="管理关系落在 classes.counselor_id 上"
+      subtitle="查看你负责的班级与学生情况"
       :avatar-text="avatarText"
       :stats="heroStats"
     />
@@ -83,8 +83,7 @@
           </view>
 
           <view class="note note--inset">
-            <text class="note__line">当前无辅导员的班级：{{ noCounselorCount }} 个。只有这类班级才能「申请管理」—— 已有辅导员的班级会被后端直接拒绝（提示「该班级已有辅导员管理，无法重复申请」）。</text>
-            <text class="note__line">想演示一条完整的申请，顺序是：先在「我的班级」里对某个班「立即解除」，那个班就变成无辅导员，再回来搜索并申请，申请会落为「待审核」由管理员审批。</text>
+            <text class="note__line">当前无辅导员的班级：{{ noCounselorCount }} 个。只有这类班级可以「申请管理」，已有辅导员的班级无法重复申请。</text>
           </view>
 
           <view v-if="results.length" class="list">
@@ -137,8 +136,8 @@
             </view>
           </view>
           <view class="note note--box">
-            <text class="note__line">「高度关注」的口径是预警等级 ≥ 2（中度及以上），与后端 high_risk_count 一致，不是"仅严重"。</text>
-            <text class="note__line">平均绩点取自各生学分加权 GPA 再平均；库里没有成绩的班级该值为空。</text>
+            <text class="note__line">「高度关注」指预警等级为中度及以上（等级 ≥ 2）。</text>
+            <text class="note__line">平均绩点按各生学分加权绩点再平均；班级暂无成绩时该值为空。</text>
           </view>
         </template>
       </template>
@@ -232,6 +231,7 @@ import { counselorAPI } from '@/services/api.js'
 import { useUser } from '@/composables/useUser.js'
 import { roleThemeStyle } from '@/composables/useRoleTheme.js'
 import { formatDate, maskPhone } from '@/utils/format.js'
+import { go } from '@/utils/navigate.js'
 import { APPLICATION_STATUS_TEXT, dictText } from '@/constants/dict.js'
 
 const { userId, userName } = useUser()
@@ -274,7 +274,7 @@ const heroStats = computed(() => {
   const pendingApp = requests.value.filter(r => numOr(r.status) === 0).length
   return [
     { label: '管理班级', value: classes.value.length },
-    { label: '名下学生', value: students },
+    { label: '名下学生', value: students, onTap: () => go('/pages/counselor/students') },
     { label: '预警总数', value: warns, onTap: () => { tab.value = 'compare' } },
     { label: '待审核申请', value: pendingApp, onTap: () => { tab.value = 'apply' } }
   ]

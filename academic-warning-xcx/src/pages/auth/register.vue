@@ -17,10 +17,30 @@
         >{{ r.label }}</view>
       </view>
 
-      <!-- 账号/学号 -->
+      <!-- 账号/学号。学生注册与 PC 端同口径：学号第 5-6 位是专业代码，
+           学院/专业由此自动带出，不由用户选 —— 选错了归属比漏填更难查。 -->
       <view class="field">
-        <text class="field-label">{{ selectedRole === 'student' ? '学号' : selectedRole === 'teacher' ? '工号' : '工号' }}</text>
-        <input v-model="form.username" placeholder="请输入" class="input" placeholder-class="ph" />
+        <text class="field-label">{{ selectedRole === 'student' ? '学号' : '工号' }}</text>
+        <input
+          v-model="form.username"
+          :maxlength="selectedRole === 'student' ? 10 : 20"
+          :placeholder="selectedRole === 'student' ? '请输入10位学号' : '请输入'"
+          class="input"
+          placeholder-class="ph"
+        />
+        <text v-if="selectedRole === 'student'" class="hint" :class="sidHint.cls">{{ sidHint.text }}</text>
+      </view>
+
+      <!-- 学院/专业（仅学生，只读）：值由学号带出，页面不提供改的入口 ——
+           要改归属得改学号，而不是改下拉框。 -->
+      <view v-if="selectedRole === 'student'" class="field">
+        <text class="field-label">专业</text>
+        <view class="picker-box picker-box--readonly">
+          <text :class="{ placeholder: !derived.majorName }">
+            {{ derived.majorName || '输入学号自动填充' }}
+          </text>
+        </view>
+        <text v-if="derived.majorName && derived.ok" class="hint dim">{{ derived.collegeName }} | {{ derived.majorName }}</text>
       </view>
 
       <!-- 密码 -->
@@ -47,8 +67,8 @@
         <input v-model="form.email" placeholder="请输入邮箱" class="input" placeholder-class="ph" />
       </view>
 
-      <!-- 学院（学生/教师/辅导员都需要） -->
-      <view class="field">
+      <!-- 学院（教师/辅导员）：学生走上面的学号自动带出，不在这个选择器里选。 -->
+      <view class="field" v-if="selectedRole !== 'student'">
         <text class="field-label">所属学院</text>
         <picker :range="collegeNames" @change="onCollegeChange">
           <view class="picker-box">
@@ -58,26 +78,19 @@
         </picker>
       </view>
 
-      <!-- 专业（仅学生） -->
-      <view class="field" v-if="selectedRole === 'student'">
-        <text class="field-label">所属专业</text>
-        <picker :range="majorNames" @change="onMajorChange">
-          <view class="picker-box">
-            <text :class="{ placeholder: !selectedMajorName }">{{ selectedMajorName || '请先选学院' }}</text>
-            <text class="arrow">›</text>
-          </view>
-        </picker>
-      </view>
-
-      <!-- 班级（仅学生） -->
+      <!-- 班级（仅学生）：第7-8位是班级代码（06=六班），能对上就自动带出；
+           对不上（如新建班还没按这个规则命名）时从该专业的班里手选，或留空后补。 -->
       <view class="field" v-if="selectedRole === 'student'">
         <text class="field-label">所属班级</text>
         <picker :range="classNames" @change="onClassChange">
           <view class="picker-box">
-            <text :class="{ placeholder: !selectedClassName }">{{ selectedClassName || '请先选专业' }}</text>
+            <text :class="{ placeholder: !selectedClassName }">{{ selectedClassName || '输入学号后自动带出' }}</text>
             <text class="arrow">›</text>
           </view>
         </picker>
+        <text v-if="derived.ok && !form.classId && classNames.length" class="hint dim">
+          第7-8位班级代码未对上现有班级，可手动选择或留空稍后补
+        </text>
       </view>
 
       <!-- 职称（仅教师） -->
@@ -110,7 +123,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, computed, watch } from 'vue'
 import { apiClient } from '../../services/api'
 
 const selectedRole = ref('student')
@@ -130,7 +143,6 @@ const roles = [
 ]
 
 const colleges = ref([])
-const majors = ref([])
 /** 该学院的全部班级（原始列表）。 */
 const allClasses = ref([])
 /**
@@ -138,7 +150,7 @@ const allClasses = ref([])
  *
  * <p>后端的班级目录只支持按学院过滤（{@code /auth/classes?collegeId=}），一个学院
  * 下挂着好几个专业的班（实测：学院 1 有 5 个班，分属 2 个专业）。如果照原样塞进
- * "请先选专业"这个选择器，学生选了 A 专业仍能选到 B 专业的班 —— 后端校验会回
+ * 选择器，学生（专业由学号带出）仍能选到别的专业的班 —— 后端校验会回
  * 「所选班级不属于所选专业」，而页面上根本看不出为什么。这里按 majorId 过一遍，
  * 让选择器里出现的就是合法选项。
  */
@@ -149,17 +161,12 @@ const classes = computed(() => {
 })
 
 const collegeNames = computed(() => colleges.value.map(c => c.name))
-const majorNames = computed(() => majors.value.map(m => m.name))
 const classNames = computed(() => classes.value.map(c => c.name))
 
 const selectedCollegeObj = computed(() =>
   colleges.value.find(c => c.id == form.value.collegeId) || null
 )
-const selectedMajorObj = computed(() =>
-  majors.value.find(m => m.id == form.value.majorId) || null
-)
 const selectedCollegeName = computed(() => selectedCollegeObj.value?.name || '')
-const selectedMajorName = computed(() => selectedMajorObj.value?.name || '')
 const selectedClassName = computed(() => {
   const cls = classes.value.find(c => c.id == form.value.classId)
   return cls?.name || cls?.className || ''
@@ -168,33 +175,107 @@ const selectedClassName = computed(() => {
 const selectRole = (role) => {
   selectedRole.value = role
   form.value = { username: '', password: '', name: '', phone: '', email: '', collegeId: '', majorId: '', classId: '', titleIdx: -1 }
-  // 换角色时把上一个角色带出来的目录也清掉：留着的话，切到教师后"专业/班级"虽然不显示，
-  // 但 majors/allClasses 仍是上个角色的数据，学院一改就会把旧列表当新的用。
-  majors.value = []
+  // 换角色时把上一个角色带出来的班级目录清掉，避免切回来时旧列表被当成新数据。
   allClasses.value = []
+  derived.value = { majorId: '', majorName: '', collegeId: '', collegeName: '', ok: false }
   errorMsg.value = ''
   successMsg.value = ''
 }
 
 const onCollegeChange = (e) => {
+  // 教师/辅导员专用：只有学院，没有专业/班级要带。
   const c = colleges.value[e.detail.value]
   form.value.collegeId = c?.id || ''
-  form.value.majorId = ''
-  form.value.classId = ''
-  majors.value = []
-  allClasses.value = []
-  if (c) {
-    // 专业与班级都按学院取；班级要等专业选定后才出现在选择器里（见 classes 计算属性）。
-    loadMajors(c.id)
-    loadClasses(c.id)
+}
+
+/** 学号 → 学院/专业 派生结果（仅学生角色；教师/辅导员不走这里）。 */
+const derived = ref({ majorId: '', majorName: '', collegeId: '', collegeName: '', ok: false })
+
+/**
+ * 全量专业目录 + 学院目录，只拉一次，供学号第 5-6 位查专业代码用。
+ *
+ * <p>与 PC 端 Register.vue 同一口径：{@code major.code === studentId.substring(4, 6)}。
+ * 专业表带 collegeId，所以命中专业后学院随之确定，不需要用户再选。
+ */
+let directoryPromise = null
+const loadDirectory = () => {
+  if (!directoryPromise) {
+    directoryPromise = Promise.all([apiClient.getMajors(), apiClient.getColleges()])
+      .then(([m, c]) => ({ majors: m || [], colleges: c || [] }))
+      .catch(e => {
+        directoryPromise = null // 失败不缓存，下次输入还能重试
+        throw e
+      })
+  }
+  return directoryPromise
+}
+
+const sidHint = computed(() => {
+  if (selectedRole.value !== 'student') return { text: '', cls: '' }
+  const sid = String(form.value.username || '')
+  if (sid.length !== 10) return { text: '第5-6位为专业代码、第7-8位为班级代码，输完自动带出', cls: 'dim' }
+  if (derived.value.ok) return { text: '✓ 学号有效', cls: 'ok' }
+  return { text: '未找到匹配专业，请核对学号（第5-6位需是有效的专业代码）', cls: '' }
+})
+
+/**
+ * 学号第 7-8 位是班级代码（06 = 六班）。班级名里的数字段是"年级后两位+班号"
+ * （计科2306班 = 23级06班、计算机2101班 = 21级01班），所以拿 学号[2..4)+[6..8)
+ * 拼成 4 位（2023020616 → "23"+"06" = "2306"）去对班级名的数字部分。
+ * 对不上（班级没按这个规则命名）就不选，让用户手选或留空。
+ */
+const classIdFromSid = (sid, sameMajorClasses) => {
+  const target = sid.substring(2, 4) + sid.substring(6, 8)
+  const hit = sameMajorClasses.find(c => String(c.name || '').replace(/\D+/g, '') === target)
+  return hit ? hit.id : ''
+}
+
+const deriveFromStudentId = async () => {
+  const sid = String(form.value.username || '')
+  if (sid.length !== 10) {
+    derived.value = { majorId: '', majorName: '', collegeId: '', collegeName: '', ok: false }
+    form.value.collegeId = ''
+    form.value.majorId = ''
+    form.value.classId = ''
+    allClasses.value = []
+    return
+  }
+  try {
+    const dir = await loadDirectory()
+    const code = sid.substring(4, 6)
+    const major = dir.majors.find(m => String(m.code) === code)
+    if (!major) {
+      derived.value = { majorId: '', majorName: '', collegeId: '', collegeName: '', ok: false }
+      form.value.collegeId = ''
+      form.value.majorId = ''
+      form.value.classId = ''
+      allClasses.value = []
+      return
+    }
+    const college = dir.colleges.find(c => c.id == major.collegeId)
+    derived.value = {
+      majorId: major.id,
+      majorName: major.name,
+      collegeId: major.collegeId,
+      collegeName: college?.name || '',
+      ok: true
+    }
+    form.value.collegeId = major.collegeId
+    form.value.majorId = major.id
+    form.value.classId = ''
+    // 班级按学院取（选择器里再按专业过滤，见 classes 计算属性）；
+    // 取回来后按学号第 7-8 位把班也自动选上。
+    await loadClasses(major.collegeId)
+    const sameMajor = allClasses.value.filter(c => String(c.majorId) === String(major.id))
+    form.value.classId = classIdFromSid(sid, sameMajor)
+  } catch (e) {
+    errorMsg.value = '学院/专业目录加载失败：' + (e.message || '') + '（学号无法自动带出归属）'
   }
 }
 
-const onMajorChange = (e) => {
-  const m = majors.value[e.detail.value]
-  form.value.majorId = m?.id || ''
-  form.value.classId = ''
-}
+watch(() => form.value.username, () => {
+  if (selectedRole.value === 'student') deriveFromStudentId()
+})
 
 const onClassChange = (e) => {
   const c = classes.value[e.detail.value]
@@ -208,6 +289,14 @@ const handleRegister = async () => {
   if (!form.value.name) { errorMsg.value = '请输入姓名'; return }
   if (!form.value.phone) { errorMsg.value = '请输入手机号'; return }
   if (!form.value.email) { errorMsg.value = '请输入邮箱'; return }
+  // 学生：学院/专业必须由学号带出来（与 PC 端同口径），带不出就是学号错；
+  // 教师/辅导员：学院仍必选（后端教师注册也强制）。
+  if (selectedRole.value === 'student') {
+    if (String(form.value.username).length !== 10) { errorMsg.value = '请输入10位学号'; return }
+    if (!derived.value.ok) { errorMsg.value = '学号未能带出学院与专业，请核对学号（第5-6位需是有效的专业代码）'; return }
+  } else if (!form.value.collegeId) {
+    errorMsg.value = '请选择所属学院'; return
+  }
 
   loading.value = true
   try {
@@ -269,16 +358,6 @@ const loadColleges = async () => {
     errorMsg.value = '学院列表加载失败：' + (e.message || '') + '（学院是必选项）'
   }
 }
-const loadMajors = async (collegeId) => {
-  try {
-    const d = await apiClient.getMajorsByCollege(collegeId)
-    majors.value = d || []
-    if (!majors.value.length) errorMsg.value = '该学院下暂无专业数据'
-  } catch (e) {
-    majors.value = []
-    errorMsg.value = '专业列表加载失败：' + (e.message || '')
-  }
-}
 const loadClasses = async (collegeId) => {
   try {
     const d = await apiClient.getClasses(collegeId)
@@ -306,14 +385,18 @@ onMounted(() => { loadColleges() })
   align-items: center;
   padding: 80rpx 0 36rpx;
 }
-.logo { width: 72rpx; height: 72rpx; margin-bottom: $spacing-md; }
+/* logo.jpg 是白底方图，校徽是内切圆 —— 不裁圆的话四角是白色方块。 */
+.logo { width: 72rpx; height: 72rpx; border-radius: 50%; margin-bottom: $spacing-md; }
 .brand-name { font-size: $font-lg; font-weight: 700; color: #fff; letter-spacing: 2rpx; }
 .brand-sub { font-size: $font-xs; color: rgba(255, 255, 255, 0.55); margin-top: 6rpx; }
 
 .card {
+  /* 同登录页：全局 `.card` 的 margin-bottom 会在白卡下方留一条品牌蓝 */
+  margin-bottom: 0;
   background: $color-card;
   border-radius: $radius-xl $radius-xl 0 0;
-  padding: 36rpx 40rpx 48rpx;
+  padding: 36rpx 40rpx calc(48rpx + constant(safe-area-inset-bottom));
+  padding: 36rpx 40rpx calc(48rpx + env(safe-area-inset-bottom));
 }
 
 /* 角色标签：是个可点控件，高度必须够 $tap-min */
@@ -358,6 +441,14 @@ onMounted(() => { loadColleges() })
 }
 .picker-box .placeholder { color: $color-text-hint; }
 .arrow { font-size: $font-md; color: $color-text-hint; }
+
+/* 学号/只读专业框下的提示行 */
+.hint { display: block; font-size: $font-xs; color: $color-text-hint; margin-top: 8rpx; }
+.hint.ok { color: #16a34a; }
+.hint.dim { color: $color-text-hint; }
+
+/* 由学号带出的专业：只读展示，与可点的 picker 区分开（无箭头、无按压预期） */
+.picker-box--readonly { background: $color-bg; opacity: 0.85; }
 
 /* 按钮 */
 .btn {

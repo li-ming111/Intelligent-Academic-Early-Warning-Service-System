@@ -17,8 +17,12 @@
              解析不出来的归「其他」，不丢、不猜。 -->
         <view class="card card--flush">
           <section-title title="周课表" :extra="`共 ${rows.length} 个安排`" />
-          <view v-if="!rows.length" class="empty-tip">
-            本学期暂无排课记录。
+          <view v-if="!rows.length" class="empty-pad">
+            <empty-state
+              text="本学期暂无排课记录"
+              hint="课表来自教务排课，未排课的课程不会出现在这里"
+              icon="chart"
+            />
           </view>
           <view v-else class="week">
             <view v-for="col in weekColumns" :key="col.key" class="week__col">
@@ -143,7 +147,11 @@ const weekColumns = computed(() => WEEK_DAYS.map(d => ({
 
 const weekDayCount = computed(() => {
   const set = new Set()
-  rows.value.forEach(r => set.add(weekOf(r.classTime)))
+  rows.value.forEach(r => {
+    const w = weekOf(r.classTime)
+    // 「其他」不是周几：解析不出来的排课不该把占用天数 +1
+    if (w !== '其他') set.add(w)
+  })
   return set.size
 })
 
@@ -195,36 +203,38 @@ async function load() {
 }
 </script>
 
-<style scoped>
+<style scoped lang="scss">
 .page-body { padding-bottom: 40rpx; }
 
+/* 周视图：4 列换行。「其他」列也按同一宽度排，不另设格式 ——
+   它装的是解析不出周几的排课，丢了比丑了更糟。 */
 .week {
   display: flex;
   flex-wrap: wrap;
-  gap: 12rpx;
-  padding: 0 24rpx 24rpx;
+  padding: 6rpx 18rpx 18rpx;
 }
 .week__col {
-  flex: 0 0 calc(25% - 9rpx);
-  border: 1rpx solid #eef0f4;
-  border-radius: 12rpx;
+  flex: 0 0 calc(25% - 12rpx);
+  margin: 6rpx;
+  border: 1rpx solid $color-border;
+  border-radius: var(--radius-md);
   overflow: hidden;
   min-height: 120rpx;
-  background: #fff;
+  background: $color-card;
 }
 .week__head {
   display: block;
   text-align: center;
   font-size: 22rpx;
   font-weight: 600;
-  color: #52525b;
-  background: #f8f9fb;
+  color: $color-text-secondary;
+  background: $color-divider;
   padding: 8rpx 0;
 }
 .week__item {
-  background: #eef2ff;
-  border-left: 6rpx solid #6366f1;
-  border-radius: 8rpx;
+  background: var(--color-primary-weak);
+  border-left: 6rpx solid var(--color-primary);
+  border-radius: var(--radius-sm);
   margin: 8rpx;
   padding: 8rpx 10rpx;
 }
@@ -232,28 +242,32 @@ async function load() {
   display: block;
   font-size: 22rpx;
   font-weight: 600;
-  color: #312e81;
+  color: $color-text;
   margin-bottom: 4rpx;
 }
 .week__item-line {
   display: block;
   font-size: 20rpx;
-  color: #52525b;
+  color: $color-text-secondary;
   line-height: 1.5;
 }
 .week__empty {
   display: block;
   text-align: center;
-  color: #d4d4d8;
+  color: $color-text-hint;
   font-size: 22rpx;
   padding: 16rpx 0;
 }
 
+.empty-pad { padding-bottom: 8rpx; }
+
 .list { padding: 0 24rpx 24rpx; }
 .row {
-  background: #fff;
-  border: 1rpx solid #eef0f4;
-  border-radius: 12rpx;
+  /* 全局 common.scss 里有 `.row { display: flex }`，不显式覆盖会把整张卡片压成一竖列 */
+  display: block;
+  background: $color-card;
+  border: 1rpx solid $color-border;
+  border-radius: var(--radius-md);
   padding: 20rpx;
   margin-bottom: 16rpx;
 }
@@ -265,29 +279,31 @@ async function load() {
 .row__name {
   font-size: 28rpx;
   font-weight: 600;
-  color: #18181b;
+  color: $color-text;
   flex: 1;
 }
 .row__credits {
   font-size: 22rpx;
-  color: #6366f1;
+  color: var(--color-primary);
   font-weight: 600;
+  font-variant-numeric: tabular-nums;
 }
 .row__meta {
   display: flex;
-  gap: 12rpx;
+  align-items: center;
   margin: 10rpx 0 12rpx;
 }
 .row__tag {
   font-size: 20rpx;
-  color: #6366f1;
-  background: #eef2ff;
-  border-radius: 6rpx;
+  color: var(--color-primary);
+  background: var(--color-primary-weak);
+  border-radius: var(--radius-sm);
   padding: 2rpx 10rpx;
+  margin-right: 12rpx;
 }
 .row__code {
   font-size: 20rpx;
-  color: #a1a1aa;
+  color: $color-text-hint;
 }
 .row__kv {
   display: flex;
@@ -295,21 +311,13 @@ async function load() {
   font-size: 24rpx;
   line-height: 1.9;
 }
-.row__k { color: #71717a; }
-.row__v { color: #3f3f46; }
-
-.empty-tip {
-  display: block;
-  text-align: center;
-  color: #a1a1aa;
-  font-size: 24rpx;
-  padding: 30rpx 24rpx;
-}
+.row__k { color: $color-text-secondary; }
+.row__v { color: $color-text; }
 
 .foot-note {
   padding: 0 24rpx 24rpx;
   font-size: 22rpx;
-  color: #9ca3af;
+  color: $color-text-hint;
   line-height: 1.6;
 }
 </style>

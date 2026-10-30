@@ -55,15 +55,7 @@
           </view>
         </view>
 
-        <text class="note">
-          这一页是 2026-10-02（W5.4）新加的。在此之前**小程序端没有任何申诉审核入口** ——
-          后端 `GET /admin/appeals` 与 `POST /admin/appeals/{id}/review` 早就有了（PC 端也在用），
-          只有小程序没接，所以管理员在小程序上看不到待审申诉。
-        </text>
-        <text class="note">
-          只有**待处理**的申诉能审。审核一次之后按钮就消失了；重复调用后端会如实报
-          「该申诉不是待处理状态」。审核结果会通过通知中心回执给申诉学生。
-        </text>
+        <text class="note">只有待审核的申诉可以操作，审核结果会通知申诉学生。</text>
       </template>
     </view>
 
@@ -84,10 +76,7 @@
             placeholder-class="field__ph"
           />
         </view>
-        <text class="note note--in">
-          这段文字会写进 `score_appeals.reply` 并随通知一起发给学生。
-          留空也允许 —— 留空时库里存 NULL，不会用空串冒充"有意见"。
-        </text>
+
       </view>
       <template #footer>
         <view class="form-acts">
@@ -409,11 +398,6 @@ async function doReview() {
   font-size: $font-xs;
   line-height: 1.6;
   color: #92400e;
-}
-
-.note--in {
-  margin-left: 0;
-  margin-right: 0;
 }
 
 .form-acts {

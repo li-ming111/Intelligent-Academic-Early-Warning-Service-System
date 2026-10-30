@@ -16,14 +16,15 @@ import { roleKey } from '@/constants/roles.js'
  * 声明：uni.scss 给编译期 SCSS 用，这里给运行期 JS 用——switch 等原生
  * 组件只吃字面量色值）。改色必须两处一起改。
  *
- * 2026-10-14 finesse 改版：色相五向拉开（绿/橙/靛/紫/青），弃用原先的
- * Material/Tailwind 默认色（教师蓝 #2196f3 与辅导员蓝 #2563eb 不可分）。
+ * 2026-10-14 finesse 改版：色相五向拉开（绿/橙/靛/紫/青）。
+ * 2026-10-19 教师回蓝 #2196f3（对齐 PC 端 theme.js 与论文截图，两端同色）；
+ * 辅导员已换 #4349b8 靛，与教师亮蓝可分，不会复现当年
+ * “教师 #2196f3 与辅导员 #2563eb 不可分”的问题。
  * gradient 从 135° 双色斜渐变改为**纵向深→主微渐变**，视觉近似平涂色块。
- * ⚠️ PC 端 theme.js 暂未同步：本轮只改小程序端出效果，认可后同步两端。
  */
 export const ROLE_THEME = {
   student:      { primary: '#217a46', deep: '#185c34', weak: '#e7f4ec', gradient: 'linear-gradient(180deg, #185c34 0%, #217a46 100%)' },
-  teacher:      { primary: '#c05621', deep: '#9c451a', weak: '#faeee4', gradient: 'linear-gradient(180deg, #9c451a 0%, #c05621 100%)' },
+  teacher:      { primary: '#2196f3', deep: '#1976d2', weak: '#e3f2fd', gradient: 'linear-gradient(180deg, #1976d2 0%, #2196f3 100%)' },
   counselor:    { primary: '#4349b8', deep: '#353a94', weak: '#ebeefa', gradient: 'linear-gradient(180deg, #353a94 0%, #4349b8 100%)' },
   admin:        { primary: '#6b3fa0', deep: '#563281', weak: '#f0eafb', gradient: 'linear-gradient(180deg, #563281 0%, #6b3fa0 100%)' },
   collegeAdmin: { primary: '#0f7b8a', deep: '#0b606c', weak: '#e4f3f6', gradient: 'linear-gradient(180deg, #0b606c 0%, #0f7b8a 100%)' }

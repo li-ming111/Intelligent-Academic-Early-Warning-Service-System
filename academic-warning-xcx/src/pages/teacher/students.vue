@@ -85,7 +85,7 @@
                 <text class="plain-row__name">{{ s.studentName }}</text>
                 <text class="plain-row__no">{{ s.studentId }}</text>
               </view>
-              <text class="note">这些学生在本班有学籍，但没有任何成绩流水；他们不会出现在上方的统计里。</text>
+              <text class="note">这些学生在本班有学籍，但暂无成绩记录，不计入上方统计。</text>
             </view>
           </view>
         </template>
@@ -131,7 +131,7 @@
               <app-icon name="chevron" :size="30" color="#cbd5e1" />
             </view>
           </view>
-          <text class="note">点任意一条可看该生该课的排名与教师建议。同一门课有多个学期时会各占一行。</text>
+          <text class="note">点任意一条可查看该生该课的排名与教师建议；同一门课的多个学期各占一行。</text>
         </template>
 
         <!-- 二、单课分析 -->
@@ -152,7 +152,7 @@
           <template v-else-if="ana">
             <view class="ana__head">
               <text class="ana__title">{{ ana.courseName }}</text>
-              <warning-tag v-if="ana.warningLevel" :level="ana.warningLevel" />
+              <warning-tag v-if="warningLevel(ana.warningLevel)" :level="ana.warningLevel" />
             </view>
 
             <view class="ana__score">
@@ -200,7 +200,7 @@ import { useUser } from '@/composables/useUser.js'
 import { roleThemeStyle } from '@/composables/useRoleTheme.js'
 import { useTeacherRoster } from '@/composables/useTeacherRoster.js'
 import { scoreSemesterLabel } from '@/utils/score-normalize.js'
-import { toNumber } from '@/utils/score.js'
+import { toNumber, warningLevel } from '@/utils/score.js'
 import { go } from '@/utils/navigate.js'
 
 const { userId } = useUser()

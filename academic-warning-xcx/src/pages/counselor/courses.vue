@@ -1,10 +1,10 @@
 <template>
   <view class="page-root" :style="themeStyle">
-    <app-navbar title="课程情况" :show-back="false" />
+    <app-navbar title="课程情况" />
 
     <role-hero
       :title="counselorName || '课程情况'"
-      subtitle="按课程聚合所带班级的成绩记录"
+      subtitle="你负责班级的课程成绩情况"
       :avatar-text="avatarText"
       :stats="heroStats"
     />
@@ -60,9 +60,8 @@
         </view>
 
         <view class="note">
-          <text class="note__line">这一页的数据源是 GET /counselors/enrollments，它名字叫「选课」，实际返回的是成绩记录 —— 库里没有选课关系表，能拿到的只有「有成绩的学生-课程」对。所以这里按课程聚合，和按班级、按学生看的成绩页是三个视角，不是同一张表换个排版。</text>
-          <text class="note__line">「修读人数」是成绩记录条数（一人一课一条），不是选课人数；重修只保留最新一次有效成绩。</text>
-          <text class="note__line">「通过率」= 总评 ≥ 60 的记录 / 全部记录，与「挂科」是同一根线（60 分）的两面。</text>
+          <text class="note__line">「修读人数」按成绩记录统计，同一学生同一课程只计最新一次有效成绩。</text>
+          <text class="note__line">「通过率」按总评 60 分及以上统计，与「挂科」是同一标准的两面。</text>
         </view>
       </template>
     </view>

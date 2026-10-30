@@ -2,6 +2,13 @@
   <view class="page-root" :style="themeStyle">
     <app-navbar title="预警总览" :show-back="false" />
 
+    <role-hero
+      :title="userName || '预警总览'"
+      subtitle="全校预警，点等级数字可按等级筛选"
+      :avatar-text="avatarText"
+      :stats="heroStats"
+    />
+
     <filter-bar v-model="levelFilter" :options="levelOptions" />
 
     <view class="page-body page-body--tabbar">
@@ -13,7 +20,7 @@
             共 <text class="summary__num">{{ warnings.length }}</text> 条 ·
             待处理 <text class="summary__num summary__num--danger">{{ pendingCount }}</text> 条
           </text>
-          <text class="summary__hint">等级筛选在本地做（接口不支持按等级过滤）</text>
+          <text class="summary__hint">按预警等级筛选</text>
         </view>
 
         <empty-state
@@ -56,11 +63,6 @@
           </view>
         </view>
 
-        <text class="note">
-          4 条预警的 `description` 里写的是「累计 N 门课程不及格」并列出课程与分数，
-          触发成绩 `triggerScore` 只记了其中一门（40 分）—— 它是**触发那条记录的分数**，
-          不是所有不及格课程的总分或均分。
-        </text>
       </template>
     </view>
 
@@ -73,7 +75,7 @@
         <view class="facts">
           <view class="facts__row">
             <text class="facts__k">学生</text>
-            <text class="facts__v">{{ current.studentName || `student_id ${current.studentId}` }}</text>
+            <text class="facts__v">{{ current.studentName || `学号 ${current.studentId}` }}</text>
           </view>
           <view class="facts__row">
             <text class="facts__k">预警等级</text>
@@ -121,7 +123,7 @@
         <text class="paragraph">{{ current.description || current.warningMessage || '（无）' }}</text>
 
         <template v-if="current.isHandled">
-          <section-title plain title="处理记录" extra="来自 handle 接口" />
+          <section-title plain title="处理记录" />
           <view class="facts">
             <view class="facts__row">
               <text class="facts__k">处理结果</text>
@@ -136,25 +138,19 @@
               <text class="facts__v">{{ formatDate(current.handledAt, true) }}</text>
             </view>
           </view>
-          <text class="note">
-            「处理备注」在库里存在 **`handled_by` 列**里 —— 列名是"处理人"，存的却是一段备注文字。
-            这里按它实际的内容起名，写成"处理人"就与库里的事实不符。
-          </text>
         </template>
         <text v-else-if="current.isDispelled" class="note">
-          这条预警是**自动解除**的：定时扫描按成绩口径重算后发现已不再达阈值，把 status 置 2。
-          它没有经过人工处理，所以 `handle_result` / `handled_by` / `handled_at` 三列都是 NULL ——
-          这和"处理完了但没填备注"是两回事，别混为一谈。
+          这条预警由系统自动解除：成绩重算后已不再达到预警阈值，因此没有人工处理记录。
         </text>
         <text v-else class="note">
-          还没有处理记录：`handle_result` / `handled_by` / `handled_at` 三列都是 NULL。
+          还没有处理记录。
         </text>
       </view>
 
       <!-- ---------- 处理 ---------- -->
       <view v-else-if="mode === 'handle' && current" class="sheet">
         <text class="handle__who">
-          {{ current.studentName || `student_id ${current.studentId}` }} ·
+          {{ current.studentName || `学号 ${current.studentId}` }} ·
           {{ levelText(current.warningLevel) }} · {{ ruleName(current.ruleId) }}
         </text>
         <view class="field">
@@ -179,10 +175,7 @@
             placeholder-class="field__ph"
           />
         </view>
-        <text class="note">
-          提交后这条预警的 `status` 置 1，并记下处理时间。**状态只能从"待处理"变成"已处理"**，
-          这一版没有"撤销处理"的接口 —— 处理错了只能手动改库。
-        </text>
+        <text class="note">提交后预警状态将置为「已处理」，当前版本不支持撤销。</text>
       </view>
 
       <template #footer>
@@ -222,6 +215,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { adminAPI } from '@/services/api.js'
 import { roleThemeStyle } from '@/composables/useRoleTheme.js'
+import { useUser } from '@/composables/useUser.js'
 import { formatDate } from '@/utils/format.js'
 // 2026-10-02（W1.6）：状态是三态（0 待处理 / 1 已处理 / 2 已解除）。
 // 这一页原来自己写 `status === 1 ? '已处理' : '待处理'`，于是 status=2 被显示成"待处理"。
@@ -229,6 +223,24 @@ import { formatDate } from '@/utils/format.js'
 import { normalizeWarning, normalizeWarnings, warningStatusTagClass } from '@/utils/warning.js'
 
 const themeStyle = roleThemeStyle('admin')
+const { userName } = useUser()
+
+const avatarText = computed(() => (userName ? String(userName).slice(0, 1) : ''))
+
+/** 点同一档再点一次 = 取消筛选，与筛选条的行为保持一致 */
+function pick(level) {
+  levelFilter.value = levelFilter.value === level ? '' : level
+}
+
+const heroStats = computed(() => {
+  const count = l => warnings.value.filter(w => String(w.warningLevel) === l).length
+  return [
+    { label: '待处理', value: pendingCount.value },
+    { label: '轻度', value: count('1'), onTap: () => pick('1') },
+    { label: '中度', value: count('2'), onTap: () => pick('2') },
+    { label: '严重', value: count('3'), onTap: () => pick('3') }
+  ]
+})
 
 const levelOptions = [
   { label: '全部', value: '' },
@@ -479,7 +491,6 @@ async function submitHandle() {
 .warn__courses {
   display: flex;
   flex-wrap: wrap;
-  gap: 8rpx;
   margin-top: $spacing-sm;
 }
 
@@ -489,6 +500,7 @@ async function submitHandle() {
   background: $color-divider;
   border-radius: $radius-sm;
   padding: 4rpx 12rpx;
+  margin: 0 $spacing-xs $spacing-xs 0;
 }
 
 .warn__class {

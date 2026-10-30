@@ -30,7 +30,7 @@
 
         <template v-else>
           <view v-if="!roster.length" class="card">
-            <text class="note">这个班还没有成绩流水，无法预测学分。先在「成绩管理」里录入成绩。</text>
+            <text class="note">该班暂无成绩记录，无法预测学分。请先在「成绩管理」中录入成绩。</text>
           </view>
 
           <template v-else>
@@ -59,7 +59,7 @@
                 </view>
               </view>
 
-              <text v-else class="note">点「预测全班」会逐个学生请求学分预测接口，用于给出整班的修读进度排行。</text>
+              <text v-else class="note">点「预测全班」可为全班学生生成学分预测，并给出修读进度排行。</text>
             </view>
 
             <!-- 焦点学生 -->
@@ -98,7 +98,7 @@
                 </view>
               </view>
 
-              <text class="note">口径与后端 `ScoreCaliber` 一致：先滤掉"待录入"的行，再按课程取学期最大的一条；已获学分只算及格课程。修读课程共 {{ numOr(focus.totalCourses) }} 门。</text>
+              <text class="note">学分预测按每门课程最新一次有效成绩计算，已获学分只计及格课程。修读课程共 {{ numOr(focus.totalCourses) }} 门。</text>
             </view>
 
             <view class="section">
@@ -128,7 +128,7 @@
                   <app-icon name="chevron" :size="32" color="#cbd5e1" />
                 </view>
               </view>
-              <text class="note">「未计算」表示还没请求过该学生的预测；点一下就会拉取。带 `?profileId=` 进入时会自动选中该生。</text>
+              <text class="note">「未计算」表示该学生尚未生成预测，点击即可计算。</text>
             </view>
           </template>
         </template>

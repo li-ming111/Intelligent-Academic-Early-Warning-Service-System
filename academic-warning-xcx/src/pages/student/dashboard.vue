@@ -183,9 +183,9 @@ const avatarText = computed(() => {
 const heroStats = computed(() => {
   const c = countWarnings(warnings.value)
   return [
-    { label: '已通过学分', value: dash.value.completedCredits ?? EMPTY_TEXT },
-    { label: '挂科', value: dash.value.failedCoursesCount ?? EMPTY_TEXT },
-    { label: '绩点', value: dash.value.gpa == null ? EMPTY_TEXT : number(dash.value.gpa, 1) },
+    { label: '已通过学分', value: dash.value.completedCredits ?? EMPTY_TEXT, onTap: () => go('/pages/student/scores') },
+    { label: '挂科', value: dash.value.failedCoursesCount ?? EMPTY_TEXT, onTap: () => go('/pages/student/warnings') },
+    { label: '绩点', value: dash.value.gpa == null ? EMPTY_TEXT : number(dash.value.gpa, 1), onTap: () => go('/pages/student/scores') },
     { label: '预警', value: c.total, onTap: () => go('/pages/student/warnings') }
   ]
 })

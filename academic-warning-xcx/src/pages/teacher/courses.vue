@@ -24,7 +24,10 @@
                 <text class="c__name">{{ c.name }}</text>
                 <text class="c__code">{{ c.code || '无课程号' }} · {{ c.type || '未标类型' }}</text>
               </view>
+            <view class="c__head-btns">
+              <view class="c__edit c__edit--ghost" @tap="openRecommend(c)">推荐</view>
               <view class="c__edit" @tap="openEdit(c)">编辑</view>
+            </view>
             </view>
 
             <view class="c__stats">
@@ -98,6 +101,59 @@
       </template>
     </detail-sheet>
 
+    <!-- 推荐课程 -->
+    <detail-sheet v-model="recOpen" title="推荐课程" height="76vh">
+      <view v-if="recCourse" class="form">
+        <view class="form__facts">
+          <view class="form__fact">
+            <text class="form__fact-label">课程</text>
+            <text class="form__fact-value">{{ recCourse.name }}</text>
+          </view>
+          <view class="form__fact">
+            <text class="form__fact-label">学分</text>
+            <text class="form__fact-value">{{ creditsText(recCourse.credits) }}</text>
+          </view>
+        </view>
+
+        <text class="form__label">推荐对象</text>
+        <picker mode="selector" :range="recClassLabels" :value="recClassIndex" @change="onRecClassChange">
+          <view class="form__picker">
+            <text class="form__picked">{{ recClassLabels[recClassIndex] }}</text>
+            <app-icon name="chevron" :size="26" color="#aeaeb2" />
+          </view>
+        </picker>
+        <text class="form__tip">指定班级时只通知该班学生；不指定则推荐给你带的所有班级。</text>
+
+        <text class="form__label">推荐理由</text>
+        <textarea
+          v-model="recForm.reason"
+          class="form__textarea"
+          placeholder="例如：下学期开设的进阶课与本课衔接紧密，建议学有余力的同学修读"
+          placeholder-class="form__placeholder"
+          :maxlength="500"
+          auto-height
+        />
+        <text class="form__tip">必填，500 字以内，学生端会看到这段话。</text>
+
+        <view v-if="recHistory.length" class="rec-history">
+          <text class="rec-history__title">我的推荐记录</text>
+          <view v-for="h in recHistory" :key="h.id" class="rec-history__row">
+            <view class="rec-history__main">
+              <text class="rec-history__course">{{ h.courseName || h.course_name || '--' }}</text>
+              <text class="rec-history__reason">{{ h.reason || '（无理由）' }}</text>
+            </view>
+            <text class="rec-history__status">{{ recStatusText(h) }}</text>
+          </view>
+        </view>
+      </view>
+
+      <template #footer>
+        <view class="btn-primary" :class="{ 'btn-primary--disabled': !canRecommend }" @tap="submitRecommend">
+          {{ recSending ? '提交中…' : '提交推荐' }}
+        </view>
+      </template>
+    </detail-sheet>
+
     <app-tab-bar role="teacher" />
   </view>
 </template>
@@ -123,6 +179,23 @@ const editOpen = ref(false)
 const editing = ref(null)
 const form = ref({ name: '', credits: '', description: '' })
 const saving = ref(false)
+
+// —— 课程推荐 ——
+const recOpen = ref(false)
+const recCourse = ref(null)
+const recForm = ref({ reason: '' })
+const recClassIndex = ref(0)
+const recSending = ref(false)
+const recClasses = ref([])
+const recHistory = ref([])
+
+const canRecommend = computed(() => !!recCourse.value && !!String(recForm.value.reason).trim() && !recSending.value)
+
+/** 第 0 项 = 不指定班级（推荐给全部所带班级）。 */
+const recClassLabels = computed(() => [
+  '不指定（全部所带班级）',
+  ...recClasses.value.map(c => c.name || '未命名班级')
+])
 
 const canSave = computed(() => !!editing.value && !!String(form.value.name).trim() && validCredits(form.value.credits))
 
@@ -222,6 +295,59 @@ async function submit() {
 function goScores(courseId) {
   go(`/pages/teacher/scores?courseId=${courseId}`)
 }
+
+// —— 课程推荐 ——
+
+async function openRecommend(c) {
+  recCourse.value = c
+  recForm.value = { reason: '' }
+  recClassIndex.value = 0
+  recOpen.value = true
+  // 班级和历史并行拉，失败不拦着填表（提交时班级列表空 = 只剩「不指定」一项）
+  teacherAPI.getMyClasses(userId).then((list) => {
+    recClasses.value = Array.isArray(list) ? list : []
+  }).catch(() => { recClasses.value = [] })
+  teacherAPI.listMyRecommendations().then((list) => {
+    recHistory.value = Array.isArray(list) ? list : []
+  }).catch(() => { recHistory.value = [] })
+}
+
+function onRecClassChange(e) {
+  recClassIndex.value = Number(e.detail.value)
+}
+
+function recStatusText(h) {
+  const s = h.status
+  if (s === 1 || s === '1' || s === '已推荐') return '已推荐'
+  if (s === 2 || s === '2' || s === '已处理') return '已处理'
+  return s !== null && s !== undefined ? String(s) : '--'
+}
+
+async function submitRecommend() {
+  if (!canRecommend.value) return
+  recSending.value = true
+  try {
+    const data = {
+      courseId: recCourse.value.id,
+      reason: String(recForm.value.reason).trim()
+    }
+    if (recClassIndex.value > 0) {
+      const cls = recClasses.value[recClassIndex.value - 1]
+      if (cls) data.targetClassId = cls.id
+    }
+    await teacherAPI.recommendCourse(data)
+    uni.showToast({ title: '推荐成功', icon: 'success' })
+    recOpen.value = false
+    // 刷新历史，重新打开时能看到这条
+    teacherAPI.listMyRecommendations().then((list) => {
+      recHistory.value = Array.isArray(list) ? list : []
+    }).catch(() => {})
+  } catch (e) {
+    uni.showToast({ title: (e && e.message) || '推荐失败', icon: 'none' })
+  } finally {
+    recSending.value = false
+  }
+}
 </script>
 
 <style lang="scss" scoped>
@@ -290,6 +416,83 @@ function goScores(courseId) {
   background: var(--color-primary);
   color: #fff;
   font-size: $font-xs;
+}
+
+.c__head-btns {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+/* 次级动作用弱底：编辑是主操作保持实心，推荐不与它抢 */
+.c__edit--ghost {
+  background: var(--color-primary-weak, #{$color-bg});
+  color: var(--color-primary);
+}
+
+.form__picker {
+  display: flex;
+  align-items: center;
+  min-height: $tap-min;
+  margin-top: $spacing-sm;
+  padding: 0 $spacing-md;
+  border-radius: $radius-md;
+  background: $color-bg;
+}
+
+.form__picked {
+  flex: 1;
+  min-width: 0;
+  font-size: $font-md;
+  color: $color-text;
+}
+
+/* ---------- 推荐历史 ---------- */
+.rec-history {
+  margin-top: $spacing-xl;
+  padding-top: $spacing-md;
+  border-top: 1rpx solid $color-divider;
+}
+
+.rec-history__title {
+  display: block;
+  font-size: $font-sm;
+  font-weight: 600;
+  color: $color-text;
+}
+
+.rec-history__row {
+  display: flex;
+  align-items: flex-start;
+  margin-top: $spacing-md;
+}
+
+.rec-history__main {
+  flex: 1;
+  min-width: 0;
+}
+
+.rec-history__course {
+  display: block;
+  font-size: $font-sm;
+  color: $color-text;
+  font-weight: 500;
+}
+
+.rec-history__reason {
+  display: block;
+  margin-top: 4rpx;
+  font-size: $font-xs;
+  color: $color-text-hint;
+  line-height: 1.5;
+  @include ellipsis-multi(2);
+}
+
+.rec-history__status {
+  flex-shrink: 0;
+  margin-left: $spacing-sm;
+  font-size: $font-xs;
+  color: var(--color-primary);
 }
 
 .c__stats {

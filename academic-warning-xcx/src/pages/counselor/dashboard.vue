@@ -24,7 +24,13 @@
         </view>
 
         <view class="quick-grid">
-          <view v-for="q in quickLinks" :key="q.url" class="quick-item" @tap="go(q.url)">
+          <view
+            v-for="(q, i) in quickLinks"
+            :key="q.url"
+            class="quick-item"
+            :class="{ 'quick-item--last': (i + 1) % 4 === 0 }"
+            @tap="go(q.url)"
+          >
             <!-- 不传 color：app-icon 默认取当前角色主色。
                  传 var(--color-primary) 会让图标整块消失（SVG data URI 不解析 CSS 变量）。 -->
             <view class="quick-item__icon">
@@ -169,8 +175,8 @@ const pendingCount = computed(() => summary.value.pending)
 const heroStats = computed(() => {
   const s = summary.value
   return [
-    { label: '带班学生', value: numOr(credit.value.totalStudents) },
-    { label: '预警总数', value: s.total },
+    { label: '带班学生', value: numOr(credit.value.totalStudents), onTap: () => go('/pages/counselor/students') },
+    { label: '预警总数', value: s.total, onTap: () => go('/pages/counselor/warnings') },
     { label: '待处理', value: s.pending, onTap: () => go('/pages/counselor/warnings') },
     { label: '已处理', value: s.handled, onTap: () => go('/pages/counselor/warnings') },
     // 2026-10-02（W1.6）：补第三态。少了它，"总数"就不等于"待处理+已处理"
@@ -185,6 +191,8 @@ const quickLinks = computed(() => [
   { label: '预警处理', icon: 'alert', url: '/pages/counselor/warnings', badge: pendingCount.value || '' },
   { label: '帮扶计划', icon: 'target', url: '/pages/counselor/assistance' },
   { label: '学生管理', icon: 'users', url: '/pages/counselor/students' },
+  { label: '成绩跟踪', icon: 'trend', url: '/pages/counselor/scores' },
+  { label: '课程情况', icon: 'book', url: '/pages/counselor/courses' },
   { label: '数据分析', icon: 'chart', url: '/pages/counselor/analytics' },
   // 2026-10-14：通知中心先前在小程序端**没有入口**（PC 端有页面）。后端 history/notify 都已是真实现。
   { label: '通知中心', icon: 'bell', url: '/pages/counselor/notifications' }
@@ -297,23 +305,26 @@ async function load() {
 /* ---------- 快捷入口 ---------- */
 .quick-grid {
   display: flex;
+  flex-wrap: wrap;
   margin: $spacing-md $page-padding 0;
 }
 
 .quick-item {
   position: relative;
-  flex: 1;
+  width: calc((100% - #{$spacing-sm} * 3) / 4);
   min-width: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
   padding: $spacing-lg 0;
+  margin: 0 $spacing-sm $spacing-sm 0;
   @include card;
 }
 
-/* 用 margin 代替 gap：小程序对 flex gap 有基础库/系统版本门槛 */
-.quick-item + .quick-item {
-  margin-left: $spacing-sm;
+/* 用 margin 代替 gap：小程序对 flex gap 有基础库/系统版本门槛。
+   四列一行，行末去掉右间距，否则第四张会被挤到下一行。 */
+.quick-item--last {
+  margin-right: 0;
 }
 
 .quick-item__icon {

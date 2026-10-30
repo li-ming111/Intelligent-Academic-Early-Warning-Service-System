@@ -34,9 +34,13 @@ textarea {
   padding: $page-padding;
 }
 
-/* 底部有 tabBar / 固定按钮时给内容留出空间 */
+/* 底部有 tabBar / 固定按钮时给内容留出空间。
+   自定义 app-tab-bar 的实际高度 = 100rpx（item 高）+ 底部安全区（组件里用 JS 注入 px）。
+   几乎每个 tabbar 页都有 scoped 的 `.page-body { padding: … }`（data-v 属性选择器，
+   优先级 (0,2,0)），单类选择器必输，所以这里 !important ——
+   否则页尾内容（如「退出登录」按钮）会被 fixed 的 tabBar 压住。 */
 .page-body--tabbar {
-  padding-bottom: calc(#{$tap-min} + env(safe-area-inset-bottom) + #{$spacing-2xl});
+  padding-bottom: calc(100rpx + env(safe-area-inset-bottom) + #{$spacing-lg}) !important;
 }
 
 /* Hero 渐变头与区块标题**不再在这里定义** ——
@@ -118,20 +122,21 @@ textarea {
 .text-xs        { font-size: $font-xs; }
 
 /* ---------- 统计格 ----------
-   横向排布的 stat-card 容器。用 `> *` 而不是给组件加 flex 属性，
-   是因为组件根节点（自定义元素）同样能被 `> *` 命中，而 mini-program
-   里 `> view` 这类标签选择器命中不到组件根。
-   `> * + *` 用 margin 代替 gap，原因见上面 .gap-* 的说明。 */
+   横向排布的 stat-card 容器。flex 属性挂在 .stat-grid__item 上，
+   由页面把这个 class 写在 <stat-card> 标签上：WXSS 不支持通配选择器
+   （`> *` 会直接编译报错），`> view` 这类标签选择器又命中不到组件根
+   节点（自定义元素），只有写在组件标签上的 class 能作用到组件根。
+   `+` 相邻选择器用 margin 代替 gap，原因见上面 .gap-* 的说明。 */
 .stat-grid {
   display: flex;
 }
 
-.stat-grid > * {
+.stat-grid__item {
   flex: 1;
   min-width: 0;
 }
 
-.stat-grid > * + * {
+.stat-grid__item + .stat-grid__item {
   margin-left: $spacing-md;
 }
 

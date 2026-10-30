@@ -63,10 +63,7 @@
               {{ evaluatedPlanIds.has(String(p.id)) ? '已评价' : '去评价' }}
             </text>
           </view>
-          <text class="note">
-            已评价的那几条**点进去是修改**，不是重复提交 —— 后端对同一个 planId
-            是更新（返回「该计划已有评价，本次为更新」），不会在库里堆出两行。
-          </text>
+          <text class="note">「已评价」的记录再次提交时为修改，不会重复生成评价。</text>
         </view>
       </template>
     </view>
@@ -185,7 +182,12 @@ function ratingText(r) {
 
 function openForm(p) {
   current.value = p
-  form.value = { score: 5, content: '' }
+  // 已评价的：回填旧值，让「修改」真的是修改 ——
+  // 否则默认 5 星 + 空白内容提交会把已有评价覆盖掉，还静默成功。
+  const existing = rows.value.find(e => String(e.planId) === String(p.id))
+  form.value = existing
+    ? { score: Math.max(1, Math.min(5, Number(existing.score) || 5)), content: String(existing.content || '') }
+    : { score: 5, content: '' }
   formOpen.value = true
 }
 

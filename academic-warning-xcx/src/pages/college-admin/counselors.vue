@@ -37,16 +37,6 @@
           </view>
         </view>
 
-        <text class="note">
-          「N 个班」与下面那串班名是**这位辅导员名下的全部班级**，按 `classes.counselor_id` 数。
-          司明管着软件学院的 6 个班，其中只有「计科2306班」已经招生 ——
-          另外 5 个是已建班但还没有学生档案的空班，所以这里 6 个班、而学生管理页只有 24 人。
-        </text>
-        <text class="note">
-          首页概览里那个 `counselorCount` **不是这个数**：它量的是"本学院里已分配辅导员的班级数"，
-          是班级数、不是辅导员的任职数。一位辅导员管着本院的 6 个班，概览给 6，而这里只显示他 1 个人。
-          两处口径不同，这里按各自的实际含义起名。
-        </text>
       </template>
     </view>
 
@@ -74,10 +64,7 @@
           <text v-for="(n, i) in classNames" :key="i" class="chip">{{ n }}</text>
         </view>
 
-        <text class="note note--in">
-          班名是后端把班级名用顿号拼成的一个字符串，这里再拆开显示成标签 ——
-          接口没有给班级 id，所以点进去只能看名字，不能跳到班级详情。
-        </text>
+
       </view>
     </detail-sheet>
   </view>
@@ -276,19 +263,4 @@ function openDetail(c) {
   color: $color-text-hint;
 }
 
-.note {
-  display: block;
-  margin: $spacing-lg $page-padding 0;
-  padding: $spacing-md;
-  border-radius: $radius-sm;
-  background: rgba(245, 158, 11, 0.1);
-  font-size: $font-xs;
-  line-height: 1.6;
-  color: #92400e;
-}
-
-.note--in {
-  margin-left: 0;
-  margin-right: 0;
-}
 </style>

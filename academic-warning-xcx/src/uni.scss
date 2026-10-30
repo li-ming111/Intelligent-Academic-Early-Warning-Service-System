@@ -42,17 +42,17 @@ $color-border: #e5e5ea;
 $color-divider: #efeff1;
 
 /* ---------- 角色主色 ----------
-   2026-10-14 finesse 改版：色相五向拉开（绿/橙/靛/紫/青），
-   换掉原先的 Material/Tailwind 默认色——尤其教师 #2196f3 与辅导员
-   #2563eb 两个几乎不可分的蓝。**每色都验过白字对比度 ≥ 4.4:1**
-   （hero 头是纯色底白字）。
-   ⚠️ 与 PC 端 theme.js 暂时**不同源**：本次只改小程序端看效果，
-   用户认可后需把同一组值同步回 PC 端，两端同色的约定仍然成立。
+   2026-10-14 finesse 改版：色相五向拉开（绿/蓝/靛/紫/青）。
+   2026-10-19 教师回蓝 #2196f3：对齐 PC 端 theme.js 与论文截图，
+   两端同色。辅导员已换 #4349b8 靛，与教师亮蓝可分。
+   **每色都验过白字对比度 ≥ 4.4:1**（hero 头是纯色底白字）。
+   ⚠️ 其余四色与 PC 端 theme.js 仍不同源（PC 是旧 Material/Tailwind 色组），
+   后续若要两端全量同色需以本表为准同步 PC 端。
    深色变体（$role-*-deep）用于纵向微渐变的起点，视觉近似平涂。 */
 $role-student: #217a46;
 $role-student-deep: #185c34;
-$role-teacher: #c05621;
-$role-teacher-deep: #9c451a;
+$role-teacher: #2196f3;
+$role-teacher-deep: #1976d2;
 $role-counselor: #4349b8;
 $role-counselor-deep: #353a94;
 $role-admin: #6b3fa0;
@@ -62,7 +62,7 @@ $role-college-admin-deep: #0b606c;
 
 /* 角色浅底（weak）：与上方主色成对，useRoleTheme.js 里同一组值。 */
 $role-student-weak: #e7f4ec;
-$role-teacher-weak: #faeee4;
+$role-teacher-weak: #e3f2fd;
 $role-counselor-weak: #ebeefa;
 $role-admin-weak: #f0eafb;
 $role-college-admin-weak: #e4f3f6;

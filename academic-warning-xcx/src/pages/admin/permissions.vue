@@ -10,7 +10,7 @@
       <template v-else>
         <!-- ---------- 角色 ---------- -->
         <template v-if="tab === 'roles'">
-          <empty-state v-if="!roles.length" text="没有角色数据" hint="role 表为空" icon="user" />
+          <empty-state v-if="!roles.length" text="没有角色数据" hint="还没有配置角色" icon="user" />
 
           <view v-else class="card card--flush">
             <view
@@ -37,16 +37,11 @@
             </view>
           </view>
 
-          <text class="note">
-            `roles` 表现在是 **5 行**，与 `users.role` 的 5 个取值一一对应
-            （学生 / 教师 / 辅导员 / 管理员 / 学院管理员）。
-            点任意一行可以看到该角色绑定的权限点。
-          </text>
         </template>
 
         <!-- ---------- 权限点 ---------- -->
         <template v-else-if="tab === 'perms'">
-          <empty-state v-if="!perms.length" text="没有权限点数据" hint="permission 表为空" icon="lock" />
+          <empty-state v-if="!perms.length" text="没有权限点数据" hint="还没有配置权限点" icon="lock" />
 
           <view v-else>
             <view class="summary">
@@ -70,10 +65,6 @@
                 </text>
               </view>
             </view>
-            <text class="note">
-              「适用角色」来自后端真查 `role_permissions` 表 —— 每行列出**持有该权限的角色名**，
-              不是写死的映射表。反过来"某个角色有哪些权限"，点「角色」页的任意一行就能看到。
-            </text>
           </view>
         </template>
 
@@ -122,7 +113,7 @@
             <empty-state
               v-if="!permList.length"
               text="这个账号没有任何权限点"
-              hint="后端如实返回空数组，界面不替它补默认权限"
+              hint="该角色尚未分配权限"
               icon="lock"
               :top="30"
             />
@@ -132,18 +123,12 @@
               </view>
             </view>
 
-            <text class="note">
-              权限点按账号的 `users.role` 经 `roles.code` 反查 `role_permissions` 得来，
-              是**这个角色实际绑定的那几条**。角色名与角色码都由后端回中文/真实码
-              （如 `管理员` / `ROLE_ADMIN`），不是前端拼的。
-              若某个内置角色一条都没绑，这里会如实显示 0 个。
-            </text>
           </template>
 
           <empty-state
             v-else
             text="输入用户 id 查询权限"
-            hint="这个接口按 users.id 查，不是档案 id"
+            hint="请输入账号 ID 查询权限"
             icon="search"
             :top="40"
           />
@@ -510,14 +495,4 @@ async function doLookup() {
   color: $color-text;
 }
 
-.note {
-  display: block;
-  margin: $spacing-lg $page-padding 0;
-  padding: $spacing-md;
-  border-radius: $radius-sm;
-  background: rgba(245, 158, 11, 0.1);
-  font-size: $font-xs;
-  line-height: 1.6;
-  color: #92400e;
-}
 </style>

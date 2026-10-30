@@ -123,6 +123,8 @@
         >{{ submitting ? '提交中…' : '标记为已处理' }}</view>
       </template>
     </detail-sheet>
+
+    <app-tab-bar role="counselor" />
   </view>
 </template>
 

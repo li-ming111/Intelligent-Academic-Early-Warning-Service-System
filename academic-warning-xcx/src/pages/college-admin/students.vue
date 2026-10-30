@@ -8,7 +8,7 @@
         class="search__input"
         type="text"
         confirm-type="search"
-        placeholder="按姓名 / 学号 / 班级名搜索（服务端过滤）"
+        placeholder="按姓名 / 学号 / 班级名搜索"
         placeholder-class="search__ph"
         @confirm="doSearch"
       />
@@ -27,7 +27,7 @@
             <text class="summary__num">{{ filtered.length }}</text> 名学生
           </text>
           <text class="summary__hint">
-            {{ appliedKeyword ? `服务端命中 ${students.length} 人 · 班级筛选在本地做` : '按班级筛选在本地做（接口只支持关键字）' }}
+            {{ appliedKeyword ? `命中 ${students.length} 人` : '支持按班级筛选' }}
           </text>
         </view>
 
@@ -72,15 +72,7 @@
           </view>
         </view>
 
-        <text class="note">
-          这一页只列**本学院班级下的**学生。库里的班级表与学籍表是两件事：
-          软件学院有 6 个班，但 24 个学生全部挂在「计科2306班」下，另外 5 个班一个学生都没有；
-          电子工程学院的 2 个班同样没有人 —— 所以那个学院的这一页是**空的**，不是接口坏了。
-        </text>
-        <text class="note">
-          列表里的 `studentId` 是**学号字符串**（如 2023020616），不是数据库主键；
-          点进详情时传的第二参数才是 `student_profile.id`。两个 id 不同源，这是这一角色最容易传错的地方。
-        </text>
+        <text class="note">仅显示本学院班级下的学生。</text>
       </template>
     </view>
 
@@ -150,12 +142,7 @@
         </view>
 
         <text class="note note--in">
-          成绩里「期末」为空表示**还没录入**，页面上总评显示灰色的「待录入」而不是 0 ——
-          0 分和没录是两回事。学分这一列只有详情接口给，成绩查询列表里没有。
-        </text>
-        <text class="note note--in">
-          预警行只带 `description`（一段自然语言）与一个数字 `warningLevel`，
-          **没有**触发规则名 —— 规则名在管理员端的「预警规则」页才有。
+          期末成绩为空表示尚未录入，总评显示「待录入」而不是 0 分。
         </text>
       </view>
       <template #footer>

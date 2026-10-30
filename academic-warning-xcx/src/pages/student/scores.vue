@@ -21,7 +21,7 @@
         <empty-state
           v-if="!visibleRows.length"
           text="该学期暂无成绩记录"
-          :hint="semesterKey ? '换个学期看看，或点「全部」查看所有学期' : '后端暂未返回你的成绩数据'"
+          :hint="semesterKey ? '换个学期看看，或点「全部」查看所有学期' : '暂无成绩数据'"
           icon="doc"
         />
 
@@ -80,6 +80,7 @@ import { roleThemeStyle } from '@/composables/useRoleTheme.js'
 import { normalizeScoreRows, summarizeScores } from '@/utils/score-normalize.js'
 import { toNumber, calcGpa, PENDING_TEXT } from '@/utils/score.js'
 import { semesterLabelOf, number, EMPTY_TEXT } from '@/utils/format.js'
+import { go } from '@/utils/navigate.js'
 
 // 注意 useUser() 返回的是**快照值**（不是 ref），页面里直接当普通值用，
 // 不要再点 .value —— 那是历史代码里最容易写错的一处。
@@ -148,7 +149,8 @@ const heroStats = computed(() => {
   return [
     { label: '课程数', value: s.totalCourses },
     { label: '已通过学分', value: s.passedCredits },
-    { label: '挂科', value: s.failed },
+    // 挂科数可点 → 预警页：挂的课正是预警的明细来源，跳过去能对上账
+    { label: '挂科', value: s.failed, onTap: () => go('/pages/student/warnings') },
     { label: '绩点', value: s.gpa === null ? EMPTY_TEXT : number(s.gpa, 1) }
   ]
 })

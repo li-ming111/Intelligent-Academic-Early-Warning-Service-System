@@ -250,6 +250,8 @@ async function load() {
 
 .list { padding: 0 24rpx 24rpx; }
 .row {
+  /* 全局 common.scss 里有 `.row { display: flex }`，不显式覆盖会把整张卡片压成一竖列 */
+  display: block;
   background: #fff;
   border: 1rpx solid #eef0f4;
   border-radius: 12rpx;

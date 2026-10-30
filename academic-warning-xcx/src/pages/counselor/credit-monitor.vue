@@ -4,7 +4,7 @@
 
     <role-hero
       :title="counselorName || '学分监控'"
-      subtitle="达标率的分母是「有成绩人数」，不是花名册"
+      subtitle="达标率按已有成绩的学生计算"
       :avatar-text="avatarText"
       :stats="heroStats"
     />
@@ -26,7 +26,7 @@
               <view class="rate__bar-fill" :style="{ width: pct(monitor.insufficientRate) }" />
             </view>
           </view>
-          <text class="note">该班带班学生共 {{ numOr(monitor.totalStudents) }} 人，其中 {{ numOr(monitor.gradedStudents) }} 人已有期末成绩。尚无成绩的新生不计入达标率分母 —— 否则开学第一学期的达标率会被人为压低。</text>
+          <text class="note">该班共 {{ numOr(monitor.totalStudents) }} 人，其中 {{ numOr(monitor.gradedStudents) }} 人已有期末成绩；尚无成绩的学生不计入达标率分母。</text>
         </view>
 
         <!-- 班级达标情况。点一个班即筛选下方的明细。 -->
@@ -118,9 +118,9 @@
           </view>
 
           <view class="note note--box">
-            <text class="note__line">「红色」= 挂科 3 门及以上，其余为「黄色」（后端按 fail_count ≥ 3 判定，不是按学分缺口）。</text>
-            <text class="note__line">进度条是「已修 ÷ 应修」，应修学分取自该生实际修读记录。毕业要求的总学分是项目常量 120，不参与这里的计算。</text>
-            <text class="note__line">名单只收「存在未通过课程」的学生；学分刚好修够但没有挂科的不会被列进来。</text>
+            <text class="note__line">「红色」表示挂科 3 门及以上，其余为「黄色」。</text>
+            <text class="note__line">进度条按「已修 ÷ 应修」计算，应修学分取自实际修读记录。</text>
+            <text class="note__line">名单只列存在未通过课程的学生；学分修够且没有挂科的学生不会出现在这里。</text>
           </view>
         </view>
       </template>

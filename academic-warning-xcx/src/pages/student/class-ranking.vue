@@ -51,6 +51,9 @@
           <view v-if="tab === 'major' && sameScope" class="same-scope">
             <text class="same-scope__text">{{ sameScopeText }}</text>
           </view>
+          <view v-else-if="tab === 'major' && majorFallback" class="same-scope">
+            <text class="same-scope__text">{{ majorFallbackText }}</text>
+          </view>
 
           <empty-state
             v-if="!ranked.length"
@@ -98,6 +101,7 @@ import { ref, computed, onMounted } from 'vue'
 import { studentAPI } from '@/services/api.js'
 import { useUser } from '@/composables/useUser.js'
 import { roleThemeStyle } from '@/composables/useRoleTheme.js'
+import { go } from '@/utils/navigate.js'
 
 const { userId, userName } = useUser()
 const themeStyle = roleThemeStyle('student')
@@ -112,6 +116,8 @@ const myProfileId = ref(null)
 /** 'class' = 本班；'major' = 本专业 */
 const tab = ref('class')
 const majorList = ref([])
+/** 专业榜接口为空/失败时退回了班级榜：只用于如实提示，不能断言两榜同源 */
+const majorFallback = ref(false)
 
 const EMPTY = '—'
 
@@ -144,7 +150,8 @@ const myGradedCredits = computed(() => {
 })
 
 const heroStats = computed(() => [
-  { label: '班级排名', value: me.value.rank || EMPTY },
+  // 排名可点 → 对标分析页：那里有"和班级平均/最优的差距"，是排名之后的下一问
+  { label: '班级排名', value: me.value.rank || EMPTY, onTap: () => go('/pages/student/benchmark-analysis') },
   { label: '班级人数', value: numOr(me.value.totalStudents) },
   { label: '我的 GPA', value: myGpaText.value },
   { label: '已评学分', value: myGradedCredits.value }
@@ -159,6 +166,7 @@ const heroStats = computed(() => [
  * 不解释的话，看到"两个 tab 一模一样"会以为是写错了。
  */
 const sameScope = computed(() => {
+  if (majorFallback.value) return false
   if (!members.value.length || !majorList.value.length) return false
   if (members.value.length !== majorList.value.length) return false
   const a = members.value.map(r => String(r.profileId)).sort().join(',')
@@ -169,6 +177,8 @@ const sameScope = computed(() => {
 const sameScopeText = computed(() =>
   `本专业当前仅有 1 个班级（${me.value.className || '本班'}），共 ${majorList.value.length} 人，故专业榜与班级榜一致。`
 )
+
+const majorFallbackText = '专业榜数据暂不可用，当前「本专业」展示的是本班榜单。'
 
 const posVerdict = computed(() => {
   const r = Number(me.value.rank)
@@ -238,8 +248,11 @@ async function load() {
     majorList.value = majorData && Array.isArray(majorData.list) ? majorData.list : []
     myProfileId.value = profile && profile.id != null ? profile.id : null
 
-    // 专业榜是超集：本班同学必然也在本专业榜里，若为空则退回班级榜，不留空 tab
-    if (!majorList.value.length && members.value.length) {
+    // 专业榜是超集：本班同学必然也在本专业榜里。接口为空/失败时退回班级榜，
+    // 但必须单独记下 fallback —— 否则 sameScope 会把两榜判成"同一批人"，
+    // 页面就会编出一句"本专业仅有 1 个班"的结论。
+    majorFallback.value = !majorList.value.length && members.value.length > 0
+    if (majorFallback.value) {
       majorList.value = members.value
     }
   } finally {

@@ -113,6 +113,25 @@ const loading = ref(false)
 const showPwd = ref(false)
 const rememberMe = ref(false)
 const errorMessage = ref('')
+/** 401 被踢回登录页时 request.js 会带 `?redirect=原页面`，登录成功后回到那里。 */
+const redirectTarget = ref('')
+
+/** 只接受站内页面路径，避免把 redirect 当成任意外链/登录页自身。 */
+function readRedirect() {
+  const pages = getCurrentPages()
+  const cur = pages && pages.length ? pages[pages.length - 1] : null
+  const raw = cur && cur.options ? cur.options.redirect : ''
+  if (!raw) return ''
+  let path = ''
+  try {
+    path = decodeURIComponent(String(raw))
+  } catch (e) {
+    return ''
+  }
+  if (!/^\/pages\/[\w-]+\/[\w-]+(\?.*)?$/.test(path)) return ''
+  if (path.startsWith('/pages/auth/login')) return ''
+  return path
+}
 // 验证码（2026-10-02 W1.12 起由**服务端**签发）。
 // 改之前这里是 `Math.random()` 本地生成、本地比对 —— 直接 POST /auth/login
 // 根本不经过这一页，验证码对脚本等于不存在。
@@ -167,6 +186,17 @@ const handleLogin = async () => {
     const response = await apiClient.login(
       loginForm.value.username, loginForm.value.password, captchaId.value, loginForm.value.captcha.trim())
     if (response && response.token) {
+      // 自定义角色（users.role ≥ 6）在小程序端没有对应首页：不能回落到学生端，
+      // 否则登录后每个接口都 403。如实提示走 PC 端，不写登录态。
+      const role = String(response.role)
+      const home = ROLE_HOME[role]
+      if (!home) {
+        errorMessage.value = '当前账号的角色暂不支持小程序端，请使用 PC 端登录'
+        generateCaptcha()
+        loginForm.value.captcha = ''
+        return
+      }
+
       uni.setStorageSync('token', response.token)
       uni.setStorageSync('userId', response.userId)
       uni.setStorageSync('username', response.username)
@@ -181,10 +211,9 @@ const handleLogin = async () => {
         rememberSession(30)
       }
 
-      const role = String(response.role)
       uni.showToast({ title: '登录成功', icon: 'success', duration: 1200 })
       setTimeout(() => {
-        uni.reLaunch({ url: ROLE_HOME[role] || ROLE_HOME['1'] })
+        uni.reLaunch({ url: redirectTarget.value || home })
       }, 1200)
     } else {
       // 走到这里说明 HTTP 200 且 code 200，但 data 里没有 token —— 后端把失败原因
@@ -207,11 +236,18 @@ const handleLogin = async () => {
 }
 
 onMounted(() => {
+  redirectTarget.value = readRedirect()
+
   // 「记住我」还在期内 ⇒ 直接回各自首页，不用再登一次。
   // 这是这个勾选**唯一**有实际作用的地方（改之前它只翻转一个 ref）。
   if (stillRemembered()) {
-    uni.reLaunch({ url: ROLE_HOME[String(uni.getStorageSync('role') || '')] || ROLE_HOME['1'] })
-    return
+    const home = ROLE_HOME[String(uni.getStorageSync('role') || '')]
+    if (home) {
+      uni.reLaunch({ url: redirectTarget.value || home })
+      return
+    }
+    // 自定义角色没有小程序首页：清掉登录态，留在本页提示
+    logout()
   }
 
   // 没记住（或已过期）：清空登录态再进来。
@@ -255,10 +291,14 @@ onMounted(() => {
   justify-content: center;
   box-shadow: 0 8rpx 32rpx rgba(0, 0, 0, 0.15);
   margin-bottom: $spacing-xl;
+  overflow: hidden;
 }
 .logo {
-  width: 130rpx;
-  height: 130rpx;
+  /* logo.jpg 是 536×536 的方图，校徽本体只占中间 87%（四周自带一圈白边）。
+     按 160rpx 放就会露出那圈白边，看着像"没占满圆"；放大到 184rpx
+     （160 ÷ 0.873）让白边被 .logo-wrap 的圆形裁掉。 */
+  width: 184rpx;
+  height: 184rpx;
   border-radius: 50%;
 }
 .brand-title {
@@ -276,9 +316,13 @@ onMounted(() => {
 /* 卡片 */
 .card {
   flex: 1;
+  /* 全局 common.scss 的 `.card` 带 margin-bottom，白卡下面会露出一条品牌蓝；
+     这里既要去掉它，也要把底部安全区一并铺成白色。 */
+  margin-bottom: 0;
   background: $color-card;
   border-radius: $radius-xl $radius-xl 0 0;
-  padding: 48rpx 40rpx 40rpx;
+  padding: 48rpx 40rpx calc(40rpx + constant(safe-area-inset-bottom));
+  padding: 48rpx 40rpx calc(40rpx + env(safe-area-inset-bottom));
   position: relative;
   z-index: 1;
 }

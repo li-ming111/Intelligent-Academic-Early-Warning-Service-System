@@ -131,9 +131,11 @@
           </view>
           <!-- 说明文案必须写在**同一行**：小程序编译器会把 text 内的换行压成一个空格，
                中文句子中间凭空多出一个空格看着像错别字。 -->
-          <text class="form__tip">保存进度会同时改写状态：0% 为待开始、100% 为已完成、其余为进行中（后端强联动）。当前将同步为「{{ statusText(derivedStatus) }}」。</text>
+          <text class="form__tip">保存进度会同时改写状态：0% 为待开始、100% 为已完成、其余为进行中。当前将同步为「{{ statusText(derivedStatus) }}」。</text>
         </template>
-        <text v-else class="form__tip">新建的计划一律落为「待开始 / 0%」—— 后端创建时会强制覆盖状态与进度，因此这里不提供初始进度，建成后再调。</text>
+        <text v-else class="form__tip">新建的计划默认为「待开始 / 0%」，建成后再调整进度。</text>
+
+        <view v-if="editing" class="form__danger" @tap="removePlan">删除这条帮扶计划</view>
       </view>
 
       <template #footer>
@@ -144,6 +146,8 @@
         >{{ saving ? '提交中…' : (editing ? '保存' : '创建计划') }}</view>
       </template>
     </detail-sheet>
+
+    <app-tab-bar role="counselor" />
   </view>
 </template>
 
@@ -382,6 +386,28 @@ async function submit() {
     saving.value = false
   }
 }
+
+function removePlan() {
+  const p = editing.value
+  if (!p) return
+  uni.showModal({
+    title: '删除帮扶计划',
+    content: `确定删除「${nameOf(p)}」的这条帮扶计划？学生端将不再可见，此操作不可撤销。`,
+    confirmText: '删除',
+    confirmColor: '#ef4444',
+    success: async (res) => {
+      if (!res.confirm) return
+      try {
+        await counselorAPI.deleteAssistancePlan(p.id)
+        uni.showToast({ title: '已删除', icon: 'success' })
+        sheetOpen.value = false
+        await load()
+      } catch (e) {
+        uni.showToast({ title: e && e.message ? e.message : '删除失败', icon: 'none' })
+      }
+    }
+  })
+}
 </script>
 
 <style lang="scss" scoped>
@@ -615,6 +641,16 @@ async function submit() {
   font-size: $font-xs;
   color: $color-text-hint;
   line-height: 1.6;
+}
+
+.form__danger {
+  margin-top: $spacing-2xl;
+  padding: $spacing-md 0;
+  border-radius: $radius-md;
+  background: rgba(239, 68, 68, 0.08);
+  color: $color-danger;
+  font-size: $font-sm;
+  text-align: center;
 }
 
 .presets {

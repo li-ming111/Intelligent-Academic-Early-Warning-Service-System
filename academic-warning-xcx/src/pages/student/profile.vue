@@ -96,6 +96,8 @@ const profile = ref({})
 /** /users/info/{uid} —— 账号（邮箱/手机/注册时间） */
 const info = ref({})
 const gpaHistory = ref([])
+/** /students/warnings/{uid} —— 预警列表，本地计数（口径见 heroStats 注释） */
+const warnings = ref([])
 
 const EMPTY = '—'
 /** 绩点上限 4.0（后端 ScoreSyncSupport 最高档 90 分以上） */
@@ -113,12 +115,16 @@ const heroSubtitle = computed(() => {
   return parts.length ? parts.join(' · ') : '学生'
 })
 
-/** 只显示后端真的给了的值。取不到就显破折号，不拿学号/ID 冒充。 */
+/** 只显示后端真的给了的值。取不到就显破折号，不拿学号/ID 冒充。
+ *
+ * 预警数**不取** `dash.warningCount`：那一列与 dashboard 页本地统计的口径不同源，
+ * 两页数字会打架（dashboard 的注释也明示了不用它）。这里同样拉预警列表本地数，
+ * 三个页面（dashboard / warnings / profile）看到的是同一个数。 */
 const heroStats = computed(() => [
   { label: '绩点', value: dash.value.gpa == null ? EMPTY : numFixed(dash.value.gpa, 2) },
   { label: '已通过学分', value: dash.value.completedCredits == null ? EMPTY : dash.value.completedCredits },
   { label: '挂科', value: dash.value.failedCoursesCount == null ? EMPTY : dash.value.failedCoursesCount },
-  { label: '预警', value: dash.value.warningCount == null ? EMPTY : dash.value.warningCount }
+  { label: '预警', value: warnings.value.length }
 ])
 
 const eduRows = computed(() => [
@@ -194,11 +200,12 @@ async function load() {
      * 四个接口都传 **users.id**。注意 `/students/{i}` 系列看着像要 profile id，
      * 实际要的是 users.id —— 传 profile id 会得到 `{error:"学生不存在"}`（HTTP 仍是 200）。
      */
-    const [d, p, i, gh] = await Promise.all([
+    const [d, p, i, gh, w] = await Promise.all([
       studentAPI.getDashboard(userId).catch(e => { console.error('[profile] 首页数据失败:', e); return null }),
       studentAPI.getStudentByUserId(userId).catch(e => { console.error('[profile] 学籍失败:', e); return null }),
       studentAPI.getUserInfo(userId).catch(e => { console.error('[profile] 账号失败:', e); return null }),
-      studentAPI.getGPA(userId).catch(() => null)
+      studentAPI.getGPA(userId).catch(() => null),
+      studentAPI.getWarnings(userId).catch(e => { console.error('[profile] 预警加载失败:', e); return [] })
     ])
 
     dash.value = d && typeof d === 'object' ? d : {}
@@ -206,8 +213,9 @@ async function load() {
     info.value = i && typeof i === 'object' ? i : {}
     // /students/{uid}/gpa 返回按学期倒序的数组，取近 5 个学期
     gpaHistory.value = (Array.isArray(gh) ? gh : []).slice(0, 5)
+    warnings.value = Array.isArray(w) ? w : []
 
-    const wc = Number(dash.value.warningCount)
+    const wc = warnings.value.length
     warningBadge.value = Number.isFinite(wc) && wc > 0 ? String(wc) : ''
   } finally {
     loading.value = false

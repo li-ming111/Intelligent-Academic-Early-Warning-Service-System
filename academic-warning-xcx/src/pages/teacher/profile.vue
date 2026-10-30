@@ -174,31 +174,29 @@ const messages = ref([])
 const unread = ref(0)
 
 /**
- * 键名**必须**与 `user_settings` 表的列名一致 —— 这五个就是
+ * 键名**必须**与 `user_settings` 表的列名一致 —— 这四个就是
  * `GET /users/{uid}/settings` 实际返回的键。教师端没有自己的设置接口，
- * 五个开关与其它角色共用同一张表。
+ * 四个开关与其它角色共用同一张表。
  */
 const form = ref({
   warningNotification: false,
   systemMessage: false,
   classNotification: false,
-  studentFeedback: false,
-  emailReminder: false
+  studentFeedback: false
 })
 
 const toggles = [
   { key: 'warningNotification', label: '学业预警通知', hint: '所带班级触发预警时推送' },
   { key: 'systemMessage', label: '系统消息', hint: '系统公告与维护通知' },
   { key: 'classNotification', label: '班级通知', hint: '班级事务与集体活动' },
-  { key: 'studentFeedback', label: '学生反馈', hint: '学生提交的反馈与后续回复' },
-  { key: 'emailReminder', label: '邮件提醒', hint: '同时发送一份到邮箱' }
+  { key: 'studentFeedback', label: '学生反馈', hint: '学生提交的反馈与后续回复' }
 ]
 
 const pwd = ref({ oldPassword: '', newPassword: '', confirm: '' })
 const changing = ref(false)
 
 /** switch 是原生组件，不解析 CSS 变量，color 必须给字面量（色值取 ROLE_THEME） */
-const switchColor = primaryOf(role, '#c05621')
+const switchColor = primaryOf(role, '#2196f3')
 
 const displayNameText = computed(() => profile.value.name || userName || '教师')
 
@@ -293,7 +291,7 @@ function onToggle(key, e) {
 async function saveSetting(key, value, prev) {
   try {
     // `PUT /users/{uid}/settings` 是**部分更新**，不是整表覆盖 ——
-    // 体里没出现的字段保持原值不动（MyBatis-Plus 的 NOT_NULL 策略，五个开关都是包装类型
+    // 体里没出现的字段保持原值不动（MyBatis-Plus 的 NOT_NULL 策略，四个开关都是包装类型
     // Boolean，所以「传 false」和「没传」分得开）。发全量只是让请求体自洽，少发不会重置别人。
     await teacherAPI.updateSettings(userId, { ...form.value })
     uni.showToast({ title: '已保存', icon: 'success' })
@@ -377,7 +375,7 @@ async function load() {
     }
 
     if (settings && typeof settings === 'object') {
-      // 只挑已知的五个键，免得把无关字段带进表单再整表写回去
+      // 只挑已知的四个键，免得把无关字段带进表单再整表写回去
       const next = { ...form.value }
       for (const t of toggles) {
         if (settings[t.key] !== undefined && settings[t.key] !== null) {

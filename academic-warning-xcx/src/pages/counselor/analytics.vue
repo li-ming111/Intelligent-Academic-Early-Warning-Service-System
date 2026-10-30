@@ -4,7 +4,7 @@
 
     <role-hero
       :title="counselorName || '数据分析'"
-      subtitle="六个口径各自独立，分母见页底说明"
+      subtitle="六项数据分别统计，计算说明见页底"
       :avatar-text="avatarText"
       :stats="heroStats"
     />
@@ -75,7 +75,7 @@
               </view>
               <text class="legend__note">合计 {{ trendTotal }} 条</text>
             </view>
-            <text class="note">后端按「创建时间」切近 6 个自然月，没有预警的月份显示为空白 —— 那是「那个月没触发」，不是「数据丢了」。更早的预警会移出窗口、从图上消失。</text>
+            <text class="note">图表展示最近 6 个自然月的预警趋势，没有预警的月份显示为空白。</text>
           </view>
         </view>
 
@@ -89,7 +89,7 @@
             </template>
             <template v-else>
               <text class="efficiency__none">暂无已处理预警</text>
-              <text class="efficiency__label">平均处理时长 = 处理时间 − 创建时间，没有已处理的预警就算不出天数。后端此时返回 0，直接显示成「0 天」会被误读成秒处理，故按无数据处理。</text>
+              <text class="efficiency__label">平均处理时长 = 处理时间 − 创建时间；暂无已处理预警时不显示天数。</text>
             </template>
           </view>
         </view>
@@ -138,13 +138,13 @@
                 <view class="rate__bar-fill" :style="{ width: pct(assistance.completionRate) }" />
               </view>
             </view>
-            <text class="note">「已完成」只认计划状态为「已完成」(status=2) 的记录。进行中与待开始的计划不计入分子，所以完成率偏低时先看有多少条还停在「进行中」。</text>
+            <text class="note">完成率只统计状态为「已完成」的计划，进行中与待开始的计划不计入。</text>
           </view>
         </view>
 
         <!-- 口径说明：六个数的分母各不相同，答辩时被追问的就是这里 -->
         <view class="section section--last">
-          <section-title title="口径说明" plain />
+          <section-title title="计算说明" plain />
           <view class="card">
             <view v-for="(n, i) in notes" :key="i" class="kv">
               <text class="kv__k">{{ n.k }}</text>
@@ -164,6 +164,7 @@ import { ref, computed, onMounted } from 'vue'
 import { counselorAPI } from '@/services/api.js'
 import { useUser } from '@/composables/useUser.js'
 import { roleThemeStyle } from '@/composables/useRoleTheme.js'
+import { go } from '@/utils/navigate.js'
 import { WARNING_LEVEL_TEXT, dictText } from '@/constants/dict.js'
 
 const { userId, userName } = useUser()
@@ -252,14 +253,14 @@ const hasHandled = computed(() => numOr(efficiency.value.avg_handle_days) > 0)
 
 const heroStats = computed(() => [
   { label: '学分不足率', value: `${numOr(insufficient.value.insufficientRate)}%` },
-  { label: '预警总数', value: distTotal.value },
+  { label: '预警总数', value: distTotal.value, onTap: () => go('/pages/counselor/warnings') },
   { label: '有成绩人数', value: numOr(insufficient.value.totalStudents) },
   { label: '达标班级', value: ranking.value.length }
 ])
 
 const notes = computed(() => [
   { k: '学分不足率', v: `挂科人数 ÷ 有成绩人数（${numOr(insufficient.value.insufficientStudents)} ÷ ${numOr(insufficient.value.totalStudents)}），不含尚无成绩的新生` },
-  { k: '班级达标率', v: '学分达标人数 ÷ 该班有成绩人数，花名册里没成绩的人不参与' },
+  { k: '班级达标率', v: '学分达标人数 ÷ 该班有成绩人数，没有成绩的学生不参与计算' },
   { k: '帮扶完成率', v: '状态为已完成的计划数 ÷ 计划总数' },
   { k: '预警趋势', v: '按预警创建时间落在近 6 个自然月内计数' },
   { k: '处理效率', v: '已处理预警的「处理时间 − 创建时间」平均值，无已处理记录时不给天数' }

@@ -25,12 +25,14 @@
  * `convertAndSendToUser` 会**静默丢包**（连得上、订阅得上、就是永远收不到）。
  */
 
+import { MP_HOST } from '@/config/env.js'
+
 // #ifdef H5
 const WS_URL = `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}/ws`
 // #endif
 // #ifndef H5
-// 小程序没有代理，只能直连网关。微信开发者工具需勾选「不校验合法域名」。
-const WS_URL = 'ws://localhost:8076/ws'
+// 小程序没有代理，只能直连网关；地址与 HTTP 接口同源，见 config/env.js。
+const WS_URL = `ws://${MP_HOST}/ws`
 // #endif
 
 const MAX_RECONNECT = 5

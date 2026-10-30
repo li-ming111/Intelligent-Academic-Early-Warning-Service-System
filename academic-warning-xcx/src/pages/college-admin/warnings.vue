@@ -2,6 +2,13 @@
   <view class="page-root" :style="themeStyle">
     <app-navbar title="预警管理" :show-back="false" />
 
+    <role-hero
+      :title="userName || '本院预警'"
+      subtitle="本院预警，点等级数字可按等级筛选"
+      :avatar-text="avatarText"
+      :stats="heroStats"
+    />
+
     <filter-bar v-model="levelFilter" :options="levelOptions" />
 
     <view class="page-body page-body--tabbar">
@@ -13,7 +20,7 @@
             共 <text class="summary__num">{{ warnings.length }}</text> 条 ·
             待处理 <text class="summary__num summary__num--danger">{{ pendingCount }}</text> 条
           </text>
-          <text class="summary__hint">等级筛选在本地做（接口不支持按等级过滤）</text>
+          <text class="summary__hint">按预警等级筛选</text>
         </view>
 
         <empty-state
@@ -46,15 +53,7 @@
           </view>
         </view>
 
-        <text class="note">
-          这一页的「处理」与管理员端**不是同一支接口**：这里只把 `status` 置 1 并写一下
-          `updated_at`，**不记录处理人、不记录处理说明**。所以详情里没有"处理备注"栏
-          —— 不是没显示，是库里没这个位置可放。
-        </text>
-        <text class="note">
-          删除是**真的删行**（`deleteById`），不是软删除。删掉后这条记录在库里就不存在了，
-          「这个学生被预警过」的痕迹一并消失，不可撤销。
-        </text>
+        <text class="note">删除后预警记录不可恢复，请谨慎操作。</text>
       </template>
     </view>
 
@@ -66,7 +65,7 @@
         <view class="facts">
           <view class="facts__row">
             <text class="facts__k">学生</text>
-            <text class="facts__v">{{ current.studentName || `student_profile.id ${current.studentId}` }}</text>
+            <text class="facts__v">{{ current.studentName || `学号 ${current.studentId}` }}</text>
           </view>
           <view class="facts__row">
             <text class="facts__k">班级</text>
@@ -89,10 +88,7 @@
         <section-title plain title="预警说明" />
         <text class="paragraph">{{ current.description || '（无）' }}</text>
 
-        <text class="note note--in">
-          这条记录只有上面这些字段。库里另有 `handle_result` / `handled_by` / `handled_at`
-          三列，是管理员端的处理接口在写；学院管理员这条处理路径不碰它们，所以这里不展示空行。
-        </text>
+
       </view>
 
       <template #footer>
@@ -126,8 +122,25 @@ import { warningLevelText } from '@/utils/score.js'
 // 这一页原来自己写 `status === 1 ? '已处理' : '待处理'` ⇒ status=2 显示成"待处理"。
 import { normalizeWarnings, warningStatusTagClass } from '@/utils/warning.js'
 
-const { userId } = useUser()
+const { userId, userName } = useUser()
 const themeStyle = roleThemeStyle('collegeAdmin')
+
+const avatarText = computed(() => (userName ? String(userName).slice(0, 1) : ''))
+
+/** 点同一档再点一次 = 取消筛选，与筛选条的行为保持一致 */
+function pick(level) {
+  levelFilter.value = levelFilter.value === level ? '' : level
+}
+
+const heroStats = computed(() => {
+  const count = l => warnings.value.filter(w => String(w.warningLevel) === l).length
+  return [
+    { label: '待处理', value: pendingCount.value },
+    { label: '轻度', value: count('1'), onTap: () => pick('1') },
+    { label: '中度', value: count('2'), onTap: () => pick('2') },
+    { label: '严重', value: count('3'), onTap: () => pick('3') }
+  ]
+})
 
 const levelOptions = [
   { label: '全部', value: '' },
@@ -396,11 +409,6 @@ function askDelete() {
   font-size: $font-xs;
   line-height: 1.6;
   color: #92400e;
-}
-
-.note--in {
-  margin-left: 0;
-  margin-right: 0;
 }
 
 /* ---------- 底部 ---------- */

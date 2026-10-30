@@ -40,11 +40,6 @@
             </view>
           </view>
 
-          <text class="note">
-            课程接口本身**不带教师姓名**，只给一个 `teacherId`。这里的姓名是页面拿
-            `/admin/teachers` 的 `userId` 对出来的 —— 注意对的是 `userId`（于凤海 = 29），
-            不是教师档案的 `id`（= 1）。按 `id` 对，10 门课会全部显示成"未分配"。
-          </text>
         </template>
 
         <!-- ---------- 班级 ---------- -->
@@ -84,10 +79,6 @@
             </view>
           </view>
 
-          <text class="note">
-            班级行的字段**同一行里两种命名**：`college_id` / `major_id` / `teacher_id` 是下划线，
-            `studentCount` / `teacherName` 是驼峰。这是后端 SQL 直出的结果，页面按各自的名字取。
-          </text>
         </template>
       </template>
     </view>
@@ -122,10 +113,7 @@
             <text class="facts__v">{{ formatDate(currentCourse.createdAt, true) }}</text>
           </view>
         </view>
-        <text class="note">
-          改这里的授课教师**不会**动已有的成绩记录 —— 成绩是按 `student_id + course_id` 存的，
-          换老师只是换这门课的责任人。
-        </text>
+        <text class="note">调整授课教师只变更课程负责人，不影响已有成绩记录。</text>
       </view>
 
       <!-- ---------- 班级详情 ---------- -->
@@ -152,15 +140,6 @@
             <text class="facts__v">{{ counselorNameOf(currentClass) }}</text>
           </view>
         </view>
-        <text class="note">
-          辅导员这一行来自班级**详情**接口 —— 列表接口里没有 `counselorId` 字段。
-          `classes.counselor_id` 存的是 `counselor_profiles.user_id`（司明 = 53），不是档案的 `id`（= 1）。
-        </text>
-        <text class="note">
-          「移除班主任」走的是单独的一支接口（`POST /class-management/remove-teacher/{id}`）。
-          不能用编辑班级把班主任清空 —— 改动接口底层是 MyBatis-Plus 的 `updateById`，
-          它**跳过 null 字段**，传 `teacherId: null` 等于没传，库里那一列不会变。
-        </text>
       </view>
 
       <!-- ---------- 课程表单 ---------- -->
@@ -206,10 +185,6 @@
           <text class="field__label">说明</text>
           <input v-model="form.description" class="field__input" placeholder="选填" placeholder-class="field__ph" />
         </view>
-        <text class="note">
-          授课教师选项来自 `/admin/teachers` 的 6 位教师，值取的是 `userId`
-          —— 与 `courses.teacher_id` 的口径一致。
-        </text>
       </view>
 
       <!-- ---------- 班级表单 ---------- -->
@@ -267,13 +242,10 @@
               class="opt"
               :class="{ 'opt--on': form.counselorId === c.userId }"
               @tap="form.counselorId = c.userId"
-            >{{ c.name }}<text v-if="c.counselorId">（{{ c.counselorId }}）</text></view>
+            >{{ c.name }}</view>
           </view>
         </view>
-        <text class="note">
-          「不指定」在**新建**时是不写这一列；在**编辑**时它不会清掉原有值
-          （底层跳过 null 字段）。要清班主任，请用详情里的「移除班主任」。
-        </text>
+        <text class="note">新建时选择「不指定」即暂不安排班主任；已分配的班主任请用详情里的「移除班主任」清除。</text>
       </view>
 
       <template #footer>

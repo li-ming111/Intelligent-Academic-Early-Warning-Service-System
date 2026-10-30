@@ -5,7 +5,7 @@
 // 这样 H5 才能走 vite 代理（直接打 8076 会被 CORS 拦），
 // 401 也不会并发触发多次 reLaunch。
 
-import { request as httpRequest } from './request.js'
+import { request as httpRequest, upload, downloadFileAuth } from './request.js'
 
 class ApiClient {
   // ========== 通用请求 ==========
@@ -37,8 +37,12 @@ class ApiClient {
   registerCounselor = (data) => this._post('/auth/register/counselor', data)
   getColleges = () => this._get('/auth/colleges')
   getMajorsByCollege = (collegeId) => this._get(`/auth/majors?collegeId=${collegeId}`)
+  /** 全量专业目录（带 `code` 专业代码列）—— 学生注册按学号第 5-6 位带出专业用。 */
+  getMajors = () => this._get('/auth/majors')
   getClasses = (collegeId) => {
-    const u = `/auth/classes`;
+    // 注意 u 必须是 let：这里要按需拼 query。之前写成 const 又 `u +=`，
+    // 严格模式下直接 TypeError，学生注册页的班级列表加载会整个挂掉。
+    let u = `/auth/classes`;
     if (collegeId) u += `?collegeId=${collegeId}`;
     return this._get(u)
   }
@@ -202,8 +206,14 @@ class ApiClient {
      * ⚠️ 返回里的 `maxStudents` 是计划容量、`enrolledCount` 是实际选课人数，两个数不同。
      */
     getTimetable: () => this._get('/teachers/courses/timetable'),
-    /** **纯桩**：只回 `{status:'已推荐', message:'课程推荐成功，学生将收到通知'}`，不写库、不发通知。不要接进 UI。 */
+    /**
+     * 推荐课程给学生/班级。体：`{courseId(必填), reason(必填,≤500), targetClassId?(可选,须本人所带班级)}`。
+     * 后端真落库（course_recommendation 表，controller L1111 有 insert）。
+     * ⚠️ api.js 旧注释说这是"纯桩不写库"——已过时，以 controller 为准。
+     */
     recommendCourse: (data) => this._post('/teachers/courses/recommend', data),
+    /** 我发出过的推荐记录（回看）。 */
+    listMyRecommendations: () => this._get('/teachers/courses/recommendations'),
 
     // —— 成绩（流水） ——
     /**
@@ -221,8 +231,15 @@ class ApiClient {
       this._get(`/teachers/scores/by-class?class_name=${encodeURIComponent(className)}&teacher_id=${teacherId}`),
     /** 新增成绩。体：`{teacherId(users.id), scores:[{studentId(profile), courseId, score, ...}]}`。**真落库**。 */
     saveScores: (data) => this._post('/teachers/scores', data),
-    /** 导入成绩，与 saveScores 同一实现、只是提示语不同。体同上。 */
-    importScores: (data) => this._post('/teachers/scores/import', data),
+    /**
+     * 批量导入成绩（Excel 上传）。multipart：`file`(必填) + `courseId`(必填)
+     * + `className`/`semester`(可选)。Excel 列：学号(必填)/姓名/总评成绩(必填)/学期/备注。
+     * 返回：`{total, success, skipped, errors:[{row, error}]}`（saveScores 事务性：
+     * 要么全落库要么一条不落）。
+     */
+    importScoresFile: (filePath, formData, fileObj) => upload('/teachers/scores/import', filePath, formData, fileObj),
+    /** 下载成绩导入模板（真 xlsx，列口径与 importScores 逐字一致）。 */
+    downloadScoresTemplate: () => downloadFileAuth('/teachers/scores/template', '成绩导入模板.xlsx'),
     /**
      * 改分。**真落库**（直写 `scores` + 写一条 `score_audit_log`；W36 起不再经 `score_record`）。
      * 体：`{score, remark?, modifiedBy?}`。`id` 是 **`scores.id`**。
@@ -450,17 +467,17 @@ class ApiClient {
      * 创建帮扶计划。请求体 = AssistancePlan：`{counselorId, studentId, content, status, progress}`。
      * ⚠️ `counselorId` 传 **users.id**（53），与库里既有 4 行一致、也与其他所有按辅导员过滤的
      *    查询一致（`/analytics/assistance-completion` 就是按 users.id 过滤的）。
-     *    别被删除接口的校验误导去传 profile id —— 那处校验本身是错的，见 `deleteAssistancePlan`。
+     *    别被删除接口的旧校验误导去传 profile id —— 那个口径 bug 后端已修（见 `deleteAssistancePlan`）。
      * ⚠️ `studentId` 是 profile id。表里**没有 title 列**，计划的"标题"只能由 content 首句推导。
      * ⚠️ `status` / `progress` 传什么都没用：`createPlan` 会强制写成 0 与 0，新计划一律"待开始 / 0%"。
      */
     createAssistancePlan: (data) => this._post('/counselors/assistance-plans', data),
     updateAssistancePlan: (id, data) => this._put(`/counselors/assistance-plans/${id}`, data),
     /**
-     * ⚠️ **当前必然 403**（静态分析结论，非实测；因辅导员账号登录被权限策略拦住）。
-     *    校验代码是 `!plan.getCounselorId().equals(profile.getId())` —— 左边 `assistance_plans.counselor_id`
-     *    存的是 users.id（53），右边 `counselor_profiles.id` 是 1，永不相等，于是非管理员一律被拒。
-     *    在它修好之前，界面不提供"删除帮扶计划"，改用「状态 / 进度」两个能落库的入口。
+     * ✅ 2026-10-19 实测：本人删除自己的计划返回 200。
+     *    旧结论「恒 403」源自 2026-10-04 之前的口径 bug（校验比 counselor_profiles.id
+     *    而库里存 users.id），后端当日已改为与网关注入的 users.id 比较 —— 与本页传参口径一致。
+     *    仅他人计划仍 403（管理员除外）。删除入口见 counselor/assistance.vue 编辑弹层底部。
      */
     deleteAssistancePlan: (id) => this._del(`/counselors/assistance-plans/${id}`),
     /**
@@ -752,19 +769,23 @@ class ApiClient {
     /** 单用户。`password` **恒为 null**（后端显式抹掉），不是被过滤掉的字段名。 */
     getUserById: (id) => this._get(`/admin/users/${id}`),
     /**
-     * 建号。体 `{username, name, role, email, password}`（PC 表单就这五个）。
-     * ⚠️ 建号**不会**给教师(2)建档案行 —— `teacher_profile.college_id` 是 NOT NULL
-     *    而建号表单里没有学院，硬填 0 会造出"不属于任何学院"的幽灵账号。
-     *    所以新建的教师要在「编辑」里补学院，否则按学院筛选时查不到他。
-     * ✅ 2026-10-09（W32）：**学院管理员(5) 不再属于这一类** —— 选了该角色时表单会多一个
-     *    「所属学院」选项，值经 query 参数发给后端（`?collegeId=`），后端据它建
-     *    `college_admin_profile` 行。学院管理端的学院归属就靠这行推出来，没有它 18 个
-     *    接口一律 403。不传 `collegeId` 时不建档案行，响应 message 会如实说明。
+     * 建号。体 `{username, name, role, email, password}`。
+     * `collegeId`/`majorId` 走 query 参数（users 表没有这两列，User 实体上也没有）。
+     * ✅ 2026-10-19：除系统管理员(4)外四个角色都要求 collegeId（学生另要求 majorId）——
+     *    后端据它们把档案行的归属写全：学生落 college_id/major_id，教师**建档案行**
+     *    （此前表单没有学院、后端故意不建，教师要事后补学院），辅导员落 college_id，
+     *    学院管理员建 college_admin_profile（学院管理端的学院归属就靠这行推出来，
+     *    没有它 18 个接口一律 403）。
+     * ⚠️ 口令留空不发该字段时，后端落**演示口令 123456**（与表单提示一致）。
      * ⚠️ 重名是**业务错误**：`code=500` + message「用户名已存在：xxx」，要按 message 提示，
      *    不能只判 HTTP。
      */
-    createUser: (data, collegeId = null) => {
-      const url = collegeId ? `/admin/users?collegeId=${encodeURIComponent(collegeId)}` : '/admin/users'
+    createUser: (data, collegeId = null, majorId = null) => {
+      let url = '/admin/users'
+      const q = []
+      if (collegeId) q.push('collegeId=' + encodeURIComponent(collegeId))
+      if (majorId) q.push('majorId=' + encodeURIComponent(majorId))
+      if (q.length) url += '?' + q.join('&')
       return this._post(url, data)
     },
     /**
@@ -982,8 +1003,8 @@ class ApiClient {
     /**
      * 存设置。`PUT` 是**部分更新**，不是整表覆盖 —— 请求体里没出现的字段保持不动
      * （底层 MyBatis-Plus `updateById` 的 NOT_NULL 策略，实体里开关都是包装类型 Boolean，
-     * 所以"传了 false"和"没传"分得开）。2026-09-29 实测：只发 `{emailReminder}`，
-     * 另外四个开关保持原值。第一次保存会**插一行**（`user_settings` 原本没有该用户的行）。
+     * 所以"传了 false"和"没传"分得开）。2026-09-29 实测：只发一个开关，
+     * 其余开关保持原值。第一次保存会**插一行**（`user_settings` 原本没有该用户的行）。
      */
     updateSettings: (userId, data) => this._put(`/users/${userId}/settings`, data)
 
@@ -1160,15 +1181,18 @@ class ApiClient {
     getClassStudents: (uid, classId) => this._get(`/college-admin/class-students/${uid}/${classId}`),
 
     /**
-     * 成绩查询：`{id, studentName, studentId(学号), className, courseName, regularScore,
+     * 成绩查询：返回 `{total, items, page, size}`，`items` 每行是
+     * `{id, studentName, studentId(学号), className, courseName, regularScore,
      * finalScore, totalScore, gradePoint, grade, semester}`。
-     * `classId` 与 `keyword` 都是**服务端**参数（keyword 匹配姓名/学号/课程名），
-     * 所以这一页的筛选是真的下推到 SQL 的，不是本地筛一页。
+     * `classId`、`keyword`（匹配姓名/学号/课程名）、`page`、`size` 都是**服务端**参数，
+     * 所以筛选和分页都真的下推到 SQL，不是把全量拉回本地再切。`size` 上限 200。
      */
-    getScoreQuery: (uid, { classId, keyword } = {}) => {
+    getScoreQuery: (uid, { classId, keyword, page, size } = {}) => {
       const qs = []
       if (classId) qs.push('classId=' + encodeURIComponent(classId))
       if (keyword) qs.push('keyword=' + encodeURIComponent(keyword))
+      if (page) qs.push('page=' + encodeURIComponent(page))
+      if (size) qs.push('size=' + encodeURIComponent(size))
       return this._get(`/college-admin/score-query/${uid}${qs.length ? '?' + qs.join('&') : ''}`)
     },
 

@@ -33,7 +33,7 @@
                 <view class="act act--danger" @tap="confirmCancel(c)">解除管理</view>
               </view>
             </view>
-            <text class="note">「解除管理」会立即把班级从你名下移除，无需管理员审核。操作后你不再能看到该班的学生与成绩。</text>
+            <text class="note">「解除管理」立即生效，无需审核；解除后将无法查看该班学生与成绩。</text>
           </view>
         </template>
 
@@ -83,7 +83,7 @@
             <view class="search__btn" @tap="doSearch">搜索</view>
           </view>
 
-          <text class="note">留空搜索会列出全部班级。已经在你名下的班不会出现在结果里。</text>
+          <text class="note">留空搜索可列出全部可申请班级；已在你名下的班级不会重复出现。</text>
 
           <empty-state
             v-if="!found.length"
@@ -146,7 +146,7 @@
                 </view>
               </view>
             </view>
-            <text class="note">记录由改分接口自动写入，教师端不可编辑、不可删除 —— 这是成绩改动的留痕。</text>
+            <text class="note">成绩修改记录由系统自动生成，不可编辑或删除。</text>
           </view>
         </template>
       </template>

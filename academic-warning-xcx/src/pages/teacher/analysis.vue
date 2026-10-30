@@ -75,7 +75,7 @@
                 <text class="ana__foot-item">挂科 <text class="ana__foot-num ana__foot-num--danger">{{ numOr(ana.failedCount) }}</text> 人</text>
               </view>
 
-              <text class="note">统计口径：先滤掉"待录入"的行，再按课程取学期最大的一条，因此人数按学生去重，比成绩流水的行数少。</text>
+              <text class="note">统计按每门课程最新一次有效成绩计算，人数已按学生去重。</text>
             </view>
 
             <view class="section">
@@ -169,7 +169,7 @@
                   <text class="crow__meta">及格率 {{ pct(anaOf(c.id).passRate) }} · 挂科 {{ numOr(anaOf(c.id).failedCount) }} 人</text>
                 </view>
               </view>
-              <text class="note">这里列的是你担任教师的课程。班级口径的均分无法再按课程拆开，所以课程对比用的是课程分析那一套数。</text>
+              <text class="note">这里只统计你担任教师的课程；课程对比使用课程维度的数据。</text>
             </view>
           </template>
         </template>
@@ -231,7 +231,7 @@
             <view v-else-if="sa" class="card">
               <view class="ana__head">
                 <text class="ana__title">{{ sa.studentName }} · {{ sa.courseName }}</text>
-                <warning-tag v-if="sa.warningLevel" :level="sa.warningLevel" />
+                <warning-tag v-if="warningLevel(sa.warningLevel)" :level="sa.warningLevel" />
               </view>
 
               <view class="ana__score">
@@ -274,7 +274,7 @@ import { useUser } from '@/composables/useUser.js'
 import { roleThemeStyle } from '@/composables/useRoleTheme.js'
 import { normalizeScoreRow, scoreSemesterLabel } from '@/utils/score-normalize.js'
 import { useTeacherRoster } from '@/composables/useTeacherRoster.js'
-import { toNumber } from '@/utils/score.js'
+import { toNumber, warningLevel } from '@/utils/score.js'
 
 const { userId } = useUser()
 

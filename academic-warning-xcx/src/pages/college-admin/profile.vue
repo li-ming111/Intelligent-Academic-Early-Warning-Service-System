@@ -15,30 +15,58 @@
       <template v-else>
         <!-- 档案 -->
         <view class="card">
-          <section-title title="管理档案" extra="来自 /college-admin/profile" />
+          <section-title title="管理档案" />
           <view v-for="r in profileRows" :key="r.label" class="kv-row">
             <text class="kv-row__label">{{ r.label }}</text>
             <text class="kv-row__value">{{ r.value }}</text>
           </view>
           <text class="empty-tip">
-            学院名是从 `colleges` 表 JOIN 出来的（档案表本身只存 `college_id`）。
-            这一页**只读** —— 后端没有编辑学院管理员档案的接口，
-            所以这里不做"编辑资料"的入口，免得点进去没反应。
+            学院信息仅供查看，暂不支持在本页修改。
           </text>
         </view>
 
         <!-- 本院概览 -->
         <view class="card">
-          <section-title title="本院概览" extra="来自 /college-admin/dashboard" arrow @extra="goDashboard" />
+          <section-title title="本院概览" arrow @extra="goDashboard" />
           <view v-for="r in overviewRows" :key="r.label" class="kv-row">
             <text class="kv-row__label">{{ r.label }}</text>
             <text class="kv-row__value kv-row__value--num">{{ r.value }}</text>
           </view>
           <text class="empty-tip">
-            最后一项在接口里叫 `counselorCount`，量的是**本学院里已经分配了辅导员的班级数**，
-            不是辅导员人数。软件学院 6 个班的 `counselor_id` 都指向同一位辅导员，
-            所以是「6 个班」而非「6 位辅导员」。要看辅导员名单请去「辅导员管理」页。
+            「管理班级」统计已分配辅导员的班级数，不等于辅导员人数。辅导员名单请到「辅导员管理」查看。
           </text>
+        </view>
+
+        <!-- 数据导出预览 -->
+        <view class="card">
+          <section-title title="数据导出预览" :extra="exportRows.length ? `共 ${exportRows.length} 条` : ''" />
+          <view class="exp-chips">
+            <view
+              v-for="t in EXPORT_TYPES"
+              :key="t.value"
+              class="exp-chip"
+              :class="{ 'exp-chip--on': exportType === t.value }"
+              @tap="pickExport(t.value)"
+            >{{ t.label }}</view>
+          </view>
+
+          <view v-if="exportLoading" class="empty-tip">加载中…</view>
+          <view v-else-if="!exportRows.length" class="empty-tip">本院暂无{{ exportTypeLabel }}数据。</view>
+          <template v-else>
+            <view
+              v-for="(r, i) in exportShown"
+              :key="i"
+              class="exp-row"
+              :class="{ 'exp-row--divided': i > 0 }"
+            >
+              <text class="exp-row__title">{{ exportTitle(r) }}</text>
+              <text class="exp-row__meta">{{ exportMeta(r) }}</text>
+            </view>
+            <text class="empty-tip">
+              {{ exportRows.length > exportShown.length ? `只显示前 ${exportShown.length} 条，共 ${exportRows.length} 条。` : '' }}
+              本页仅支持在线预览；导出 Excel 文件请在 PC 端操作。
+            </text>
+          </template>
         </view>
 
         <!-- 账号 -->
@@ -53,13 +81,11 @@
             <text class="tag" :class="statusTagClass">{{ statusText }}</text>
           </view>
           <text class="empty-tip">
-            这一页**只读**：姓名/邮箱/手机号要在「用户管理」里改（那里有完整的 CRUD）。
-            本页只做汇总，免得同一个动作有两处实现。
+            这一页只读：姓名、邮箱、手机号由系统管理员在「用户管理」里维护。
           </text>
           <text class="empty-tip">
-            ⚠️ 档案表（上面那张卡）有自己的一份 `phone` / `email`，与账号表这里的
-            手机号/邮箱**是两列数据** —— 管理员在「用户管理」里改账号的联系方式
-            不会同步到档案表，所以两处对不上是正常现象，不是页面读错了。
+            上方「管理档案」里的联系方式与这里的账号联系方式是两份数据，
+            管理员改账号联系方式不会同步到档案，两处不一致属正常。
           </text>
         </view>
 
@@ -79,9 +105,7 @@
             />
           </view>
           <text class="empty-tip">
-            这五个开关与教师/辅导员/学生共用 `user_settings` 同一张表 ——
-            学院管理员没有自己的设置接口。`id` 为 null 表示从没保存过
-            （接口在内存里生成默认值返回，那一行还没落库）。
+            这里的偏好设置与教师、辅导员、学生共用；尚未保存时会显示默认值。
           </text>
         </view>
 
@@ -149,6 +173,7 @@ import { apiClient, collegeAdminAPI } from '@/services/api.js'
 import { useUser, logout } from '@/composables/useUser.js'
 import { roleThemeStyle, primaryOf } from '@/composables/useRoleTheme.js'
 import { go } from '@/utils/navigate.js'
+import { warningLevelText } from '@/utils/score.js'
 
 const { userId, userName } = useUser()
 
@@ -162,23 +187,21 @@ const info = ref({})
 const dash = ref({})
 
 /**
- * 键名**必须**与 `user_settings` 表的列名一致 —— 这五个就是
+ * 键名**必须**与 `user_settings` 表的列名一致 —— 这四个就是
  * `GET /users/{uid}/settings` 实际返回的键。
  */
 const form = ref({
   warningNotification: false,
   systemMessage: false,
   classNotification: false,
-  studentFeedback: false,
-  emailReminder: false
+  studentFeedback: false
 })
 
 const toggles = [
   { key: 'warningNotification', label: '学业预警通知', hint: '本院有新预警产生时推送' },
   { key: 'systemMessage', label: '系统消息', hint: '系统公告与维护通知' },
   { key: 'classNotification', label: '班级通知', hint: '班级事务与集体活动' },
-  { key: 'studentFeedback', label: '学生反馈', hint: '学生提交的反馈与后续回复' },
-  { key: 'emailReminder', label: '邮件提醒', hint: '同时发送一份到邮箱' }
+  { key: 'studentFeedback', label: '学生反馈', hint: '学生提交的反馈与后续回复' }
 ]
 
 const pwd = ref({ oldPassword: '', newPassword: '', confirm: '' })
@@ -202,9 +225,9 @@ const avatarText = computed(() => {
 
 /** 只用 dashboard 一个接口的数，本院口径。 */
 const heroStats = computed(() => [
-  { label: '本院学生', value: numOr(dash.value.studentCount) },
-  { label: '班级', value: numOr(dash.value.classCount) },
-  { label: '预警', value: numOr(dash.value.warningCount) }
+  { label: '本院学生', value: numOr(dash.value.studentCount), onTap: () => go('/pages/college-admin/students') },
+  { label: '班级', value: numOr(dash.value.classCount), onTap: () => go('/pages/college-admin/classes') },
+  { label: '预警', value: numOr(dash.value.warningCount), onTap: () => go('/pages/college-admin/warnings') }
 ])
 
 const profileRows = computed(() => {
@@ -274,6 +297,83 @@ function numOr(v) {
   return Number.isFinite(n) ? n : 0
 }
 
+/* ---------- 数据导出预览 ---------- */
+/* 后端 /college-admin/export/{uid} 回的是 JSON 数组（不是 xlsx 流），
+   小程序端才有得渲染。四类行的字段各不相同，各配一行标题 + 一行副题。 */
+const EXPORT_TYPES = [
+  { value: 'scores', label: '成绩' },
+  { value: 'warnings', label: '预警' },
+  { value: 'students', label: '学生' },
+  { value: 'teachers', label: '教师' }
+]
+
+const EXPORT_PREVIEW = 20
+
+const EXPORT_ROW = {
+  scores: {
+    title: r => `${r.studentName || '未知学生'} · ${r.courseName || '未知课程'}`,
+    meta: r => `总评 ${dashText(r.totalScore)} · 平时 ${dashText(r.regularScore)} / 期末 ${dashText(r.finalScore)} · 第 ${dashText(r.semester)} 学期`
+  },
+  warnings: {
+    title: r => `${r.studentName || '未知学生'} · ${warningLevelText(r.warningLevel)}`,
+    meta: r => `${r.className || '未分班'} · ${r.status || '--'}`
+  },
+  students: {
+    title: r => `${r.name || '未知'}（${r.studentId || '无学号'}）`,
+    meta: r => r.className || '未分班'
+  },
+  teachers: {
+    title: r => r.name || '未知教师',
+    meta: r => `${r.title || '未填职称'}${r.researchAreas ? ' · ' + r.researchAreas : ''}`
+  }
+}
+
+const exportType = ref('scores')
+const exportRows = ref([])
+const exportLoading = ref(false)
+
+const exportShown = computed(() => exportRows.value.slice(0, EXPORT_PREVIEW))
+const exportTypeLabel = computed(() => (EXPORT_TYPES.find(t => t.value === exportType.value) || {}).label || '')
+
+function dashText(v) {
+  return v === null || v === undefined || v === '' ? '--' : v
+}
+
+function exportTitle(r) {
+  return (EXPORT_ROW[exportType.value] || EXPORT_ROW.scores).title(r)
+}
+
+function exportMeta(r) {
+  return (EXPORT_ROW[exportType.value] || EXPORT_ROW.scores).meta(r)
+}
+
+function pickExport(type) {
+  if (exportType.value === type) return
+  exportType.value = type
+  loadExport()
+}
+
+/** 快速连点不同 chip 时，只有最后一次请求的结果能落进列表（防止旧响应盖新的） */
+let exportSeq = 0
+
+async function loadExport() {
+  if (!userId) return
+  const seq = ++exportSeq
+  exportLoading.value = true
+  try {
+    const list = await collegeAdminAPI.getExport(userId, exportType.value)
+    if (seq !== exportSeq) return
+    exportRows.value = Array.isArray(list) ? list : []
+  } catch (e) {
+    if (seq !== exportSeq) return
+    console.error('[college-admin profile] 导出预览失败:', e)
+    exportRows.value = []
+    uni.showToast({ title: '导出预览加载失败', icon: 'none' })
+  } finally {
+    if (seq === exportSeq) exportLoading.value = false
+  }
+}
+
 function onToggle(key, e) {
   const next = Boolean(e.detail.value)
   const prev = form.value[key]
@@ -335,7 +435,10 @@ function confirmLogout() {
   })
 }
 
-onMounted(load)
+onMounted(() => {
+  load()
+  loadExport()
+})
 
 async function load() {
   loading.value = true
@@ -356,7 +459,7 @@ async function load() {
     dash.value = d && typeof d === 'object' ? d : {}
 
     if (settings && typeof settings === 'object') {
-      // 只挑已知的五个键，免得把无关字段带进表单再写回去
+      // 只挑已知的四个键，免得把无关字段带进表单再写回去
       const next = { ...form.value }
       for (const t of toggles) {
         if (settings[t.key] !== undefined && settings[t.key] !== null) {
@@ -422,6 +525,53 @@ async function load() {
   font-size: $font-xs;
   color: $color-text-hint;
   line-height: 1.6;
+}
+
+/* ---------- 导出预览 ---------- */
+/* 用负 margin 抵 chip 自身的 margin，代替 flex gap（基础库兼容） */
+.exp-chips {
+  display: flex;
+  flex-wrap: wrap;
+  margin: $spacing-sm 0 0 (-$spacing-xs);
+}
+
+.exp-chip {
+  padding: 10rpx 24rpx;
+  margin: $spacing-xs;
+  border-radius: $radius-pill;
+  border: 2rpx solid $color-border;
+  font-size: $font-sm;
+  color: $color-text-secondary;
+  background: $color-bg;
+}
+
+.exp-chip--on {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+  background: var(--color-primary-weak);
+}
+
+.exp-row {
+  padding: $spacing-md 0;
+}
+
+.exp-row--divided {
+  border-top: 1rpx solid $color-divider;
+}
+
+.exp-row__title {
+  display: block;
+  font-size: $font-sm;
+  color: $color-text;
+  @include ellipsis;
+}
+
+.exp-row__meta {
+  display: block;
+  margin-top: 4rpx;
+  font-size: $font-xs;
+  color: $color-text-secondary;
+  @include ellipsis;
 }
 
 /* ---------- 开关行 ---------- */

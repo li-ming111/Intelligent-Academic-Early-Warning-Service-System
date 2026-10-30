@@ -45,7 +45,7 @@
           </view>
         </view>
 
-        <text v-if="list.length" class="note">反馈表里没有单独的「学生姓名」列，学生的名字写在反馈正文里（「姓名：内容」），这里按这个格式拆出来显示。</text>
+        <text v-if="list.length" class="note">学生姓名取自反馈内容开头的「姓名：」，这里按该格式识别展示。</text>
       </template>
     </view>
 

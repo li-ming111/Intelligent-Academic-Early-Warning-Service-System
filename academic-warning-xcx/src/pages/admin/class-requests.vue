@@ -14,7 +14,7 @@
             共 <text class="summary__num">{{ apps.length }}</text> 条申请 ·
             待审核 <text class="summary__num summary__num--danger">{{ pendingCount }}</text> 条
           </text>
-          <text class="summary__hint">两个筛选都在本地做（接口不支持按状态/类型过滤）</text>
+          <text class="summary__hint">按处理状态与申请类型筛选</text>
         </view>
 
         <empty-state
@@ -56,16 +56,6 @@
           </view>
         </view>
 
-        <text class="note">
-          待审核现在是 **0 条** —— 库里 9 条申请的状态是 3 条通过 / 1 条通过（解除申请）/ 2 条拒绝 / 1 条取消，
-          没有一条停在待审核。这是实情，不是接口坏了。想演示审批链路，先在**教师端**的「班级管理」里
-          提交一条申请（教师端那支接口真的会写 `status = 0`），再回到这一页。
-        </text>
-        <text class="note">
-          通过/拒绝必须带上这一行自带的 `type`：教师申请与辅导员申请存在**两张不同的表**里，
-          **id 会撞**（两边都有 id = 1）。传错 type 就会改到另一张表里同号的那条上。
-          这一页的 type 直接取自数据行，不由筛选器决定。
-        </text>
       </template>
     </view>
 
@@ -86,11 +76,7 @@
             placeholder-class="field__ph"
           />
         </view>
-        <text class="note note--in">
-          这段文字会**存进申请单**（`teacher_class_application.reject_reason` /
-          `counselor_class_application.reject_reason`），并通过申请方自己的列表回读给他看。
-          留空也允许 —— 留空时库里存 NULL，不会用空串冒充"有理由"。
-        </text>
+
       </view>
       <template #footer>
         <view class="form-acts">
@@ -453,22 +439,6 @@ async function doReject() {
 
 .field__ph {
   color: $color-text-hint;
-}
-
-.note {
-  display: block;
-  margin: $spacing-lg $page-padding 0;
-  padding: $spacing-md;
-  border-radius: $radius-sm;
-  background: rgba(245, 158, 11, 0.1);
-  font-size: $font-xs;
-  line-height: 1.6;
-  color: #92400e;
-}
-
-.note--in {
-  margin-left: 0;
-  margin-right: 0;
 }
 
 .form-acts {

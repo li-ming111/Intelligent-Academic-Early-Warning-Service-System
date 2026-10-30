@@ -178,6 +178,8 @@ export function warningLevel(value) {
   if (typeof value === 'number') return Number.isFinite(value) ? value : 0
   const text = String(value).trim()
   if (/^\d+$/.test(text)) return Number(text)
+  // 教学分析接口对 ≥70 分回「正常」：那是"没有预警"，不能落成一级也不可能显示成"未知"
+  if (text.includes('正常')) return 0
   if (text.includes('严重') || text.includes('高')) return 3
   if (text.includes('中度') || text.includes('中等') || text.includes('中')) return 2
   if (text.includes('轻度') || text.includes('轻微') || text.includes('低')) return 1

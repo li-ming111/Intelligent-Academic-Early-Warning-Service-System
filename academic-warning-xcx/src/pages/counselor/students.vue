@@ -55,12 +55,9 @@
         </view>
 
         <view class="note">
-          <text class="note__title">「有学生的班级」与「班级管理」页的「管理班级」不是同一个数</text>
+          <text class="note__title">「有学生的班级」与「班级管理」页的「管理班级」口径不同</text>
           <text class="note__text">
-            这里数的是**花名册上真的有人的班**（数据来自学生行）；
-            「班级管理」页数的是 `classes.counselor_id` 指向本辅导员的所有班，
-            含那些还没有学生档案的空班。两者标着同一个词但口径不同 ——
-            本页 1 个、那边 6 个，差额是 5 个尚未招生的空班，不是哪一边算错了。
+            本页只统计已有学生的班级；「班级管理」页统计你名下的全部班级，包含尚未招生的空班。
           </text>
         </view>
       </template>
@@ -184,7 +181,7 @@
           <view v-else>
             <view v-for="l in logs" :key="l.id" class="log">
               <view class="log__head">
-                <text class="tag tag--info">{{ l.category || '未分类' }}</text>
+                <text class="tag tag--info">{{ categoryLabel(l.category) }}</text>
                 <text class="log__time">{{ fmt(l.createdAt) }}</text>
               </view>
               <text class="log__content">{{ l.content }}</text>
@@ -226,6 +223,8 @@
         </view>
       </view>
     </detail-sheet>
+
+    <app-tab-bar role="counselor" />
   </view>
 </template>
 
@@ -249,6 +248,10 @@ const themeStyle = roleThemeStyle('counselor')
  * （预警约谈 / 帮扶跟进 / 日常关怀）。新增取值前应先确认库里出现过，否则等于自造词表。
  */
 const CATEGORIES = ['预警沟通', '帮扶跟进', '日常关怀']
+
+/** 通知群发也会写 communication_logs，category 是 warning/important/normal，显示时换成中文。 */
+const CATEGORY_LABELS = { warning: '预警通知', important: '重要通知', normal: '普通通知' }
+const categoryLabel = (c) => CATEGORY_LABELS[c] || c || '未分类'
 const TABS = [
   { key: 'info', label: '概览' },
   { key: 'score', label: '成绩' },
@@ -298,8 +301,9 @@ const myPending = computed(() => myWarnings.value.filter(w => w.isPending).lengt
 const heroStats = computed(() => [
   { label: '学生总数', value: students.value.length },
   { label: '有学生的班级', value: classCount.value },
-  { label: '存在挂科', value: Object.keys(insufficient.value).length },
-  { label: '预警学生', value: warnedStudentIds.value.size }
+  // 挂科明细在「学分监控」页，预警学生明细在「预警管理」页 —— 数字点了能对上账
+  { label: '存在挂科', value: Object.keys(insufficient.value).length, onTap: () => go('/pages/counselor/credit-monitor') },
+  { label: '预警学生', value: warnedStudentIds.value.size, onTap: () => go('/pages/counselor/warnings') }
 ])
 
 const warnedStudentIds = computed(() => {

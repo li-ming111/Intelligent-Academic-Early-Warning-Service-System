@@ -2,7 +2,14 @@
   <view class="page-root" :style="themeStyle">
     <app-navbar title="通知中心" />
 
-    <view class="page-body">
+    <role-hero
+      title="通知中心"
+      subtitle="从这里发给学生，进入每个学生的「通知中心」"
+      :avatar-text="avatarText"
+      :stats="heroStats"
+    />
+
+    <view class="page-body page-body--tabbar">
       <!-- 发送表单 -->
       <view class="card">
         <section-title title="发送通知" plain />
@@ -105,8 +112,17 @@ import { useUser } from '@/composables/useUser.js'
 import { roleThemeStyle } from '@/composables/useRoleTheme.js'
 import { formatDate } from '@/utils/format.js'
 
-const { userId } = useUser()
+const { userId, userName } = useUser()
 const themeStyle = roleThemeStyle('counselor')
+
+const avatarText = computed(() => (userName ? String(userName).slice(0, 1) : ''))
+
+const heroStats = computed(() => [
+  { label: '累计发送', value: total.value },
+  // 接收人次 = 各次发送的接收人数之和；与「发送次数」不同口径，分开标
+  { label: '接收人次', value: rows.value.reduce((s, h) => s + (Number(h.recipientCount) || 0), 0) },
+  { label: '本页显示', value: rows.value.length }
+])
 
 const typeOptions = [
   { value: 'normal', label: '普通通知' },
@@ -250,10 +266,12 @@ async function sendNotification() {
 .chips {
   display: flex;
   flex-wrap: wrap;
-  gap: $spacing-sm;
+  /* 不用 gap（基础库兼容），靠 chip 自身的 margin 排布 */
+  margin: -$spacing-xs;
 }
 
 .chip {
+  margin: $spacing-xs;
   padding: 10rpx 24rpx;
   border-radius: $radius-pill;
   border: 2rpx solid $color-border;
@@ -265,7 +283,7 @@ async function sendNotification() {
 .chip--on {
   border-color: var(--color-primary);
   color: var(--color-primary);
-  background: rgba(37, 99, 235, 0.08);
+  background: var(--color-primary-weak);
 }
 
 .textarea {
@@ -288,13 +306,13 @@ async function sendNotification() {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: $spacing-md;
   margin-top: $spacing-lg;
 }
 
 .send-bar__hint {
   flex: 1;
   min-width: 0;
+  margin-right: $spacing-md;
   font-size: $font-xs;
   color: $color-text-hint;
 }
@@ -329,7 +347,10 @@ async function sendNotification() {
 .hist-row__head {
   display: flex;
   align-items: center;
-  gap: $spacing-sm;
+}
+
+.hist-row__head .tag {
+  margin-right: $spacing-sm;
 }
 
 .hist-row__count {

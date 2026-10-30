@@ -43,15 +43,7 @@
             </view>
           </view>
 
-          <text class="note">
-            规则 4（GPA 低于 2.0）的**统计周期与触发方式在库里是空的**，页面上显示「未填」而不是替它编一个默认值。
-            它的判定条件是 `gpa < 2.0`，与另外三条的 `fail_count` 不是一个口径。
-          </text>
-          <text class="note">
-            库里 4 条预警的归属：3 条来自 RULE002（中级，`rule_id = 2`）、1 条来自 RULE001（轻度，`rule_id = 1`）
-            —— 都是 `fail_count` 口径。RULE003（严重）与 GPA 那条**至今没有触发过**，
-            所以界面上不会有 level 3 的预警记录。
-          </text>
+          <text class="note">未填写的统计周期与触发方式显示为「未填」，系统不会自动补默认值。</text>
         </template>
       </template>
     </view>
@@ -83,7 +75,7 @@
           </view>
         </view>
 
-        <section-title plain title="判定条件" extra="后端按此表达式判预警" />
+        <section-title plain title="判定条件" extra="系统按此规则判定预警" />
         <view class="expr">
           <text class="expr__text">{{ current.expression || '（未填写）' }}</text>
         </view>
@@ -167,10 +159,7 @@
           />
         </view>
 
-        <text class="note">
-          保存时会把这些字段**一并提交**（等同整份覆盖）。所以打开表单后不要只改一处就关掉页面 ——
-          没动过的字段会带着原值原样提交，不会被清空。
-        </text>
+        <text class="note">保存会提交整份表单，未修改的字段保持原值。</text>
       </view>
 
       <template #footer>

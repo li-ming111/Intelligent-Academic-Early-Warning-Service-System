@@ -139,7 +139,7 @@ const warnings = ref([])
 
 /**
  * 通知开关的键**必须**与 `user_settings` 表的列名一致 ——
- * 这五个就是 `GET /users/{uid}/settings` 实际返回的键。
+ * 这四个就是 `GET /users/{uid}/settings` 实际返回的键。
  * 不要用 `/counselors/**` 下的任何设置接口（不存在），也不要走 `/students/settings/{uid}`
  * （那是纯桩，PUT 一个字段都不写库）。
  */
@@ -147,16 +147,14 @@ const form = ref({
   warningNotification: false,
   systemMessage: false,
   classNotification: false,
-  studentFeedback: false,
-  emailReminder: false
+  studentFeedback: false
 })
 
 const toggles = [
   { key: 'warningNotification', label: '学业预警通知', hint: '所带班级触发预警时推送' },
   { key: 'systemMessage', label: '系统消息', hint: '系统公告与维护通知' },
   { key: 'classNotification', label: '班级通知', hint: '班级事务与集体活动' },
-  { key: 'studentFeedback', label: '学生反馈', hint: '学生对帮扶计划的评价与回复' },
-  { key: 'emailReminder', label: '邮件提醒', hint: '同时发送一份到邮箱' }
+  { key: 'studentFeedback', label: '学生反馈', hint: '学生对帮扶计划的评价与回复' }
 ]
 
 const pwd = ref({ oldPassword: '', newPassword: '', confirm: '' })
@@ -250,7 +248,7 @@ function onToggle(key, e) {
 async function saveSetting(key, value, prev) {
   try {
     // `PUT /users/{uid}/settings` 是**部分更新**，不是整表覆盖 ——
-    // 体里没出现的字段保持原值不动（MyBatis-Plus 的 NOT_NULL 策略，五个开关都是包装类型
+    // 体里没出现的字段保持原值不动（MyBatis-Plus 的 NOT_NULL 策略，四个开关都是包装类型
     // Boolean，所以「传 false」和「没传」分得开）。发全量只是让请求体自洽，少发不会重置别人。
     const res = await counselorAPI.updateSettings(userId, { ...form.value })
     if (res && res.success === false) {
@@ -335,7 +333,7 @@ async function load() {
     info.value = account && typeof account === 'object' ? account : {}
 
     if (settings && typeof settings === 'object') {
-      // 只挑已知的五个键，免得把 officeLocation 之类无关字段带进表单再整表写回去
+      // 只挑已知的四个键，免得把 officeLocation 之类无关字段带进表单再整表写回去
       const next = { ...form.value }
       for (const t of toggles) {
         if (settings[t.key] !== undefined && settings[t.key] !== null) {

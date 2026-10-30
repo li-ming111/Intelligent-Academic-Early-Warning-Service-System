@@ -1,10 +1,10 @@
 <template>
   <view class="page-root" :style="themeStyle">
-    <app-navbar title="成绩跟踪" :show-back="false" />
+    <app-navbar title="成绩跟踪" />
 
     <role-hero
       :title="counselorName || '成绩跟踪'"
-      subtitle="数据源为 scores 表，每门课取最新一次期末已录入的成绩"
+      subtitle="统计每门课程最新一次已录入的期末成绩"
       :avatar-text="avatarText"
       :stats="heroStats"
     />
@@ -119,7 +119,7 @@
             </view>
 
             <view class="note">
-              <text class="note__text">档位线：≥90 优秀 · 80–89 良好 · 70–79 中等 · 60–69 及格 · &lt;60 不及格。各档之和即总数（后端刻意用「各档之和」而非行数作分母，避免两者不等时百分比对不上）。</text>
+              <text class="note__text">档位线：≥90 优秀 · 80–89 良好 · 70–79 中等 · 60–69 及格 · &lt;60 不及格；各档之和等于成绩总数。</text>
               <text class="note__text">分布范围是「所带全部班级」中修读该课程的学生，不只是上面选中的那个班，所以人数可能多于班级成绩里该课的人数。</text>
             </view>
           </template>
@@ -336,7 +336,8 @@ const heroStats = computed(() => {
   const allNums = classRows.value.map(r => numOr(r.score_total))
   return [
     { label: '有成绩学生', value: graded },
-    { label: '存在挂科', value: failing },
+    // 挂了科的学生明细在「学分监控」页（按人去重），这里跳过去看名单
+    { label: '存在挂科', value: failing, onTap: () => go('/pages/counselor/credit-monitor') },
     { label: '低于 70 分', value: lowRows.value.length },
     { label: '班级均分', value: allNums.length ? avgOf(allNums) : '--' }
   ]

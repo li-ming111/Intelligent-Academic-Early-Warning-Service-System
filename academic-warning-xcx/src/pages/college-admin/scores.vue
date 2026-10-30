@@ -2,6 +2,13 @@
   <view class="page-root" :style="themeStyle">
     <app-navbar title="成绩分析" />
 
+    <role-hero
+      :title="userName || '成绩分析'"
+      subtitle="本院学生的成绩概况与班级对比"
+      :avatar-text="avatarText"
+      :stats="heroStats"
+    />
+
     <view class="tabs">
       <view
         v-for="t in TABS"
@@ -16,28 +23,8 @@
       <page-loading v-if="loading" :count="4" />
 
       <template v-else>
-        <!-- ============ 概览 ============ -->
-        <template v-if="mode === 'overview'">
-          <view class="stat-grid">
-            <stat-card label="平均分" :value="numOrDash(stats.avgScore)" />
-            <stat-card label="及格率" :value="stats.passRate === null || stats.passRate === undefined ? '--' : stats.passRate + '%'" />
-            <stat-card label="成绩条数" :value="numOrDash(stats.recordCount)" />
-            <stat-card label="有成绩学生" :value="numOrDash(stats.studentCount)" />
-          </view>
-
-          <text class="note">
-            这四个数是**全院口径**，由后端一条聚合 SQL 算出。及格率的分子分母都取自同一份聚合结果
-            （238 条成绩记录里 226 条及格 → 95%），不是拿"学生总数"当分母 ——
-            没有成绩的学生不该算进及格率里。
-          </text>
-          <text class="note">
-            「有成绩学生」与「学生总数」是两回事：学生招进来但一门课都没录成绩时，
-            前者小于后者。软件学院这两个数现在都是 24，恰好相等。
-          </text>
-        </template>
-
         <!-- ============ 分布与课程 ============ -->
-        <template v-else-if="mode === 'analysis'">
+        <template v-if="mode === 'analysis'">
           <section-title plain title="总评分布" :extra="`合计 ${analysis.totalRecords || 0} 条`" />
           <view class="bars">
             <view v-for="b in bands" :key="b.label" class="bar">
@@ -53,7 +40,7 @@
             </view>
           </view>
 
-          <section-title plain title="按课程" :extra="`${courses.length} 门 · 后端已按平均分降序`" />
+          <section-title plain title="按课程" :extra="`${courses.length} 门 · 按平均分降序`" />
           <view v-if="!courses.length" class="empty-tip">暂无课程成绩。</view>
           <view v-else class="card card--flush">
             <view
@@ -72,9 +59,7 @@
             </view>
           </view>
 
-          <text class="note">
-            分布五档之和等于成绩条数（38+91+63+35+11 = 238），说明分档没有漏记录也没有重复计数。
-          </text>
+          <text class="note">顶部的「有成绩学生」指已有成绩的学生，可能少于学生总数。</text>
         </template>
 
         <!-- ============ 班级对比 ============ -->
@@ -114,11 +99,7 @@
             </view>
           </view>
 
-          <text class="note">
-            平均分与及格率显示「--」的班级是**一条成绩都没有**（不是 0 分、也不是 0%）。
-            软件学院 6 个班里 5 个都是这样 —— 只有「计科2306班」有学生有成绩，
-            另外 5 个班建了班但没人。
-          </text>
+          <text class="note">平均分与及格率显示「--」表示该班暂无成绩记录。</text>
         </template>
 
         <!-- ============ 成绩查询 ============ -->
@@ -129,7 +110,7 @@
               class="search__input"
               type="text"
               confirm-type="search"
-              placeholder="按姓名 / 学号 / 课程名搜索（服务端过滤）"
+              placeholder="按姓名 / 学号 / 课程名搜索"
               placeholder-class="search__ph"
               @confirm="doQuery"
             />
@@ -140,13 +121,13 @@
 
           <view class="summary">
             <text class="summary__text">
-              命中 <text class="summary__num">{{ rows.length }}</text> 条
+              命中 <text class="summary__num">{{ total }}</text> 条
             </text>
-            <text class="summary__hint">显示前 {{ shown.length }} 条</text>
+            <text class="summary__hint">已显示 {{ rows.length }} 条</text>
           </view>
 
           <empty-state
-            v-if="!rows.length"
+            v-if="!rows.length && !fetching"
             text="没有匹配的成绩"
             hint="换一个班级或关键字"
             icon="check"
@@ -155,7 +136,7 @@
           <template v-else>
             <view class="card card--flush">
               <view
-                v-for="(r, i) in shown"
+                v-for="(r, i) in rows"
                 :key="r.id || i"
                 class="srow"
                 :class="{ 'srow--divided': i > 0 }"
@@ -165,26 +146,23 @@
                   <text class="srow__meta">
                     {{ r.studentId || '无学号' }} · {{ r.className || '未分班' }} · 第 {{ numOrDash(r.semester) }} 学期
                   </text>
+                  <!-- 期末未录入时总评走灰色「待录入」，期末/绩点/等级也得用同一口径，
+                       否则同一行里一半写「待录入」一半写「--」。 -->
                   <text class="srow__meta2">
-                    平时 {{ numOrDash(r.regularScore) }} / 期末 {{ numOrDash(r.finalScore) }} ·
-                    绩点 {{ gradePointText(r.gradePoint) }} · 等级 {{ r.grade || '—' }}
+                    平时 {{ numOrDash(r.regularScore) }} / 期末 {{ isPending(r) ? PENDING_TEXT : numOrDash(r.finalScore) }} ·
+                    绩点 {{ isPending(r) ? PENDING_TEXT : gradePointText(r.gradePoint) }} · 等级 {{ isPending(r) ? PENDING_TEXT : (r.grade || '—') }}
                   </text>
                 </view>
                 <text class="srow__total" :class="`srow__total--${scoreClass(r)}`">{{ scoreText(r) }}</text>
               </view>
             </view>
 
-            <view v-if="shown.length < rows.length" class="more" @tap="loadMore">
-              加载更多（还有 {{ rows.length - shown.length }} 条）
+            <view v-if="hasMore" class="more" @tap="loadMore">
+              {{ fetching ? '加载中…' : `加载更多（还有 ${total - rows.length} 条）` }}
             </view>
-            <text v-else class="more more--done">已显示全部 {{ rows.length }} 条</text>
+            <text v-else class="more more--done">已显示全部 {{ total }} 条</text>
           </template>
 
-          <text class="note">
-            这里的「查询」是真的把条件**下推到 SQL**（班级 id 与关键字都是接口参数），
-            不是把一页数据拉回来在本地筛。一次会把全部命中的行返回（现在是 238 条），
-            所以列表按每 30 条分批渲染，免得一次铺 200 多个节点。
-          </text>
         </template>
       </template>
     </view>
@@ -192,17 +170,25 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { collegeAdminAPI } from '@/services/api.js'
 import { useUser } from '@/composables/useUser.js'
 import { roleThemeStyle } from '@/composables/useRoleTheme.js'
-import { scoreText, scoreClass } from '@/utils/score.js'
+import { scoreText, scoreClass, isPending, PENDING_TEXT } from '@/utils/score.js'
 
-const { userId } = useUser()
+const { userId, userName } = useUser()
 const themeStyle = roleThemeStyle('collegeAdmin')
 
+const avatarText = computed(() => (userName ? String(userName).slice(0, 1) : ''))
+
+const heroStats = computed(() => [
+  { label: '平均分', value: numOrDash(stats.value.avgScore) },
+  { label: '及格率', value: stats.value.passRate === null || stats.value.passRate === undefined ? '--' : stats.value.passRate + '%' },
+  { label: '成绩条数', value: numOrDash(stats.value.recordCount) },
+  { label: '有成绩学生', value: numOrDash(stats.value.studentCount) }
+])
+
 const TABS = [
-  { key: 'overview', label: '概览' },
   { key: 'analysis', label: '分布与课程' },
   { key: 'classes', label: '班级对比' },
   { key: 'query', label: '成绩查询' }
@@ -211,7 +197,7 @@ const TABS = [
 const PAGE_SIZE = 30
 
 const loading = ref(true)
-const mode = ref('overview')
+const mode = ref('analysis')
 
 const stats = ref({})
 const analysis = ref({})
@@ -221,7 +207,9 @@ const classes = ref([])
 const keyword = ref('')
 const classId = ref('')
 const rows = ref([])
-const visible = ref(PAGE_SIZE)
+const total = ref(0)
+const nextPage = ref(1)
+const fetching = ref(false)
 
 const classOptions = computed(() => {
   const opts = [{ label: '全部班级', value: '' }]
@@ -244,7 +232,6 @@ const bands = computed(() => {
 
 const bandMax = computed(() => Math.max(1, ...bands.value.map(b => b.value)))
 const courses = computed(() => ((analysis.value && analysis.value.courseStats) || []).slice())
-const shown = computed(() => rows.value.slice(0, visible.value))
 
 function barWidth(v) {
   return Math.round((Number(v) || 0) * 100 / bandMax.value) + '%'
@@ -297,29 +284,47 @@ async function load() {
 
 function switchTab(key) {
   mode.value = key
-  // 成绩查询第一次进来时才取数据：238 条不必给别的 tab 一起背
+  // 成绩查询第一次进来时才取数据，别的 tab 不替它背
   if (key === 'query' && !rows.value.length) doQuery()
 }
 
-function doQuery() {
+/** 拉一页并追加：接口一次只回 PAGE_SIZE 条，翻页靠 nextPage。 */
+function fetchPage() {
+  if (fetching.value) return Promise.resolve()
+  fetching.value = true
   const cls = classId.value || undefined
   const kw = String(keyword.value || '').trim() || undefined
-  loading.value = true
-  visible.value = PAGE_SIZE
   return collegeAdminAPI
-    .getScoreQuery(userId, { classId: cls, keyword: kw })
-    .then(list => { rows.value = Array.isArray(list) ? list : [] })
+    .getScoreQuery(userId, { classId: cls, keyword: kw, page: nextPage.value, size: PAGE_SIZE })
+    .then(res => {
+      const items = res && Array.isArray(res.items) ? res.items : []
+      rows.value = rows.value.concat(items)
+      total.value = Number(res && res.total) || 0
+      nextPage.value += 1
+    })
     .catch(e => {
       console.error('[college-admin scores] 查询失败:', e)
-      rows.value = []
       toast((e && e.message) || '查询失败')
     })
-    .finally(() => { loading.value = false })
+    .finally(() => { fetching.value = false })
+}
+
+function doQuery() {
+  rows.value = []
+  total.value = 0
+  nextPage.value = 1
+  return fetchPage()
 }
 
 function loadMore() {
-  visible.value += PAGE_SIZE
+  return fetchPage()
 }
+
+const hasMore = computed(() => rows.value.length < total.value)
+
+watch(classId, () => {
+  if (mode.value === 'query') doQuery()
+})
 </script>
 
 <style lang="scss" scoped>

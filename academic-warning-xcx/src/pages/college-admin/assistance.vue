@@ -49,20 +49,7 @@
           </view>
         </view>
 
-        <text class="note">
-          这一页的数据源是 **`assistance_plans` 表本身**（2026-10-02 W5.3 起）。
-          在此之前它挂的是 `/college-admin/assistance/{uid}` —— 那支接口查的是
-          **预警表**、只是把 `warning_level` 改名成 `level` 原样返回，
-          所以标题写「帮扶情况」、列的却是预警记录。现在新增了
-          `/college-admin/assistance-plans/{uid}`，按
-          `assistance_plans.student_id → student_profile.class_id → classes.college_id`
-          这条链真查本学院的计划。
-        </text>
-        <text class="note">
-          归属按**学生所在班级**算：学生没分班、或班级不属于本学院，他的计划不会出现在这里。
-          要处理预警请去「预警管理」页；要改计划请让辅导员在辅导员端操作 ——
-          学院管理员这一页是只读的。
-        </text>
+        <text class="note">仅显示本学院班级学生的帮扶计划；本页仅供查看，计划调整请联系辅导员。</text>
       </template>
     </view>
 
@@ -263,6 +250,8 @@ function openDetail(r) {
 }
 
 .row {
+  /* 全局 common.scss 里有 `.row { display: flex }`，不显式覆盖会把这几块挤成一行 */
+  display: block;
   padding: $spacing-lg;
 }
 

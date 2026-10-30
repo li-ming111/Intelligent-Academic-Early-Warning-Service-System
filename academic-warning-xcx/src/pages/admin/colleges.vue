@@ -45,11 +45,7 @@
             </view>
           </view>
 
-          <text class="note">
-            学院下的人数是按**账号归属**统计的：软件学院 31 个账号（24 学生 + 5 教师 + 1 辅导员 + 1 学院管理员），
-            电子工程学院 2 个。没有账号的学院会显示 0 —— 那是它确实还没有归属账号，
-            不是统计不到。
-          </text>
+          <text class="note">学院人数按账号归属统计；尚未分配账号的学院显示为 0。</text>
         </template>
 
         <!-- ---------- 专业 ---------- -->
@@ -164,9 +160,7 @@
             <text class="facts__v">{{ currentMajor.description || '--' }}</text>
           </view>
         </view>
-        <text class="note">
-          专业下的学生数要去看「用户管理」按学院筛 —— 专业这一层没有单独的统计接口。
-        </text>
+        <text class="note">专业下的学生人数请在「用户管理」中按学院查看。</text>
       </view>
 
       <!-- ---------- 学院表单 ---------- -->
@@ -215,10 +209,7 @@
           <text class="field__label">说明</text>
           <input v-model="form.description" class="field__input" placeholder="选填" placeholder-class="field__ph" />
         </view>
-        <text class="note">
-          专业代码在校内并不唯一（软件学院的「01」和别的学院的「01」是两回事），
-          所以下面按学院分组展示，代码只在学院内部比较。
-        </text>
+        <text class="note">专业代码只在学院内唯一，不同学院可能存在相同代码。</text>
       </view>
 
       <template #footer>

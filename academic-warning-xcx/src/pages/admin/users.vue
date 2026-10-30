@@ -109,14 +109,16 @@
               :key="o.value"
               class="opt"
               :class="{ 'opt--on': form.role === o.value }"
-              @tap="form.role = o.value"
+              @tap="pickRole(o.value)"
             >{{ o.label }}</view>
           </view>
         </view>
-        <!-- 学院管理员(5) 必须在这里选学院：后端据它建 college_admin_profile 行，
+        <!-- 学院：除系统管理员(4)外的四个角色都要选 —— 各角色档案表都有 college_id，
+             建号时就把它写进档案行，建完的账号才能被"按学院筛选"查到。
+             学院管理员(5) 尤其必须选：后端据它建 college_admin_profile 行，
              学院管理端每页都靠这行推学院归属，没有它 18 个接口一律 403。
-             其它角色不显示这一项，也不会把它发出去。 -->
-        <view v-if="form.role === 5" class="field">
+             系统管理员不显示这一项，也不会把它发出去。 -->
+        <view v-if="form.role !== 4" class="field">
           <text class="field__label">所属学院</text>
           <view class="opts">
             <view
@@ -124,28 +126,36 @@
               :key="c.id"
               class="opt"
               :class="{ 'opt--on': form.collegeId === c.id }"
-              @tap="form.collegeId = c.id"
+              @tap="pickCollege(c.id)"
             >{{ c.name }}</view>
           </view>
           <text v-if="colleges.length === 0" class="field__hint">学院列表没加载出来，请退出重进后再试。</text>
+        </view>
+        <!-- 专业：仅学生。学院管理员的职责是整个学院、教师/辅导员的档案表没有专业列，
+             这三者的"专业"在数据模型里不存在，不能拿一个选不了的必选项拦人。 -->
+        <view v-if="form.role === 1" class="field">
+          <text class="field__label">所属专业</text>
+          <view class="opts">
+            <view
+              v-for="m in majors"
+              :key="m.id"
+              class="opt"
+              :class="{ 'opt--on': form.majorId === m.id }"
+              @tap="form.majorId = m.id"
+            >{{ m.name }}</view>
+          </view>
+          <text v-if="!form.collegeId" class="field__hint">先选学院，专业按学院列出。</text>
+          <text v-else-if="majors.length === 0" class="field__hint">该学院下没有专业，请先在「学院与专业」页维护。</text>
         </view>
         <view class="field">
           <text class="field__label">邮箱</text>
           <input v-model="form.email" class="field__input" placeholder="选填" placeholder-class="field__ph" />
         </view>
         <view class="field">
-          <text class="field__label">初始口令</text>
-          <input v-model="form.password" class="field__input" password placeholder="留空则与演示口令一致" placeholder-class="field__ph" />
+          <text class="field__label">初始登录口令</text>
+          <input v-model="form.password" class="field__input" password placeholder="留空则使用统一演示口令 123456" placeholder-class="field__ph" />
         </view>
-        <!-- 这条必须写出来：建号接口只写 users 表 + （角色 5 且选了学院时）写
-             college_admin_profile。**教师**的档案表同样有 NOT NULL 的 college_id，
-             但表单里没有教师学院字段，所以后端仍**故意**不给教师建档案行 ——
-             不说清楚，就会出现"建完的教师在按学院筛选时查不到"的困惑。
-             2026-10-09（W32）：这里原来把「学院管理员」也写进这句话，本轮已不成立。 -->
-        <text class="note">
-          教师建号时不会生成档案行（教师档案的学院是必填，而这支表单里没有学院字段）。
-          建完后需要在教师档案里补学院，否则按学院筛选时查不到这个账号。
-        </text>
+        <text class="note">除系统管理员外，建号时需选择学院；学生还需选择专业。教师职称、辅导员职务请在对应档案页补充。</text>
       </view>
 
       <!-- ---------- 编辑 ---------- -->
@@ -162,13 +172,8 @@
           <text class="field__label">邮箱</text>
           <input v-model="form.email" class="field__input" placeholder="选填" placeholder-class="field__ph" />
         </view>
-        <text class="note">
-          这里改的是**账号资料**（users 表）。学生学籍、教师档案里的姓名不在这支接口的范围内，
-          改完两端可能不一致 —— 当前库里这两处的姓名本来就各存一份。
-        </text>
-        <text class="note">
-          账号名与角色不可改（后端接口不接受这两个字段）。口令走下方的「重置口令」。
-        </text>
+        <text class="note">这里修改的是账号资料；学籍档案、教师档案中的姓名请在对应档案页维护。</text>
+        <text class="note">账号名与角色创建后不可修改；忘记密码请使用「重置口令」。</text>
       </view>
 
       <!-- ---------- 详情 ---------- -->
@@ -211,7 +216,7 @@
             </view>
           </view>
 
-          <section-title plain :title="`${roleName(current.role) || '该角色'}档案`" extra="来自用户列表" />
+          <section-title plain :title="`${roleName(current.role) || '该角色'}档案`" />
           <view class="facts">
             <view v-for="r in profileRows" :key="r.k" class="facts__row">
               <text class="facts__k">{{ r.k }}</text>
@@ -220,9 +225,7 @@
           </view>
 
           <text v-if="current.status !== 1" class="note">
-            状态 0 在库里是**两种情况共用的**：新注册账号等待审批，或被管理员停用。
-            后端没有区分这两者的字段，登录接口对两者都回「账号正在审批中，请等待管理员审核」。
-            下面的「审批通过」与「停用/启用」都会把状态改成 1 或 0，无法从状态值反推是哪一种。
+            该账号当前未启用：可能是新注册待审批，也可能是被停用。完成审批或启用后即可正常使用。
           </text>
         </template>
 
@@ -232,7 +235,7 @@
             <empty-state
               v-if="!logs.length"
               text="这个账号没有登录记录"
-              hint="login_logs 表里没有它对应的行"
+              hint="该账号还没有登录记录"
               icon="clock"
               :top="30"
             />
@@ -252,10 +255,7 @@
                  新登录不会新增行" —— 那个缺陷已修（user-service 的 LoginLogService
                  现在每次登录都写一条，成功与失败各记一行）。所以这里不再解释"为什么是空的"，
                  只说明这一屏的口径：只显示**最近 20 条**。 -->
-            <text class="note">
-              这里显示这个账号**最近 {{ logs.length }} 条**登录记录（成功与失败都记）。
-              更早的记录不再列出。
-            </text>
+            <text class="note">展示该账号最近的登录记录，成功与失败都会记录。</text>
           </template>
         </template>
       </view>
@@ -306,6 +306,8 @@ const page = ref(1)
 const roleFilter = ref('')
 const collegeFilter = ref('')
 const colleges = ref([])
+/** 当前所选学院下的专业（仅学生建号用）。 */
+const majors = ref([])
 const keyword = ref('')
 
 const sheetOpen = ref(false)
@@ -316,7 +318,7 @@ const current = ref(null)
 const logs = ref([])
 const logsLoading = ref(false)
 const submitting = ref(false)
-const form = ref({ username: '', name: '', email: '', password: '', role: 1, collegeId: null })
+const form = ref({ username: '', name: '', email: '', password: '', role: 1, collegeId: null, majorId: null })
 
 /**
  * 角色筛选。值用字符串：filter-bar 是严格相等比较，
@@ -528,8 +530,35 @@ async function loadLogs(userId) {
 function openCreate() {
   current.value = null
   mode.value = 'create'
-  form.value = { username: '', name: '', email: '', password: '', role: 1, collegeId: null }
+  form.value = { username: '', name: '', email: '', password: '', role: 1, collegeId: null, majorId: null }
+  majors.value = []
   sheetOpen.value = true
+}
+
+/** 建号表单里换角色：非学生不留专业；换成学生且已选学院时，专业列表就地补载。 */
+function pickRole(role) {
+  form.value.role = role
+  if (role !== 1) {
+    form.value.majorId = null
+    majors.value = []
+  } else if (form.value.collegeId && !majors.value.length) {
+    pickCollege(form.value.collegeId)
+  }
+}
+
+/** 建号表单里选学院：专业选项跟着学院走，换学院必须清掉已选专业。 */
+function pickCollege(id) {
+  form.value.collegeId = id
+  form.value.majorId = null
+  majors.value = []
+  if (id && form.value.role === 1) {
+    adminAPI.getMajorsByCollege(id)
+      .then(list => { majors.value = Array.isArray(list) ? list : [] })
+      .catch(e => {
+        console.error('[admin users] 专业列表失败:', e)
+        majors.value = []
+      })
+  }
 }
 
 function enterEdit() {
@@ -554,10 +583,15 @@ async function submit() {
         toast('请填写账号')
         return
       }
-      // 学院管理员必须选学院 —— 后端据它建 college_admin_profile 行；
-      // 不选就建号，拿到的账号在学院管理端每一页都是 403。从源头挡住。
-      if (f.role === 5 && !f.collegeId) {
+      // 学院：除系统管理员外的四个角色都必选 —— 档案行里的 college_id 就靠它，
+      // 不选就建号，这个账号在"按学院筛选"里永远查不到（学院管理员更是一页 403）。
+      if (f.role !== 4 && !f.collegeId) {
         toast('请选择所属学院')
+        return
+      }
+      // 专业：仅学生必选（学院管理员的职责面是整个学院，教师/辅导员的档案表没有专业列）。
+      if (f.role === 1 && !f.majorId) {
+        toast('请选择所属专业')
         return
       }
       const body = {
@@ -566,10 +600,11 @@ async function submit() {
         role: f.role
       }
       if (f.email) body.email = String(f.email).trim()
-      // 口令留空时不发这个字段：后端对空串的处理与"不发"不同，宁可不发
+      // 口令留空时不发这个字段：后端留空即落演示口令 123456（与表单提示一致）
       if (f.password) body.password = String(f.password)
-      // collegeId 走 query 参数（后端 @RequestParam），不进 body —— users 表没有该列
-      await adminAPI.createUser(body, f.role === 5 ? f.collegeId : null)
+      // collegeId/majorId 走 query 参数（后端 @RequestParam），不进 body ——
+      // users 表没有这两列，User 实体上也没有
+      await adminAPI.createUser(body, f.role === 4 ? null : f.collegeId, f.role === 1 ? f.majorId : null)
       toast('账号已创建')
       sheetOpen.value = false
       await reload()

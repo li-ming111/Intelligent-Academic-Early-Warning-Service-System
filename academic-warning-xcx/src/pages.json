@@ -195,6 +195,14 @@
           }
         },
         {
+          "path": "activities",
+          "style": {
+            "navigationStyle": "custom",
+            "navigationBarTitleText": "系统动态",
+            "navigationBarBackgroundColor": "#667eea"
+          }
+        },
+        {
           "path": "profile",
           "style": {
             "navigationStyle": "custom",

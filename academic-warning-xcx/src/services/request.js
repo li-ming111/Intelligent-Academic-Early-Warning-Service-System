@@ -11,15 +11,16 @@
  *    `{code, message}`（没有 data 字段），不能按业务信封解析。
  */
 
+import { MP_HOST } from '@/config/env.js'
+
 // #ifdef H5
 // 开发期走 vite.config.js 的 proxy['/api'] → localhost:8076。
 // 生产 H5 是静态产物、没有代理，必须显式打后端地址。
 const BASE_URL = import.meta.env.DEV ? '/api' : 'http://localhost:8076/api'
 // #endif
 // #ifndef H5
-// 小程序/App 端：微信开发者工具需勾选"不校验合法域名"，
-// 否则 localhost 一律被拦（表现为所有接口全挂、无有效报错）。
-const BASE_URL = 'http://localhost:8076/api'
+// 小程序没有代理，只能直连网关；地址集中在 config/env.js，真机调试改那一行即可。
+const BASE_URL = `http://${MP_HOST}/api`
 // #endif
 
 export const TIMEOUT = 10000
@@ -202,6 +203,119 @@ export const http = {
   put: (url, data, options) => request(url, { ...options, method: 'PUT', data }),
   patch: (url, data, options) => request(url, { ...options, method: 'PATCH', data }),
   del: (url, params, options) => request(url, { ...options, method: 'DELETE', params })
+}
+
+/**
+ * 文件上传（multipart）。uni.uploadFile 不走 uni.request，
+ * 必须自己拼 BASE_URL / 注 token / 解析信封，三样都从 request() 抄齐。
+ * @param {string} endpoint 如 '/teachers/scores/import'
+ * @param {string} filePath uni.chooseFile / chooseMessageFile 给出的临时路径
+ * @param {object} formData 随表单一起发的字段（后端 @RequestParam 收的就是这些）
+ * @param {File} [fileObj] H5 下能拿到的原始 File 对象。
+ *   ⚠️ uni-h5 的 uploadFile 对 filePath 走 urlToFile：内部 files 表查不到时
+ *   退到 XHR→blobToFile，文件名会变成 `${Date.now()}` 丢掉扩展名，
+ *   后端按文件名后缀校验就会拒。file 参数优先且 File 原样透传（保住 .name），
+ *   小程序端没有 File 对象，只走 filePath，此参数被忽略。
+ */
+export function upload(endpoint, filePath, formData = {}, fileObj) {
+  const url = `${BASE_URL}${endpoint}`
+  const headers = {}
+  const token = uni.getStorageSync('token')
+  if (token) headers['Authorization'] = `Bearer ${token}`
+
+  const opts = {
+    url,
+    filePath,
+    name: 'file',
+    formData,
+    header: headers,
+    timeout: 60000,
+  }
+  if (fileObj) opts.file = fileObj
+
+  return new Promise((resolve, reject) => {
+    uni.uploadFile({
+      ...opts,
+      success: (res) => {
+        const statusCode = res.statusCode
+        // uploadFile 的 data 是字符串，先解回对象再复用 request() 的判错口径
+        let body = null
+        try { body = typeof res.data === 'string' ? JSON.parse(res.data) : res.data } catch (e) { body = null }
+        if (statusCode === 401) {
+          handleUnauthorized()
+          reject(new ApiError('登录已过期，请重新登录', 401, body))
+          return
+        }
+        if (statusCode < 200 || statusCode >= 300) {
+          reject(new ApiError(pickMessage(body, statusCode), statusCode, body))
+          return
+        }
+        if (body && typeof body === 'object' && 'code' in body && body.code !== 200 && body.code !== 0) {
+          reject(new ApiError(pickMessage(body, body.code), body.code, body))
+          return
+        }
+        if (body && typeof body === 'object' && 'data' in body) {
+          resolve(body.data)
+          return
+        }
+        resolve(body)
+      },
+      fail: (err) => {
+        const msg = err && err.errMsg ? err.errMsg : ''
+        const friendly = /timeout/i.test(msg)
+          ? '上传超时，请检查网络'
+          : '上传失败，请确认后端已启动'
+        reject(new ApiError(friendly, 0, err))
+      }
+    })
+  })
+}
+
+/**
+ * 带鉴权的文件下载（成绩导入模板等）。网关要 Bearer token，
+ * <a href> 直链不带 token 会被 401，所以两个平台都得手动发请求。
+ * H5：fetch → blob → <a download>；小程序：uni.downloadFile → uni.openDocument。
+ */
+export function downloadFileAuth(endpoint, fileName = 'download') {
+  const url = `${BASE_URL}${endpoint}`
+  const token = uni.getStorageSync('token')
+  const headers = token ? { Authorization: `Bearer ${token}` } : {}
+
+  // #ifdef H5
+  return fetch(url, { headers })
+    .then(async (res) => {
+      if (!res.ok) throw new ApiError(`下载失败(${res.status})`, res.status)
+      const blob = await res.blob()
+      const a = document.createElement('a')
+      a.href = URL.createObjectURL(blob)
+      a.download = fileName
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      setTimeout(() => URL.revokeObjectURL(a.href), 5000)
+    })
+  // #endif
+  // #ifndef H5
+  return new Promise((resolve, reject) => {
+    uni.downloadFile({
+      url,
+      header: headers,
+      success: (res) => {
+        if (res.statusCode !== 200) {
+          reject(new ApiError(`下载失败(${res.statusCode})`, res.statusCode))
+          return
+        }
+        uni.openDocument({
+          filePath: res.tempFilePath,
+          showMenu: true,
+          success: resolve,
+          fail: (e) => reject(new ApiError('文件已下载但打开失败', 0, e))
+        })
+      },
+      fail: (e) => reject(new ApiError('下载失败，请检查网络', 0, e))
+    })
+  })
+  // #endif
 }
 
 export default http

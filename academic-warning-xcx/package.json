@@ -8,6 +8,7 @@
     "dev:mp-weixin": "uni -p mp-weixin",
     "build:h5": "uni build",
     "build:mp-weixin": "uni build -p mp-weixin",
+    "host:auto": "node scripts/set-host.mjs",
     "check": "node scripts/check-pages.mjs && node scripts/check-style-lang.mjs && node scripts/check-api-namespaces.mjs",
     "check:pages": "node scripts/check-pages.mjs",
     "check:style-lang": "node scripts/check-style-lang.mjs",

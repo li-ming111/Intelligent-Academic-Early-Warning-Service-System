@@ -119,7 +119,7 @@
           <text class="quote__text">{{ current.description || '暂无说明' }}</text>
         </view>
 
-        <text class="note">该预警的等级与状态由系统按预警规则自动判定，教师端不提供修改入口，也不显示处理意见 —— 处理记录归辅导员与学院管理员。</text>
+        <text class="note">预警等级与状态由系统按规则自动判定；教师端不提供修改入口，处理记录由辅导员与学院管理员维护。</text>
       </view>
 
       <template #footer>

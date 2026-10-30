@@ -2,14 +2,17 @@
   <view class="page-root" :style="themeStyle">
     <app-navbar title="通知中心" />
 
-    <view class="head">
-      <view class="head__main">
-        <text class="head__num">{{ unreadCount }}</text>
-        <text class="head__label">条未读通知</text>
-      </view>
+    <role-hero
+      title="通知中心"
+      subtitle="成绩预警、帮扶进度与课程推荐都会推到这里"
+      :avatar-text="avatarText"
+      :stats="heroStats"
+    />
+
+    <view class="action-row">
       <view
-        class="head__action"
-        :class="{ 'head__action--disabled': !unreadCount }"
+        class="action-row__btn"
+        :class="{ 'action-row__btn--disabled': !unreadCount }"
         @tap="markAllRead"
       >
         全部已读
@@ -98,7 +101,7 @@ import { roleThemeStyle } from '@/composables/useRoleTheme.js'
 import { formatDate } from '@/utils/format.js'
 import { go } from '@/utils/navigate.js'
 
-const { userId } = useUser()
+const { userId, userName } = useUser()
 const themeStyle = roleThemeStyle('student')
 
 const loading = ref(true)
@@ -109,6 +112,25 @@ const filterKey = ref('')
 
 const detailOpen = ref(false)
 const detail = ref({})
+
+const avatarText = computed(() => (userName ? String(userName).slice(0, 1) : ''))
+
+const heroStats = computed(() => {
+  const unread = unreadCount.value
+  const total = rows.value.length
+  return [
+    // 未读数可点 = 切到「未读」筛选，与下面 filter-bar 联动
+    { label: '未读', value: unread, onTap: () => pickUnread(unread) },
+    { label: '通知总数', value: total },
+    { label: '已读', value: Math.max(0, total - unread) }
+  ]
+})
+
+/** 点 hero「未读」数字 = 切到未读筛选；没有未读就不响应（切进去必是空列表）。 */
+function pickUnread(unread) {
+  if (!unread) return
+  filterKey.value = filterKey.value === 'unread' ? '' : 'unread'
+}
 
 const filterOptions = computed(() => [
   { label: '全部', value: '', count: rows.value.length },
@@ -124,9 +146,19 @@ function formatted(v) {
   return formatDate(v, true)
 }
 
-/** notifications.type 是 varchar，库里现存 'warning'。认不出时原样回显，不吞成"未知"。 */
+/** notifications.type 是 varchar；取值见 StudentNotifier.typeOf 与辅导员群发的 warning/important/normal。认不出时原样回显，不吞成"未知"。 */
 function typeText(type) {
-  const map = { warning: '学业预警', system: '系统通知', message: '消息' }
+  const map = {
+    warning: '学业预警',
+    important: '重要通知',
+    normal: '普通通知',
+    system: '系统通知',
+    message: '消息',
+    appeal: '成绩申诉',
+    assistance: '帮扶通知',
+    class: '班级通知',
+    feedback: '反馈回复'
+  }
   if (!type) return '通知'
   return map[String(type)] || String(type)
 }
@@ -269,42 +301,16 @@ async function load() {
 </script>
 
 <style lang="scss" scoped>
-/* ---------- 顶部统计 ---------- */
-.head {
+/* ---------- hero 下方操作行 ---------- */
+.action-row {
   display: flex;
-  align-items: center;
-  padding: $spacing-xl $page-padding;
-  margin: 0 $page-padding;
-  background: $color-card;
-  border-radius: $radius-lg;
-  box-shadow: $shadow-card;
+  justify-content: flex-end;
+  padding: $spacing-md $page-padding 0;
 }
 
-.head__main {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  align-items: baseline;
-}
-
-.head__num {
-  font-size: $font-2xl;
-  font-weight: 700;
-  line-height: 1;
-  color: var(--color-primary);
-  font-variant-numeric: tabular-nums;
-}
-
-.head__label {
-  margin-left: $spacing-xs;
-  font-size: $font-sm;
-  color: $color-text-secondary;
-}
-
-.head__action {
+.action-row__btn {
   @include tap-area;
 
-  flex-shrink: 0;
   height: 60rpx;
   padding: 0 $spacing-lg;
   border: 1rpx solid var(--color-primary);
@@ -314,7 +320,7 @@ async function load() {
   @include flex-center;
 }
 
-.head__action--disabled {
+.action-row__btn--disabled {
   border-color: $color-border;
   color: $color-text-hint;
 }

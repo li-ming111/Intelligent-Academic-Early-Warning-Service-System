@@ -52,15 +52,8 @@
           </view>
         </view>
 
-        <text class="note">
-          「授课学生」是**去重后的人数**（这门课那个学生算一次），不是成绩条数。
-          库里 5 位教师都带同一个班，所以每人的「授课学生」都是 24 —— 看着像复制粘贴，
-          其实是同一个班的学生数。
-        </text>
-        <text class="note">
-          「成绩均分」为「待录入」表示这位教师**名下一份成绩都没有**（电子工程学院的陈志强就是），
-          不是均分为 0。职称与研究方向在库里可能是空的，页面按「未填」显示，不编默认值。
-        </text>
+        <text class="note">「授课学生」按去重人数统计，同一学生只计一次。</text>
+        <text class="note">「成绩均分」显示「待录入」表示暂无成绩；职称、研究方向为空时显示「未填」。</text>
       </template>
     </view>
 
@@ -94,11 +87,7 @@
           </view>
         </view>
 
-        <text class="note note--in">
-          这里显示的「成绩记录条数」在接口里叫 `studentCount`，与列表页那个同名字段**不是一回事**：
-          列表页是去重学生数（24），这里是成绩条数（71 = 3 门课 × 24 人上下）。
-          同一个键名两种含义，是接口层的历史包袱，页面上按各自实际的口径起名。
-        </text>
+
 
         <section-title plain title="成绩明细" :extra="`${scores.length} 条`" />
         <view v-if="!scores.length" class="empty-tip">这位教师名下没有成绩记录。</view>
@@ -117,15 +106,7 @@
           </view>
         </view>
 
-        <text class="note note--in">
-          这一层的成绩行比成绩查询页**少两列**：总评字段叫 `score` 而不是 `totalScore`，
-          而且没有绩点与等级。所以这里只画总评一列 —— 不是漏了，是接口没给。
-        </text>
-        <text class="note note--in">
-          上面「成绩均分」是看**有没有成绩行**得出的：没有成绩时列表接口给 `null`、
-          详情接口给 `0`，同一个字段两种"空"。若直接信那个 0，就会把"这位老师还没录过成绩"
-          讲成"均分 0 分"。
-        </text>
+
       </view>
     </detail-sheet>
   </view>
@@ -418,8 +399,4 @@ async function openDetail(t) {
   color: #92400e;
 }
 
-.note--in {
-  margin-left: 0;
-  margin-right: 0;
-}
 </style>

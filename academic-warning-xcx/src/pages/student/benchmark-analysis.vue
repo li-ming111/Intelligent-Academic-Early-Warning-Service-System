@@ -91,8 +91,8 @@
               <text class="credit-grid__value">{{ numOr(progress.remainingCredits) }}</text>
             </view>
             <view class="credit-grid__cell">
-              <text class="credit-grid__label">在修学分</text>
-              <text class="credit-grid__value">{{ numOr(latest.creditsOnTrack) }}</text>
+              <text class="credit-grid__label">毕业要求</text>
+              <text class="credit-grid__value">{{ numOr(latest.requiredCredits) }}</text>
             </view>
           </view>
         </view>

@@ -48,16 +48,16 @@
         <view class="section">
           <section-title title="数据总览" extra="账号口径" />
           <view class="stat-grid">
-            <stat-card label="用户账号" :value="num(dash.totalUsers)" icon="users" />
-            <stat-card label="学生" :value="num(dash.totalStudents)" icon="user" />
-            <stat-card label="教师" :value="num(stats.totalTeachers)" icon="book" />
-            <stat-card label="辅导员" :value="num(stats.totalCounselors)" icon="target" />
+            <stat-card class="stat-grid__item" label="用户账号" :value="num(dash.totalUsers)" icon="users" />
+            <stat-card class="stat-grid__item" label="学生" :value="num(dash.totalStudents)" icon="user" />
+            <stat-card class="stat-grid__item" label="教师" :value="num(stats.totalTeachers)" icon="book" />
+            <stat-card class="stat-grid__item" label="辅导员" :value="num(stats.totalCounselors)" icon="target" />
           </view>
           <view class="stat-grid stat-grid--gap">
-            <stat-card label="学院" :value="num(dash.totalColleges)" icon="building" />
-            <stat-card label="专业" :value="num(dash.totalMajors)" icon="doc" />
-            <stat-card label="课程" :value="num(dash.totalCourses)" icon="book" />
-            <stat-card label="预警规则" :value="num(stats.ruleCount)" icon="filter" />
+            <stat-card class="stat-grid__item" label="学院" :value="num(dash.totalColleges)" icon="building" />
+            <stat-card class="stat-grid__item" label="专业" :value="num(dash.totalMajors)" icon="doc" />
+            <stat-card class="stat-grid__item" label="课程" :value="num(dash.totalCourses)" icon="book" />
+            <stat-card class="stat-grid__item" label="预警规则" :value="num(stats.ruleCount)" icon="filter" />
           </view>
         </view>
 
@@ -137,7 +137,9 @@
         <view class="section section--last">
           <section-title
             title="系统动态"
-            :extra="activities.length ? activities.length + ' 条' : '暂无记录'"
+            extra="查看全部"
+            arrow
+            @extra="go('/pages/admin/activities')"
           />
           <empty-state
             v-if="!activities.length"
@@ -148,7 +150,7 @@
           />
           <view v-else class="card">
             <view
-              v-for="(a, i) in activities"
+              v-for="(a, i) in recentActivities"
               :key="a.type + '-' + i"
               class="warn-row"
               :class="{ 'warn-row--divided': i > 0 }"
@@ -301,10 +303,13 @@ const pendingHint = computed(() => {
 const todoTotal = computed(() => todoItems.value.reduce(
   (s, t) => s + (typeof t.count === 'number' ? t.count : 0), 0))
 
+/** 首页只摆最近 4 条，与「最近预警」同一节奏；完整记录在「操作日志」页 */
+const recentActivities = computed(() => activities.value.slice(0, 4))
+
 const heroStats = computed(() => [
   { label: '用户账号', value: num(dash.value.totalUsers), onTap: () => go('/pages/admin/users') },
-  { label: '学生', value: num(dash.value.totalStudents) },
-  { label: '教师', value: num(stats.value.totalTeachers) },
+  { label: '学生', value: num(dash.value.totalStudents), onTap: () => go('/pages/admin/users') },
+  { label: '教师', value: num(stats.value.totalTeachers), onTap: () => go('/pages/admin/users') },
   { label: '待处理预警', value: num(pending.value.pendingWarnings), onTap: () => go('/pages/admin/warnings') }
 ])
 

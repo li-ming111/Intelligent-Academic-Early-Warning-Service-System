@@ -87,11 +87,18 @@
           </view>
 
           <view class="bar-head">
-            <text class="bar-head__title">成绩流水</text>
-            <view class="bar-head__btn" @tap="openCreate">录入成绩</view>
+            <text class="bar-head__title">{{ selectMode ? '选择要删除的记录' : '成绩流水' }}</text>
+            <view v-if="selectMode" class="bar-head__actions">
+              <view class="bar-head__btn bar-head__btn--ghost" @tap="exitSelect">取消</view>
+            </view>
+            <view v-else class="bar-head__actions">
+              <view class="bar-head__btn bar-head__btn--ghost" @tap="openImport">导入</view>
+              <view v-if="rows.length" class="bar-head__btn bar-head__btn--ghost" @tap="enterSelect">批量删除</view>
+              <view class="bar-head__btn" @tap="openCreate">录入成绩</view>
+            </view>
           </view>
           <!-- 这句话必须留着：一门课 24 人却有 26 行，不解释会被当成重复数据。 -->
-          <text class="note">同一学生的多次录入各占一行（按学期），司明在高等数学上有 3 条；上方统计已按课程去重，故人数少于行数。</text>
+          <text class="note">同一学生的多次成绩按学期各占一行；上方统计已按课程去重，人数会少于行数。</text>
 
           <empty-state
             v-if="!rows.length"
@@ -101,14 +108,17 @@
             :top="60"
           />
 
-          <view v-else class="card card--flush">
+          <view v-else class="card card--flush" :class="{ 'card--select': selectMode }">
             <view
               v-for="(r, i) in rows"
               :key="r.id"
               class="srow"
-              :class="{ 'srow--divided': i > 0 }"
-              @tap="openEdit(r)"
+              :class="{ 'srow--divided': i > 0, 'srow--checked': selectMode && checked.has(r.id) }"
+              @tap="selectMode ? toggleCheck(r.id) : openEdit(r)"
             >
+              <view v-if="selectMode" class="srow__check" :class="{ 'srow__check--on': checked.has(r.id) }">
+                <app-icon v-if="checked.has(r.id)" name="check" :size="22" color="#ffffff" />
+              </view>
               <view class="srow__main">
                 <view class="srow__top">
                   <text class="srow__name">{{ r.studentName || '未知学生' }}</text>
@@ -122,6 +132,21 @@
               </view>
             </view>
           </view>
+
+          <!-- 多选操作条：固定在 tab-bar 之上，进多选才出现 -->
+          <view v-if="selectMode" class="selbar">
+            <view class="selbar__all" @tap="toggleAll">
+              <view class="srow__check" :class="{ 'srow__check--on': allChecked }">
+                <app-icon v-if="allChecked" name="check" :size="22" color="#ffffff" />
+              </view>
+              <text class="selbar__all-text">全选</text>
+            </view>
+            <text class="selbar__count">已选 {{ checked.size }} 条</text>
+            <view class="selbar__del" :class="{ 'selbar__del--disabled': !checked.size }" @tap="confirmBatchDelete">
+              删除
+            </view>
+          </view>
+          <view v-if="selectMode" class="selbar-pad" />
         </template>
       </template>
     </view>
@@ -171,6 +196,60 @@
       <template #footer>
         <view class="btn-primary" :class="{ 'btn-primary--disabled': !canSaveScore }" @tap="submitScore">
           {{ saving ? '保存中…' : '保存修改' }}
+        </view>
+      </template>
+    </detail-sheet>
+
+    <!-- 批量导入 -->
+    <detail-sheet v-model="importOpen" title="批量导入成绩" height="76vh">
+      <view class="form">
+        <text class="form__label">课程</text>
+        <view class="form__static">
+          <text class="form__picked">{{ courseName }}</text>
+        </view>
+        <text class="form__tip">导入目标是当前选中的课程，如需导入其他课请先在上方切换。</text>
+
+        <text class="form__label">学期（选填）</text>
+        <picker mode="selector" :range="importSemesterLabels" :value="importSemesterIndex" @change="onImportSemesterChange">
+          <view class="form__picker">
+            <text class="form__picked">{{ importSemesterLabels[importSemesterIndex] }}</text>
+            <app-icon name="chevron" :size="26" color="#aeaeb2" />
+          </view>
+        </picker>
+        <text class="form__tip">未选择时以 Excel 的「学期」列为准；仍为空时按最近学期统计。</text>
+
+        <text class="form__label">Excel 文件</text>
+        <view class="file-pick" @tap="chooseFile">
+          <app-icon :name="importFile ? 'doc' : 'upload'" :size="34" />
+          <view class="file-pick__main">
+            <text class="file-pick__name">{{ importFile ? importFile.name : '选择 .xlsx / .xls 文件' }}</text>
+            <text class="file-pick__hint">{{ importFile ? '点击可重新选择' : '微信里从聊天记录选取，电脑上直接选文件' }}</text>
+          </view>
+        </view>
+        <text class="form__tip">
+          列：学号（必填）、姓名、总评成绩（必填）、学期、备注。
+          <text class="form__link" @tap="downloadTemplate">下载模板</text>
+        </text>
+
+        <view v-if="importResult" class="import-result">
+          <view class="import-result__summary">
+            <text class="import-result__num">{{ numOr(importResult.success) }}</text>
+            <text class="import-result__lab">导入成功</text>
+            <text class="import-result__num import-result__num--muted">{{ numOr(importResult.skipped) }}</text>
+            <text class="import-result__lab">跳过</text>
+          </view>
+          <view v-if="importErrors.length" class="import-result__errors">
+            <view v-for="(e, i) in importErrors" :key="i" class="import-result__err">
+              <text>第 {{ e.row }} 行</text>
+              <text class="import-result__err-msg">{{ e.error || e.message }}</text>
+            </view>
+          </view>
+        </view>
+      </view>
+
+      <template #footer>
+        <view class="btn-primary" :class="{ 'btn-primary--disabled': !importFile || importing }" @tap="submitImport">
+          {{ importing ? '导入中…' : '开始导入' }}
         </view>
       </template>
     </detail-sheet>
@@ -236,7 +315,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, reactive, onMounted } from 'vue'
 import { teacherAPI } from '@/services/api.js'
 import { useUser } from '@/composables/useUser.js'
 import { roleThemeStyle } from '@/composables/useRoleTheme.js'
@@ -272,6 +351,18 @@ const semesterIndex = ref(0)
 const saving = ref(false)
 const form = ref({ score: '', remark: '' })
 
+// —— 批量删除 ——
+const selectMode = ref(false)
+/** 已勾选的 scores.id 集合。用 reactive 包 Set，勾选状态才能驱动视图。 */
+const checked = reactive(new Set())
+
+// —— 批量导入 ——
+const importOpen = ref(false)
+const importFile = ref(null)
+const importSemesterIndex = ref(0)
+const importing = ref(false)
+const importResult = ref(null)
+
 const courseName = computed(() => {
   const c = courses.value.find(x => x.id === courseId.value)
   return c ? c.name : ''
@@ -295,6 +386,16 @@ const rosterLabels = computed(() => roster.value.map(s => s.label))
 
 const canSaveScore = computed(() => editing.value && validScore(form.value.score))
 const canCreate = computed(() => rosterIndex.value >= 0 && validScore(form.value.score))
+
+const allChecked = computed(() => rows.value.length > 0 && rows.value.every(r => checked.has(r.id)))
+
+/** 导入的学期选择：与录入不同，「不指定」必须是一个显式选项（Excel 学期列优先级更高）。 */
+const importSemesterLabels = computed(() => ['按 Excel 学期列', ...Array.from({ length: 8 }, (_, i) => `第${i + 1}学期`)])
+
+const importErrors = computed(() => {
+  const list = importResult.value && Array.isArray(importResult.value.errors) ? importResult.value.errors : []
+  return list.slice(0, 20)
+})
 
 function validScore(v) {
   const n = Number(v)
@@ -389,6 +490,8 @@ async function load() {
 async function selectCourse(id, initial = false) {
   if (!initial) loading.value = true
   courseId.value = id
+  // 换课后流水行整体换血，多选态里的旧 id 必须清掉
+  if (selectMode.value) exitSelect()
   try {
     const [s, a] = await Promise.all([
       teacherAPI.getScores(id).catch(e => { console.error('[teacher scores] 流水失败:', e); return [] }),
@@ -457,6 +560,119 @@ function onRosterChange(e) {
 
 function onSemesterChange(e) {
   semesterIndex.value = Number(e.detail.value)
+}
+
+// —— 批量删除 ——
+// 后端 batch-delete 收**裸数组**（@RequestBody List<Long>），历史 bug 就是多包了一层
+// {ids:[...]} 导致恒 400 —— api.js 已修，这里是它的第一个真实调用方。
+
+function enterSelect() {
+  checked.clear()
+  selectMode.value = true
+}
+
+function exitSelect() {
+  selectMode.value = false
+  checked.clear()
+}
+
+function toggleCheck(id) {
+  if (checked.has(id)) checked.delete(id)
+  else checked.add(id)
+}
+
+function toggleAll() {
+  if (allChecked.value) checked.clear()
+  else rows.value.forEach(r => checked.add(r.id))
+}
+
+function confirmBatchDelete() {
+  if (!checked.size) return
+  uni.showModal({
+    title: '批量删除成绩',
+    content: `确定删除选中的 ${checked.size} 条成绩记录？统计与分析会随之变化，此操作不可撤销。`,
+    confirmText: '删除',
+    confirmColor: '#ef4444',
+    success: async (res) => {
+      if (!res.confirm) return
+      try {
+        await teacherAPI.batchDeleteScores([...checked])
+        toast('已删除', 'success')
+        exitSelect()
+        await selectCourse(courseId.value)
+      } catch (e) {
+        toast(e && e.message ? e.message : '删除失败')
+      }
+    }
+  })
+}
+
+// —— 批量导入 ——
+
+function openImport() {
+  importFile.value = null
+  importSemesterIndex.value = 0
+  importResult.value = null
+  importOpen.value = true
+}
+
+function onImportSemesterChange(e) {
+  importSemesterIndex.value = Number(e.detail.value)
+}
+
+/**
+ * 选文件。两端能力不同必须分平台写：
+ * H5 走 uni.chooseFile（浏览器文件框）；微信小程序只能从聊天记录里选（chooseMessageFile）。
+ */
+function chooseFile() {
+  // #ifdef H5
+  uni.chooseFile({
+    count: 1,
+    extension: ['.xlsx', '.xls'],
+    success: (res) => {
+      const f = res.tempFiles && res.tempFiles[0]
+      // raw 存原始 File：uni-h5 的 uploadFile 对游离 blob URL 会丢扩展名，
+      // 带 file 参数才能把 .name 原样送到后端（见 request.js upload 注释）
+      if (f) importFile.value = { path: f.path, name: f.name || '成绩表.xlsx', raw: f.file || null }
+    }
+  })
+  // #endif
+  // #ifdef MP-WEIXIN
+  uni.chooseMessageFile({
+    count: 1,
+    type: 'file',
+    extension: ['xlsx', 'xls'],
+    success: (res) => {
+      const f = res.tempFiles && res.tempFiles[0]
+      if (f) importFile.value = { path: f.path, name: f.name || '成绩表.xlsx' }
+    }
+  })
+  // #endif
+}
+
+function downloadTemplate() {
+  teacherAPI.downloadScoresTemplate().catch(e => {
+    toast(e && e.message ? e.message : '模板下载失败')
+  })
+}
+
+async function submitImport() {
+  if (!importFile.value || importing.value) return
+  importing.value = true
+  importResult.value = null
+  try {
+    const formData = { courseId: String(courseId.value) }
+    if (importSemesterIndex.value > 0) formData.semester = String(importSemesterIndex.value)
+    const r = await teacherAPI.importScoresFile(importFile.value.path, formData, importFile.value.raw)
+    importResult.value = r || {}
+    toast(`成功导入 ${numOr(r.success)} 条`, 'success')
+    // 导入写的是 scores 表（saveScores 事务性落库），刷新即可见
+    await selectCourse(courseId.value)
+  } catch (e) {
+    toast(e && e.message ? e.message : '导入失败')
+  } finally {
+    importing.value = false
+  }
 }
 
 async function submitScore() {
@@ -743,10 +959,10 @@ async function submitCreate() {
   border-radius: $radius-pill;
 }
 
-.bar__fill--excellent { background: #9c451a; }
-.bar__fill--good      { background: #c05621; }
-.bar__fill--medium    { background: #d98a5f; }
-.bar__fill--pass      { background: #efcdae; }
+.bar__fill--excellent { background: #1976d2; }
+.bar__fill--good      { background: #2196f3; }
+.bar__fill--medium    { background: #64b5f6; }
+.bar__fill--pass      { background: #bbdefb; }
 .bar__fill--fail      { background: $color-danger; }
 
 .bar__num {
@@ -773,12 +989,200 @@ async function submitCreate() {
   color: $color-text;
 }
 
+.bar-head__actions {
+  display: flex;
+  align-items: center;
+}
+
 .bar-head__btn {  @include tap-area;
   padding: $spacing-xs $spacing-lg;
   border-radius: $radius-pill;
   background: var(--color-primary);
   color: #fff;
   font-size: $font-xs;
+}
+
+.bar-head__btn + .bar-head__btn {
+  margin-left: $spacing-sm;
+}
+
+/* 次级动作（导入/批量删除/取消）：主按钮留给「录入」，避免三个实心橙挤一排 */
+.bar-head__btn--ghost {
+  background: var(--color-primary-weak, #{$color-bg});
+  color: var(--color-primary);
+}
+
+/* ---------- 多选模式 ---------- */
+.card--select {
+  border-color: rgba(239, 68, 68, 0.18);
+}
+
+.srow--checked {
+  background: var(--color-primary-weak, #{$color-bg});
+}
+
+.srow__check {
+  width: 40rpx;
+  height: 40rpx;
+  flex-shrink: 0;
+  margin-right: $spacing-md;
+  border-radius: 50%;
+  border: 2rpx solid $color-divider;
+  box-sizing: border-box;
+  @include flex-center;
+}
+
+.srow__check--on {
+  border-color: $color-danger;
+  background: $color-danger;
+}
+
+.selbar {
+  position: fixed;
+  left: $page-padding;
+  right: $page-padding;
+  /* 操作条压在内容上、贴着自定义 tab-bar（100rpx）之上 */
+  bottom: calc(100rpx + 24rpx);
+  z-index: $z-tabbar - 1;
+  display: flex;
+  align-items: center;
+  padding: $spacing-sm $spacing-md;
+  border-radius: $radius-lg;
+  background: $color-card;
+  box-shadow: $shadow-overlay;
+}
+
+.selbar__all {
+  display: flex;
+  align-items: center;
+  @include tap-area;
+}
+
+.selbar__all .srow__check {
+  margin-right: $spacing-sm;
+}
+
+.selbar__all-text {
+  font-size: $font-sm;
+  color: $color-text;
+}
+
+.selbar__count {
+  flex: 1;
+  margin-left: $spacing-lg;
+  font-size: $font-sm;
+  color: $color-text-hint;
+  font-variant-numeric: tabular-nums;
+}
+
+.selbar__del {
+  @include tap-area;
+  padding: $spacing-xs $spacing-xl;
+  border-radius: $radius-pill;
+  background: $color-danger;
+  color: #fff;
+  font-size: $font-sm;
+}
+
+.selbar__del--disabled {
+  opacity: 0.4;
+}
+
+/* 操作条是 fixed 的，占位防最后一行被遮 */
+.selbar-pad {
+  height: 120rpx;
+}
+
+/* ---------- 导入表单 ---------- */
+.form__static {
+  display: flex;
+  align-items: center;
+  min-height: $tap-min;
+  padding: 0 $spacing-md;
+  border-radius: $radius-md;
+  background: $color-bg;
+}
+
+.file-pick {
+  display: flex;
+  align-items: center;
+  min-height: $tap-min;
+  padding: $spacing-sm $spacing-md;
+  border-radius: $radius-md;
+  border: 1rpx dashed $color-border;
+  background: $color-bg;
+  @include tap-area;
+}
+
+.file-pick__main {
+  flex: 1;
+  min-width: 0;
+  margin-left: $spacing-md;
+  display: flex;
+  flex-direction: column;
+}
+
+.file-pick__name {
+  font-size: $font-sm;
+  color: $color-text;
+  @include ellipsis;
+}
+
+.file-pick__hint {
+  margin-top: 4rpx;
+  font-size: $font-xs;
+  color: $color-text-hint;
+}
+
+.form__link {
+  color: var(--color-primary);
+}
+
+.import-result {
+  margin-top: $spacing-lg;
+  padding-top: $spacing-md;
+  border-top: 1rpx solid $color-divider;
+}
+
+.import-result__summary {
+  display: flex;
+  align-items: baseline;
+}
+
+.import-result__num {
+  font-size: $font-xl;
+  font-weight: 700;
+  color: var(--color-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.import-result__num--muted {
+  margin-left: $spacing-lg;
+  color: $color-warning;
+}
+
+.import-result__lab {
+  margin-left: 8rpx;
+  font-size: $font-xs;
+  color: $color-text-hint;
+}
+
+.import-result__errors {
+  margin-top: $spacing-md;
+  max-height: 320rpx;
+  overflow-y: auto;
+}
+
+.import-result__err {
+  display: flex;
+  margin-top: $spacing-xs;
+  font-size: $font-xs;
+  color: $color-danger;
+}
+
+.import-result__err-msg {
+  margin-left: $spacing-sm;
+  color: $color-text-hint;
 }
 
 .note {
