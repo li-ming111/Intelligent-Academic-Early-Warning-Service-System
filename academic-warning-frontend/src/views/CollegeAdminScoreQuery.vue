@@ -9,15 +9,15 @@
         <div class="cadp-head">
           <span class="cadp-title">成绩列表</span>
           <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
-            <el-select v-model="filterClass" placeholder="全部班级" clearable size="small" style="width:160px" @change="currentPage=1">
+            <el-select v-model="filterClass" placeholder="全部班级" clearable size="small" style="width:160px" @change="searchNow">
               <el-option v-for="c in classOptions" :key="c.id" :label="c.name" :value="c.id" />
             </el-select>
-            <el-input v-model="search" placeholder="搜索学号/姓名" clearable size="small" style="width:180px" @input="currentPage=1" />
-            <el-button size="small" type="primary" @click="loadData">查询</el-button>
+            <el-input v-model="search" placeholder="搜索学号/姓名" clearable size="small" style="width:180px" @input="currentPage=1" @keyup.enter="searchNow" />
+            <el-button size="small" type="primary" @click="searchNow">查询</el-button>
             <el-button size="small" :icon="Download" @click="exportScores">导出</el-button>
           </div>
         </div>
-        <el-table :data="paged" stripe size="small" max-height="58vh" v-if="scores.length" style="width:100%">
+        <el-table :data="scores" stripe size="small" max-height="58vh" v-if="scores.length" style="width:100%">
           <el-table-column prop="studentName" label="姓名" min-width="80" fixed />
           <el-table-column prop="studentId" label="学号" width="110" sortable />
           <el-table-column prop="className" label="班级" min-width="120" />
@@ -37,11 +37,24 @@
               <span v-else :style="{ color: toNumber(row.totalScore) >= 60 ? '#16a34a' : '#ef4444', fontWeight: 600 }">{{ row.totalScore }}</span>
             </template>
           </el-table-column>
-          <el-table-column prop="gradePoint" label="绩点" width="55" align="center" />
-          <el-table-column prop="grade" label="等级" width="55" align="center" />
-          <el-table-column prop="semester" label="学期" width="110" />
+          <!-- 绩点/等级同属"期末录入后才有"的派生值，未录入时留白会被读成"空数据"。 -->
+          <el-table-column prop="gradePoint" label="绩点" width="55" align="center">
+            <template #default="{ row }">
+              <span v-if="isPendingValue(row.finalScore)" style="color:#94a3b8">{{ PENDING_TEXT }}</span>
+              <span v-else>{{ row.gradePoint != null ? row.gradePoint : '--' }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column prop="grade" label="等级" width="55" align="center">
+            <template #default="{ row }">
+              <span v-if="isPendingValue(row.finalScore)" style="color:#94a3b8">{{ PENDING_TEXT }}</span>
+              <span v-else>{{ row.grade || '--' }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="学期" width="110">
+            <template #default="{ row }">{{ row.semester != null ? `第${row.semester}学期` : '--' }}</template>
+          </el-table-column>
         </el-table>
-        <el-pagination v-if="scores.length" v-model:current-page="currentPage" :page-size="pageSize" :total="totalCount" layout="prev, pager, next, total" small background class="cad-pager" @current-change="()=>{}" />
+        <el-pagination v-if="totalCount" v-model:current-page="currentPage" :page-size="pageSize" :total="totalCount" layout="prev, pager, next, total" small background class="cad-pager" @current-change="loadData" />
         <div v-else class="cadp-empty">暂无成绩数据，请选择班级后点击查询</div>
       </div>
     </div>
@@ -49,7 +62,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, onMounted } from 'vue'
 import { collegeAdminAPI } from '@/api/index'
 import { Download } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
@@ -62,16 +75,33 @@ const filterClass = ref(null)
 const search = ref('')
 const pageSize = ref(15)
 const currentPage = ref(1)
+const totalCount = ref(0)
 
-const paged = computed(() => scores.value.slice((currentPage.value - 1) * pageSize.value, currentPage.value * pageSize.value))
-const totalCount = computed(() => scores.value.length)
+function queryParams(page, size) {
+  const params = { page, size }
+  if (filterClass.value) params.classId = filterClass.value
+  if (search.value) params.keyword = search.value
+  return params
+}
 
-function exportScores() {
-  if (!scores.value.length) { ElMessage.warning('无数据可导出'); return }
+async function exportScores() {
+  const uid = localStorage.getItem('userId'); if (!uid) return
+  // 导出要的是"当前筛选下的全部行"，而列表一次只取一页，所以按页拉全再拼。
+  let all = []
+  try {
+    let page = 1
+    for (;;) {
+      const res = await collegeAdminAPI.scoreQuery(uid, queryParams(page, 200)) || {}
+      all = all.concat(res.items || [])
+      if (all.length >= (res.total || 0) || !(res.items || []).length) break
+      page += 1
+    }
+  } catch (e) { console.error(e); ElMessage.error('导出失败'); return }
+  if (!all.length) { ElMessage.warning('无数据可导出'); return }
   const keys = ['学生姓名','学号','班级','课程名称','平时成绩','期末成绩','总评成绩','绩点','等级','学期']
   // 期末未录入的行导出成"待录入"而不是空单元格 —— 空白会被当成"忘了填"，
   // 也可能在 Excel 里被误读成 0 分。
-  const rows = scores.value.map(r => {
+  const rows = all.map(r => {
     const pending = isPendingValue(r.finalScore)
     return [r.studentName, r.studentId, r.className, r.courseName, r.regularScore,
       pending ? PENDING_TEXT : r.finalScore, pending ? PENDING_TEXT : r.totalScore,
@@ -81,16 +111,19 @@ function exportScores() {
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' })
   const u = URL.createObjectURL(blob)
   const a = document.createElement('a'); a.href = u; a.download = `成绩查询_${collegeName.value}.csv`; a.click()
-  URL.revokeObjectURL(u); ElMessage.success(`导出成功 (${scores.value.length} 条)`)
+  URL.revokeObjectURL(u); ElMessage.success(`导出成功 (${all.length} 条)`)
 }
 
 async function loadData() {
   const uid = localStorage.getItem('userId'); if (!uid) return
-  const params = {}
-  if (filterClass.value) params.classId = filterClass.value
-  if (search.value) params.keyword = search.value
-  try { scores.value = await collegeAdminAPI.scoreQuery(uid, params) || []; currentPage.value = 1 } catch(e){ console.error(e) }
+  try {
+    const res = await collegeAdminAPI.scoreQuery(uid, queryParams(currentPage.value, pageSize.value)) || {}
+    scores.value = res.items || []
+    totalCount.value = res.total || 0
+  } catch(e){ console.error(e) }
 }
+
+function searchNow() { currentPage.value = 1; loadData() }
 
 onMounted(async () => {
   const uid = localStorage.getItem('userId'); if (!uid) return

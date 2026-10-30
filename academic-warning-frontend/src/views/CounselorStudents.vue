@@ -11,7 +11,6 @@
       <el-select v-model="selectedClass" placeholder="选择班级" style="width: 200px;">
         <el-option v-for="c in classOptions" :key="c.id" :label="c.name" :value="c.name" />
       </el-select>
-      <el-button type="primary" @click="searchStudents">搜索</el-button>
       <el-button @click="exportStudents">导出</el-button>
     </div>
 
@@ -146,12 +145,8 @@ const studentList = computed(() => {
 })
 
 // 2026-10-02（W4.S3）：筛选本来就是响应式的（`studentList` 是 computed，
-// 绑着 `searchName` 的 el-input，边输边筛），这个按钮不做任何过滤。
-// 它原来那句「搜索完成」至少没撒谎（条数真是筛完的），但读起来像"点了才筛"，
-// 所以改成陈述当前的筛选结果。
-const searchStudents = () => {
-  ElMessage.success('当前筛选出 ' + studentList.value.length + ' 名学生')
-}
+// 绑着 `searchName` 的 el-input，边输边筛）；原先的「搜索」按钮只是弹一句条数，
+// 不做任何过滤，已于 2026-10-21 移除。
 
 // 导出当前**列表里正在显示**的那批（= 搜索/班级筛选之后的结果），
 // 而不是全量 —— 按钮就挨着「搜索」，导出被筛过的那批才符合预期，提示里也写清条数。
@@ -197,7 +192,6 @@ const viewStudent = (row) => {
 }
 
 const sendNotification = (row) => {
-  console.log('学生数据:', row)
   selectedStudent.value = row
   notificationForm.value.receiver = row.studentName || row.name || ''
   notificationDialogVisible.value = true

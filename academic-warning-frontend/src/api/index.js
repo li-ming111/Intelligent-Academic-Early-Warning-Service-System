@@ -364,6 +364,9 @@ export const teacherAPI = {
   getTimetable: () => {
     return apiClient.get(`/teachers/courses/timetable`)
   },
+  createCourse: (data) => {
+    return apiClient.post(`/teachers/courses`, data)
+  },
   updateCourse: (courseId, data) => {
     return apiClient.put(`/teachers/courses/${courseId}`, data)
   },
@@ -503,8 +506,10 @@ export const teacherAPI = {
   batchDeleteScores: (scoreIds) => {
     return apiClient.post(`/teachers/scores/batch-delete`, scoreIds)
   },
-  getScoresByClass: (className, teacherId) => {
-    return apiClient.get(`/teachers/scores/by-class`, { params: { class_name: className, teacher_id: teacherId } })
+  getScoresByClass: (className, teacherId, onlyMine = false) => {
+    return apiClient.get(`/teachers/scores/by-class`, {
+      params: { class_name: className, teacher_id: teacherId, only_mine: onlyMine || undefined }
+    })
   },
   getClassScoreAnalysis: (classId) => {
     return apiClient.get(`/teachers/classes/${classId}/analysis`)
@@ -540,6 +545,22 @@ export const teacherAPI = {
   },
   getUnreadCount: (userId) => {
     return apiClient.get(`/teachers/messages/${userId}/unread-count`)
+  },
+  // ========== 站内信收件箱（messages 表，辅导员私信 / 系统通知） ==========
+  getInbox: () => {
+    return apiClient.get('/teachers/inbox')
+  },
+  getInboxUnreadCount: () => {
+    return apiClient.get('/teachers/inbox/unread-count')
+  },
+  markInboxRead: (id) => {
+    return apiClient.post(`/teachers/inbox/${id}/read`)
+  },
+  markAllInboxRead: () => {
+    return apiClient.post('/teachers/inbox/read-all')
+  },
+  replyInboxMessage: (id, content) => {
+    return apiClient.post(`/teachers/inbox/${id}/reply`, { content })
   }
   // markMessageAsRead 已删（2026-09-30）：它打的 `POST /teachers/messages/{id}/mark-read`
   // 后端只有一行 `return ApiResponse.success("消息已标记为已读")`，**不碰任何表**。
@@ -585,6 +606,22 @@ export const counselorAPI = {
   },
   notifyStudents: (data) => {
     return apiClient.post(`/counselors/students/notify`, data)
+  },
+  // ========== 教师消息 ==========
+  getTeacherDirectory: () => {
+    return apiClient.get('/counselors/teachers')
+  },
+  sendTeacherMessage: (data) => {
+    return apiClient.post('/counselors/teacher-messages/send', data)
+  },
+  getSentTeacherMessages: () => {
+    return apiClient.get('/counselors/teacher-messages/sent')
+  },
+  getReceivedTeacherReplies: () => {
+    return apiClient.get('/counselors/teacher-messages/received')
+  },
+  markTeacherRepliesRead: () => {
+    return apiClient.post('/counselors/teacher-messages/read-all')
   },
   getWarnings: (counselorId, status) => {
     return apiClient.get(`/counselors/warnings`, { params: { counselor_id: counselorId, status } })
@@ -734,7 +771,7 @@ export const counselorAPI = {
 /**
  * 把 `aiAPI` 的每个响应都过一遍诚实性闸（W26）。
  *
- * <p>`/ai/**` 里有三个纯 AI 端点在 `DASHSCOPE_KEY` 没配时**用占位串冒充分析结果、还包成
+ * <p>`/ai/**` 里有三个纯 AI 端点在 `AI_API_KEY` 没配时**用占位串冒充分析结果、还包成
  * success**（见 `utils/ai.js`）。这一层统一拦：命中占位串就 reject，页面**原有的 catch**
  * 会如实报错 —— 不必在 8 个宿主页各写一遍"这是占位串"的分支。
  *

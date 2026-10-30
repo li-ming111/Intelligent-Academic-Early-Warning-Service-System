@@ -200,7 +200,7 @@ const isPureAuthPage = computed(() => {
 const userName = computed(() => localStorage.getItem('userName') || localStorage.getItem('username') || '未知用户')
 const roleLabel = computed(() => {
   const labels = { 1: '学生', 2: '教师', 3: '辅导员', 4: '管理员', 5: '学院管理员' }
-  return labels[roleNum.value] || '学生'
+  return labels[roleNum.value] || '自定义角色'
 })
 
 // 验证Token有效性（简化）
@@ -810,7 +810,10 @@ html {
   border-color: var(--el-color-primary, #667eea) !important;
 }
 
-.el-pagination .el-pager li.active {
+/* Element Plus 2.x 的当前页类名是 `is-active`，只写 `.active` 会漏掉它：
+   上面把 li 背景强制成白色，而选中项的文字是白色，结果就是页码格空白。 */
+.el-pagination .el-pager li.active,
+.el-pagination .el-pager li.is-active {
   color: var(--el-color-primary, #667eea) !important;
   background-color: var(--el-color-primary-light-9, #f0f2f8) !important;
 }

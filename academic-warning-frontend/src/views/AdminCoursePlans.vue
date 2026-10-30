@@ -30,22 +30,13 @@
         </div>
       </template>
       <el-table :data="filteredList" stripe v-loading="loading" empty-text="暂无排课记录">
-        <el-table-column prop="id" label="ID" width="70" />
         <el-table-column label="课程" min-width="200">
           <template #default="{ row }">
-            <div class="cp-course">
-              <span class="cp-name">{{ courseName(row.courseId) }}</span>
-              <span class="cp-code">课程ID {{ row.courseId }}</span>
-            </div>
+            <span class="cp-name">{{ courseName(row.courseId) }}</span>
           </template>
         </el-table-column>
-        <!-- ⚠️ `course_plans.teacher_id` 是 **users.id**（与 `courses.teacher_id` 同套），
-             **不是** `teacher_profile.id` —— 拿档案表 id 来查会查到另一个人。 -->
         <el-table-column label="任课教师" width="130">
-          <template #default="{ row }">
-            {{ teacherName(row.teacherId) }}
-            <span v-if="row.teacherId" class="cp-uid">(uid {{ row.teacherId }})</span>
-          </template>
+          <template #default="{ row }">{{ teacherName(row.teacherId) }}</template>
         </el-table-column>
         <el-table-column label="学期" width="150">
           <template #default="{ row }">{{ semesterLabel(row.semester) }}</template>
@@ -79,7 +70,7 @@
       <el-form ref="formRef" :model="form" :rules="rules" label-width="100px">
         <el-form-item label="课程" prop="courseId">
           <el-select v-model="form.courseId" filterable placeholder="选择课程" style="width:100%"
-                     :disabled="isEdit">
+                     :disabled="isEdit" @change="onCourseChange">
             <el-option v-for="c in courseOptions" :key="c.id" :label="c.name" :value="c.id">
               <span>{{ c.name }}</span>
               <span class="opt-sub">{{ c.code }} · {{ c.credits }}学分</span>
@@ -90,11 +81,8 @@
           <div v-if="isEdit" class="cp-hint">编辑时不可更换课程；如需换课请删除后重新新增。</div>
         </el-form-item>
         <el-form-item label="任课教师" prop="teacherId">
-          <el-select v-model="form.teacherId" filterable placeholder="选择教师" style="width:100%">
-            <el-option v-for="t in teacherOptions" :key="t.id"
-                       :label="`${t.name}（uid ${t.id}）`" :value="t.id" />
-          </el-select>
-          <div class="cp-hint">此处存的是账号 id（users.id），与教师档案 id 不是同一套。</div>
+          <el-input :model-value="selectedTeacherName" disabled placeholder="选择课程后自动带出" />
+          <div class="cp-hint">任课教师由课程的「授课教师」带出；如需更换，请到课程管理修改。</div>
         </el-form-item>
         <el-form-item label="学期" prop="semester">
           <!-- 学期是 '2025-2026-2' 这种串，不是数字 —— 与成绩那边的数字学期不同口径。
@@ -177,7 +165,7 @@ const form = ref({
 
 const rules = {
   courseId: [{ required: true, message: '请选择课程', trigger: 'change' }],
-  teacherId: [{ required: true, message: '请选择任课教师', trigger: 'change' }],
+  teacherId: [{ required: true, message: '该课程未设置授课教师，请先到课程管理补充', trigger: 'change' }],
   semester: [{ required: true, message: '请输入学期', trigger: 'blur' }],
   year: [{ required: true, message: '请输入学年', trigger: 'blur' }],
   classTime: [{ required: true, message: '请输入上课时间', trigger: 'blur' }],
@@ -217,13 +205,18 @@ const filteredList = computed(() => {
 
 const courseName = (id) => {
   const c = courseOptions.value.find(x => x.id === id)
-  return c ? c.name : (id != null ? `课程${id}` : '—')
+  return c ? c.name : '未知课程'
 }
 
 const teacherName = (id) => {
+  if (id == null) return '—'
   const t = teacherOptions.value.find(x => x.id === id)
-  return t ? t.name : (id != null ? `教师${id}` : '—')
+  return t ? t.name : '未知教师'
 }
+
+// 空值返回空串，让输入框落到 placeholder 而不是显示"未知教师"
+const selectedTeacherName = computed(() =>
+  form.value.teacherId == null ? '' : teacherName(form.value.teacherId))
 
 const semesterLabel = (s) => {
   if (!s) return '—'
@@ -278,12 +271,19 @@ const openAdd = () => {
   dialogVisible.value = true
 }
 
+const onCourseChange = (courseId) => {
+  const course = courseOptions.value.find(c => c.id === courseId)
+  form.value.teacherId = course?.teacherId != null ? Number(course.teacherId) : null
+}
+
 const openEdit = (row) => {
   isEdit.value = true
+  const course = courseOptions.value.find(c => c.id === row.courseId)
   form.value = {
     id: row.id,
     courseId: row.courseId,
-    teacherId: row.teacherId,
+    // 任课教师以课程为准；只有课程查不到时才回落到这条排课自己的值
+    teacherId: course?.teacherId != null ? Number(course.teacherId) : row.teacherId,
     semester: row.semester || '',
     year: row.year,
     classTime: row.classTime || '',
@@ -385,11 +385,7 @@ onMounted(async () => {
 .cp-card-head { display: flex; justify-content: space-between; align-items: center; }
 .cp-count { font-size: 13px; color: #71717a; font-weight: 400; }
 
-.cp-course { display: flex; flex-direction: column; }
 .cp-name { font-weight: 600; color: #18181b; }
-.cp-code { font-size: 11px; color: #a1a1aa; }
-.cp-uid { font-size: 11px; color: #a1a1aa; }
-
 .cp-hint { font-size: 11px; color: #a1a1aa; line-height: 1.5; margin-top: 2px; }
 .opt-sub { float: right; color: #94a3b8; font-size: 12px; }
 

@@ -13,8 +13,8 @@
     <div class="tfb-list" v-if="filtered.length">
       <div v-for="(f,i) in filtered" :key="f.id" class="tfb-card" :class="{pending:f.status===0}" :style="{animationDelay:i*0.06+'s'}">
         <div class="tfc-left">
-          <div class="tfc-name"><el-tag size="small">{{ f.category||'其他' }}</el-tag><el-tag size="small" :type="f.status===0?'warning':'success'">{{ f.status===0?'待回复':'已回复' }}</el-tag></div>
-          <div class="tfc-content">{{ f.content }}</div>
+          <div class="tfc-name"><span class="tfc-student" v-if="studentNameOf(f)">{{ studentNameOf(f) }}</span><el-tag size="small">{{ f.category||'其他' }}</el-tag><el-tag size="small" :type="f.status===0?'warning':'success'">{{ f.status===0?'待回复':'已回复' }}</el-tag></div>
+          <div class="tfc-content">{{ contentOf(f) }}</div>
           <div v-if="f.reply" class="tfc-reply"><svg viewBox="0 0 24 24" fill="none" stroke="#16a34a" stroke-width="2" width="14" height="14"><polyline points="9 10 4 15 9 20"/><path d="M20 4v7a4 4 0 01-4 4H4"/></svg><span>{{ f.reply }}</span></div>
           <div class="tfc-time">{{ fmtDate(f.createTime) }}</div>
         </div>
@@ -23,7 +23,7 @@
     </div>
     <div v-else class="tfb-empty">暂无反馈</div>
     <el-dialog v-model="replyVisible" title="回复反馈" width="500px" destroy-on-close>
-      <div v-if="replyRow"><div class="rpl-info"><span class="rpl-name">{{ replyRow.studentName }}</span><el-tag size="small">{{ replyRow.category }}</el-tag></div><div class="rpl-content">{{ replyRow.content }}</div><el-divider/><el-input v-model="replyText" type="textarea" rows="3" placeholder="输入回复..."/></div>
+      <div v-if="replyRow"><div class="rpl-info"><span class="rpl-name">{{ studentNameOf(replyRow) || '学生' }}</span><el-tag size="small">{{ replyRow.category }}</el-tag></div><div class="rpl-content">{{ contentOf(replyRow) }}</div><el-divider/><el-input v-model="replyText" type="textarea" :rows="3" placeholder="输入回复..."/></div>
       <template #footer><el-button @click="replyVisible=false">取消</el-button><el-button type="primary" @click="submitReply">提交</el-button></template>
     </el-dialog>
   </div>
@@ -40,7 +40,17 @@ const filter = ref('')
 const replyVisible = ref(false)
 const replyRow = ref(null)
 const replyText = ref('')
-const categories = ['教学质量','成绩问题','作业评分','考试安排','其他']
+// 学生端提交时把「姓名：内容」拼进 content（feedback 表没有学生列），
+// 列表里把姓名拆出来单独展示，正文去掉重复的前缀。
+const categories = computed(() => [...new Set(feedbacks.value.map(f => f.category).filter(Boolean))])
+function studentNameOf(f) {
+  if (!f || f.studentName) return f?.studentName || ''
+  const m = String(f.content || '').match(/^\s*([^：:]{1,20})[：:]/)
+  return m ? m[1].trim() : ''
+}
+function contentOf(f) {
+  return String(f?.content || '').replace(/^\s*[^：:]{1,20}[：:]\s*/, '')
+}
 
 const pendingCount = computed(() => feedbacks.value.filter(f => f.status === 0).length)
 const repliedCount = computed(() => feedbacks.value.filter(f => f.status === 1).length)

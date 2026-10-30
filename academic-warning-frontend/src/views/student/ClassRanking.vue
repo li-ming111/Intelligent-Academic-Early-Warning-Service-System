@@ -18,7 +18,7 @@
     </div>
 
     <!-- 排名列表 -->
-    <div class="ranking-list">
+    <div class="ranking-list" v-loading="loading">
       <div v-if="sortedMembers.length === 0" class="empty-state">
         <el-empty description="暂无班级排名数据"></el-empty>
       </div>
@@ -137,17 +137,6 @@ const getRankClass = (index) => {
   if (index === 1) return 'rank-2'
   if (index === 2) return 'rank-3'
   return 'rank-normal'
-}
-
-// 获取状态类型
-const getStatusType = (status) => {
-  const typeMap = {
-    '优秀': 'success',
-    '良好': 'info',
-    '及格': 'warning',
-    '警告': 'danger'
-  }
-  return typeMap[status] || 'info'
 }
 
 // 加载班级排名
@@ -365,12 +354,6 @@ onMounted(() => {
   font-size: 13px;
   font-weight: 400;
   color: #94a3b8;
-}
-
-/* 状态徽章 */
-.status-badge {
-  min-width: 80px;
-  text-align: center;
 }
 
 /* 响应式 */

@@ -101,9 +101,22 @@
               <span v-else :style="{ color: toNumber(row.totalScore ?? row.score) >= 60 ? '#16a34a' : '#ef4444', fontWeight: 600 }">{{ row.totalScore ?? row.score }}</span>
             </template>
           </el-table-column>
-          <el-table-column prop="gradePoint" label="绩点" width="55" align="center" />
-          <el-table-column prop="grade" label="等级" width="55" align="center" />
-          <el-table-column prop="semester" label="学期" width="110" />
+          <!-- 绩点/等级同属"期末录入后才有"的派生值，未录入时留白会被读成"空数据"。 -->
+          <el-table-column prop="gradePoint" label="绩点" width="55" align="center">
+            <template #default="{ row }">
+              <span v-if="isPendingValue(row.finalScore)" style="color:#94a3b8">{{ PENDING_TEXT }}</span>
+              <span v-else>{{ row.gradePoint != null ? row.gradePoint : '--' }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column prop="grade" label="等级" width="55" align="center">
+            <template #default="{ row }">
+              <span v-if="isPendingValue(row.finalScore)" style="color:#94a3b8">{{ PENDING_TEXT }}</span>
+              <span v-else>{{ row.grade || '--' }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="学期" width="110">
+            <template #default="{ row }">{{ row.semester != null ? `第${row.semester}学期` : '--' }}</template>
+          </el-table-column>
         </el-table>
       </div>
       <template #footer>

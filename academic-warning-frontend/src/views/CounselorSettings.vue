@@ -47,7 +47,6 @@
             <el-form-item label="接收系统消息"><el-switch v-model="notifyForm.systemMessage" /></el-form-item>
             <el-form-item label="接收班级通知"><el-switch v-model="notifyForm.classNotification" /></el-form-item>
             <el-form-item label="接收学生反馈"><el-switch v-model="notifyForm.studentFeedback" /></el-form-item>
-            <el-form-item label="邮件提醒"><el-switch v-model="notifyForm.emailReminder" /></el-form-item>
             <el-form-item><el-button type="primary" @click="handleSaveNotify">保存设置</el-button></el-form-item>
           </el-form>
         </el-card>
@@ -57,7 +56,10 @@
         <el-card>
           <template #header><span class="cs-card-title">工作信息</span></template>
           <el-form :model="workForm" label-width="100px">
-            <el-form-item label="学院"><el-input v-model="workForm.college" placeholder="所属学院" /></el-form-item>
+            <el-form-item label="学院">
+              <el-input :model-value="workForm.college" placeholder="未设置" disabled />
+              <div class="cs-hint">学院由辅导员档案维护，如需变更请联系管理员。</div>
+            </el-form-item>
             <el-form-item label="办公地点"><el-input v-model="workForm.office" placeholder="输入办公地点" /></el-form-item>
             <el-form-item label="办公电话"><el-input v-model="workForm.officePhone" placeholder="输入办公电话" /></el-form-item>
             <el-form-item><el-button type="primary" @click="handleSaveWork">保存设置</el-button></el-form-item>
@@ -81,7 +83,7 @@ const counselorId = getUserId()
 
 const pwdForm = ref({ oldPassword: '', newPassword: '', confirmPassword: '' })
 const profileForm = ref({ name: '', email: '', phone: '' })
-const notifyForm = ref({ warningNotification: true, systemMessage: true, classNotification: true, studentFeedback: true, emailReminder: false })
+const notifyForm = ref({ warningNotification: true, systemMessage: true, classNotification: true, studentFeedback: true })
 const workForm = ref({ college: '', office: '', officePhone: '' })
 // 账户信息是否真的加载成功。没加载成功时表单是全空的，此时点"保存信息"
 // 会把 users 里真实的姓名/邮箱/电话**覆盖成空串**（空串不是 null，
@@ -118,8 +120,7 @@ onMounted(async () => {
         warningNotification: s.warningNotification ?? true,
         systemMessage: s.systemMessage ?? true,
         classNotification: s.classNotification ?? true,
-        studentFeedback: s.studentFeedback ?? true,
-        emailReminder: s.emailReminder ?? false
+        studentFeedback: s.studentFeedback ?? true
       }
       workForm.value.office = s.officeLocation || ''
       workForm.value.officePhone = s.officePhone || ''
@@ -178,6 +179,7 @@ const handleSaveWork = async () => {
 .cs-head p { margin: 0; font-size: 13px; color: #94a3b8; }
 .cs-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-top: 16px; }
 .cs-card-title { font-size: 15px; font-weight: 600; color: #1e293b; }
+.cs-hint { font-size: 12px; color: #94a3b8; line-height: 1.5; margin-top: 2px; }
 :deep(.el-card) { border-radius: 12px; box-shadow: 0 1px 3px rgba(0,0,0,.04); }
 :deep(.el-card__header) { padding: 14px 20px; border-bottom: 1px solid #f1f5f9; }
 :deep(.el-card__body) { padding: 20px; }

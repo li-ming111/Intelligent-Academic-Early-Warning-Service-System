@@ -29,7 +29,9 @@
         <el-table-column label="学生" width="110" align="center">
           <template #default="{ row }">{{ studentName(row.studentId) }}</template>
         </el-table-column>
-        <el-table-column prop="category" label="分类" width="110" align="center" />
+        <el-table-column label="分类" width="110" align="center">
+          <template #default="{ row }">{{ categoryLabel(row.category) }}</template>
+        </el-table-column>
         <el-table-column prop="content" label="沟通内容" min-width="260" show-overflow-tooltip />
         <el-table-column label="状态" width="100" align="center">
           <template #default="{ row }">
@@ -41,7 +43,9 @@
         <el-table-column label="学生反馈" min-width="180">
           <template #default="{ row }">{{ row.reply || '—' }}</template>
         </el-table-column>
-        <el-table-column prop="createdAt" label="沟通时间" width="170" />
+        <el-table-column label="沟通时间" width="170">
+          <template #default="{ row }">{{ formatDateTime(row.createdAt) }}</template>
+        </el-table-column>
         <el-table-column label="操作" width="150" fixed="right" align="center">
           <template #default="{ row }">
             <el-button
@@ -125,6 +129,18 @@ const replyForm = ref({ reply: '' })
 
 const categories = ['预警约谈', '成绩沟通', '帮扶跟进', '日常关怀', '家长沟通']
 
+// 通知群发也会往 communication_logs 写一条（category 取 warning/important/normal），
+// 这里补上文案，否则列表里会直接显示英文码。
+const CATEGORY_LABELS = { warning: '预警通知', important: '重要通知', normal: '普通通知' }
+const categoryLabel = (c) => CATEGORY_LABELS[c] || c || '未分类'
+
+// 后端 LocalDateTime 序列化成 ISO（2026-10-19T16:50:48），原样渲染会露出 T。
+const formatDateTime = (v) => {
+  if (!v) return '—'
+  const d = new Date(v)
+  return isNaN(d.getTime()) ? v : d.toLocaleString('zh-CN', { hour12: false })
+}
+
 const counselorId = () => {
   const uid = localStorage.getItem('userId')
   return uid ? parseInt(uid) : null
@@ -132,7 +148,7 @@ const counselorId = () => {
 
 const studentName = (id) => {
   const s = students.value.find((x) => x.id === id)
-  return s ? s.name : (id ? `学生#${id}` : '—')
+  return s ? s.name : '未知学生'
 }
 
 const filteredLogs = computed(() => {

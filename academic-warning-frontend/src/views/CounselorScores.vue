@@ -32,7 +32,7 @@
     </el-card>
 
     <!-- AI 班级学业分析（W26）：`aiAPI.analyzeClassScores` 此前全仓零调用。
-         端点是**纯 AI**（后端直接问通义千问），没配 DASHSCOPE_KEY 时会拿占位串
+         端点是**纯 AI**（后端直接问DeepSeek），没配 AI_API_KEY 时会拿占位串
          冒充成功 —— 闸在 utils/ai.js，命中就换成一句实话，不当作分析结果渲染。 -->
     <el-card v-if="selectedClass" style="margin-bottom: 20px;">
       <template #header>
@@ -41,7 +41,7 @@
       <AiInsight
         title="AI 班级分析"
         :load="aiAnalyzeClass"
-        hint="把当前选中的班级交给 AI 做整体学业分析（需要后端配置 DASHSCOPE_KEY）"
+        hint="把当前选中的班级交给 AI 做整体学业分析（需要后端配置 AI_API_KEY）"
       />
     </el-card>
 
@@ -121,6 +121,7 @@
 
 <script setup>
 import { ref, onMounted, onUnmounted } from 'vue'
+import { useRoute } from 'vue-router'
 import * as echarts from 'echarts'
 import { ElMessage } from 'element-plus'
 import { counselorAPI, aiAPI } from '@/api/index'
@@ -128,6 +129,7 @@ import AiInsight from '@/components/AiInsight.vue'
 import { getUserId } from '@/utils/userUtils'
 import { toNumber } from '@/utils/score'
 
+const route = useRoute()
 const loading = ref(false)
 const selectedCourse = ref('')
 const selectedClass = ref('')
@@ -174,7 +176,10 @@ const loadData = async () => {
 
     // 加载完整成绩数据用于统计
     if (classOptions.value.length > 0) {
-      selectedClass.value = classOptions.value[0].id
+      // 从「我的班级」点「查看成绩」进来时带着 classId，优先用它；否则默认第一个班
+      const wanted = Number(route.query.classId)
+      const match = classOptions.value.find(c => Number(c.id) === wanted)
+      selectedClass.value = match ? match.id : classOptions.value[0].id
       await loadClassScores()
     }
 
@@ -234,8 +239,21 @@ const updateStatsForScores = (scores) => {
   // 后者会把无成绩的行算进分母，把均分和及格率一起拉低。
   const avg = scored > 0 ? total / scored : 0
   const passRate = scored > 0 ? (passCount / scored) * 100 : 0
-  const passRate80 = scores.filter(s => (toNumber(s.score_total) ?? -1) >= 80).length
-  const creditRate = scored > 0 ? (passRate80 / scored) * 100 : 0
+  // 2026-10-19：「学分达标」改为与 CounselorCourses.vue 同口径 —— **学生维度**
+  // "所有已录入课程均通过"的人数占比。原先算的是"≥80 分记录条数占比"，
+  // 与「选课与学分」页的达标名单对不上。
+  const byStudent = new Map()
+  scores.forEach(s => {
+    const sid = s.student_id ?? s.student_no
+    if (sid == null) return
+    if (!byStudent.has(sid)) byStudent.set(sid, { fail: 0, scored: 0 })
+    const st = byStudent.get(sid)
+    const score = toNumber(s.score_total)
+    if (score !== null) { st.scored++; if (score < 60) st.fail++ }
+  })
+  let achieved = 0
+  byStudent.forEach(st => { if (st.scored > 0 && st.fail === 0) achieved++ })
+  const creditRate = byStudent.size > 0 ? (achieved / byStudent.size) * 100 : 0
   scoreStats.value = {
     average: Math.round(avg * 10) / 10,
     passRate: Math.round(passRate),

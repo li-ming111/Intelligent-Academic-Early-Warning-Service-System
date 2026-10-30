@@ -52,7 +52,9 @@
             <el-table-column prop="score" label="分数" width="65" align="center" sortable>
               <template #default="{ row }"><span :style="{ color: row.score >= 60 ? '#16a34a' : '#ef4444', fontWeight: 600 }">{{ row.score }}</span></template>
             </el-table-column>
-            <el-table-column prop="semester" label="学期" min-width="100" />
+            <el-table-column label="学期" min-width="100">
+              <template #default="{ row }">{{ row.semester != null ? `第${row.semester}学期` : '--' }}</template>
+            </el-table-column>
           </el-table>
         </div>
       </div>

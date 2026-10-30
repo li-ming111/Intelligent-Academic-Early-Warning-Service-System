@@ -132,10 +132,6 @@
               <el-switch v-model="preferencesForm.notifications"></el-switch>
             </el-form-item>
 
-            <el-form-item label="邮件通知">
-              <el-switch v-model="preferencesForm.emailNotifications"></el-switch>
-            </el-form-item>
-
             <el-form-item label="操作确认">
               <el-switch v-model="preferencesForm.confirmDelete"></el-switch>
               <span style="color: #666; margin-left: 10px;">删除操作时显示确认弹窗</span>
@@ -184,7 +180,9 @@
 
           <h4>登录历史（最近15天）</h4>
           <el-table :data="securityLogs" stripe size="small" v-loading="logsLoading">
-            <el-table-column prop="loginTime" label="登录时间" width="180"></el-table-column>
+            <el-table-column label="登录时间" width="180">
+              <template #default="{ row }">{{ formatDateTime(row.loginTime) }}</template>
+            </el-table-column>
             <el-table-column prop="device" label="设备" width="120"></el-table-column>
             <el-table-column prop="ipAddress" label="IP地址" width="140"></el-table-column>
             <el-table-column prop="location" label="位置"></el-table-column>
@@ -338,7 +336,6 @@ const preferencesForm = ref({
   language: 'zh',
   pageSize: '20',
   notifications: true,
-  emailNotifications: true,
   confirmDelete: true
 })
 
@@ -531,7 +528,6 @@ const resetPreferencesForm = () => {
     language: 'zh',
     pageSize: '20',
     notifications: true,
-    emailNotifications: true,
     confirmDelete: true
   }
 }

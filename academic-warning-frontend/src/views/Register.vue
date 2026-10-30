@@ -158,6 +158,9 @@ const onStudentIdChange = async () => {
 const handleRegister = async () => {
   errorMessage.value = ''; successMessage.value = ''
   if (!form.value.studentId || form.value.studentId.length !== 10) { errorMessage.value = '请输入有效的10位学号'; return }
+  // 学院与专业由学号第 5-6 位专业代码带出 —— 带不出（代码不匹配任何专业）就停在这里，
+  // 不能让"没有归属"的档案落库（注册接口已同步改为必填，这里先给出能看懂的原因）。
+  if (!form.value.collegeId || !form.value.majorId) { errorMessage.value = '学号未能带出学院与专业，请核对学号（第5-6位需是有效的专业代码）'; return }
   if (!form.value.name) { errorMessage.value = '请输入姓名'; return }
   if (!form.value.password || form.value.password.length < 6) { errorMessage.value = '密码至少需要6位'; return }
   if (!isValidPhone.value) { errorMessage.value = '请输入有效的11位手机号'; return }

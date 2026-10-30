@@ -64,9 +64,6 @@
             <el-form-item label="接收学生反馈提醒">
               <el-switch v-model="notifyForm.studentFeedback" />
             </el-form-item>
-            <el-form-item label="邮件提醒">
-              <el-switch v-model="notifyForm.emailReminder" />
-            </el-form-item>
             <el-form-item>
               <el-button type="primary" @click="handleSaveNotify">保存设置</el-button>
             </el-form-item>
@@ -101,7 +98,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, inject, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { teacherAPI } from '@/api/index'
 import { getUserId } from '@/utils/userUtils'
@@ -116,9 +113,14 @@ const pwdForm = ref({ oldPassword: '', newPassword: '', confirmPassword: '' })
 const profileForm = ref({ name: '', email: '', phone: '' })
 const notifyForm = ref({
   warningNotification: true, systemMessage: true,
-  classNotification: true, studentFeedback: true, emailReminder: false
+  classNotification: true, studentFeedback: true
 })
 const workForm = ref({ college: '', office: '', officePhone: '', officeHours: '' })
+// 工作台数据由 TeacherLayout 统一拉取并 provide；这里只消费，避免同一页请求两次 dashboard。
+const teacherDashboard = inject('teacherDashboard', null)
+watch(teacherDashboard, (dash) => {
+  if (dash && dash.college) workForm.value.college = dash.college
+}, { immediate: true })
 // 账户信息是否真的加载成功。没加载成功时表单是全空的，此时点"保存信息"
 // 会把 users 里真实的姓名/邮箱/电话**覆盖成空串**（空串不是 null，
 // MyBatis-Plus 的 NOT_NULL 策略不跳过），所以宁可不给保存。
@@ -146,8 +148,7 @@ onMounted(async () => {
         warningNotification: s.warningNotification ?? true,
         systemMessage: s.systemMessage ?? true,
         classNotification: s.classNotification ?? true,
-        studentFeedback: s.studentFeedback ?? true,
-        emailReminder: s.emailReminder ?? false
+        studentFeedback: s.studentFeedback ?? true
       }
       workForm.value.office = s.officeLocation || ''
       workForm.value.officePhone = s.officePhone || ''
@@ -155,13 +156,6 @@ onMounted(async () => {
     }
   } catch (e) { console.error('加载偏好设置失败', e) }
 
-  // 学院：上面两个接口都给不了 —— `users` 表压根没有学院列，学院在
-  // `teacher_profile.college_id`（活库有值，指向 colleges）。所以另取 dashboard 的
-  // `college` 字段（2026-10-03 W8.2 新增；此前这格是 disabled 恒空、且没有任何数据来源）。
-  try {
-    const dash = await teacherAPI.getDashboard(teacherId)
-    if (dash && dash.college) workForm.value.college = dash.college
-  } catch (e) { console.error('加载学院信息失败', e) }
 })
 
 const handleChangePwd = async () => {

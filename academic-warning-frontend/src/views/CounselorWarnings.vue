@@ -117,7 +117,7 @@
         <el-descriptions-item label="处理意见" :span="2">{{ detailRow.handleResult || '未填写' }}</el-descriptions-item>
       </el-descriptions>
       <!-- AI 预警分析（W26）：`aiAPI.analyzeWarning` 此前全仓零调用。
-           ⚠️ 该端点在没配 DASHSCOPE_KEY 时会用占位串冒充成功，
+           ⚠️ 该端点在没配 AI_API_KEY 时会用占位串冒充成功，
            闸在 utils/ai.js 里把那种"结果"换成一句实话，页面不把它当分析。 -->
       <div v-if="detailRow" class="detail-ai">
         <AiInsight title="AI 预警分析" :load="aiAnalyzeWarning" hint="分析这条预警的严重性与原因" />
@@ -268,7 +268,7 @@ const generateOpinion = async () => {
     }
   } catch (error) {
     console.error('生成处理意见失败:', error)
-    // ⚠️ 别抹平成"请稍后重试"：后端现在会明说「没配 DASHSCOPE_KEY」。
+    // ⚠️ 别抹平成"请稍后重试"：后端现在会明说「没配 AI_API_KEY」。
     // 抹平之后，答辩现场点一次只会看到"稍后重试"，而重试一辈子也没用。
     ElMessage.error('生成处理意见失败：' + (error?.message || '网络错误'))
   } finally {

@@ -2,8 +2,8 @@
  * AI 结果的「诚实性闸」（W26，2026-10-05；W28 更新说明）。
  *
  * <h3>为什么需要它</h3>
- * `ai-service/application.yml` 里 `tongyi.api-key` 的**默认值就是占位串**
- * `your-api-key-here`（`${DASHSCOPE_KEY:your-api-key-here}`），而
+ * `ai-service/application.yml` 里 `ai.api-key` 的默认值若被改回占位串
+ * `your-api-key-here`（`${AI_API_KEY:...}`），而
  * `TongYiService.isConfigured()` 会把它判为"没配"。**没人设环境变量时**，
  * 三个纯 AI 端点的 `generalChat()` 一律返回 `null`，而后端当时**用一句占位串
  * 冒充分析结果、还包成 `success:true`**：
@@ -53,12 +53,12 @@ const AI_PLACEHOLDERS = Object.freeze([
   '预警分析中，请稍后重试',
   '班级分析中，请稍后重试',
   // 逐字取自 AIController 的 AI_UNAVAILABLE（`/ai/chat`、`/ai/qa` 走这条 —— 它们是**如实报错**的）
-  '没有可用的 AI 回答：通义千问未配置有效的 API Key（环境变量 DASHSCOPE_KEY），或本次调用失败。请配置后再使用该功能。'
+  '没有可用的 AI 回答：DeepSeek 未配置有效的 API Key（环境变量 AI_API_KEY），或本次调用失败。请配置后再使用该功能。'
 ])
 
 /** 给用户看的那句话（页面 catch 里直接用 `error.message`）。 */
 export const AI_UNCONFIGURED_MESSAGE =
-  'AI 服务当前不可用：后端没有配置通义千问 API Key（环境变量 DASHSCOPE_KEY），这次拿不到真实的分析结果。'
+  'AI 服务当前不可用：后端没有配置 DeepSeek API Key（环境变量 AI_API_KEY），这次拿不到真实的分析结果。'
 
 /**
  * 这段文本是不是后端用来冒充结果的占位串？

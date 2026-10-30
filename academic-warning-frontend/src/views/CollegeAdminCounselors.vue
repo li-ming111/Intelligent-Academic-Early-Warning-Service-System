@@ -60,7 +60,7 @@ function exportCounselors() {
 onMounted(async () => {
   const uid = localStorage.getItem('userId'); if (!uid) return
   try { const p = await collegeAdminAPI.getProfile(uid); if (p) collegeName.value = p.college_name || '本院' } catch(e){ console.error('getProfile err:', e) }
-  try { const data = await collegeAdminAPI.getCounselors(uid); counselors.value = data || []; console.log('Counselors loaded:', counselors.value) } catch(e){ console.error('getCounselors err:', e) }
+  try { const data = await collegeAdminAPI.getCounselors(uid); counselors.value = data || [] } catch(e){ console.error('getCounselors err:', e) }
 })
 </script>
 

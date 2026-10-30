@@ -63,38 +63,30 @@
       </el-tab-pane>
     </el-tabs>
 
-    <!-- 添加课程弹窗（搜索/输入课程+班级选择） -->
-    <el-dialog v-model="addVisible" title="添加课程" width="480px" destroy-on-close>
+    <!-- 新建课程弹窗。原先是"从全部课程里挑一门改归属"，活库所有课程都已有主讲，
+         后端按归属一律 403；且授课班级/描述根本没发给后端。现在走真实的建课接口。 -->
+    <el-dialog v-model="addVisible" title="新建课程" width="480px" destroy-on-close>
       <el-form :model="addForm" label-width="90px">
         <el-form-item label="课程名称" required>
-          <el-select
-            v-model="addForm.selectedCourseId"
-            filterable
-            placeholder="搜索课程名称..."
-            style="width:100%"
-            @change="onCourseSelect"
-          >
-            <el-option
-              v-for="c in courseSearchResults"
-              :key="c.id"
-              :label="c.name"
-              :value="c.id"
-            >
-              <span>{{ c.name }}</span>
-              <span style="float:right;color:#94a3b8;font-size:12px">{{ c.code }} · {{ c.credits }}学分</span>
-            </el-option>
+          <el-input v-model="addForm.name" placeholder="如：数据结构" />
+        </el-form-item>
+        <el-form-item label="课程代码" required>
+          <el-input v-model="addForm.code" placeholder="如：CS201" />
+        </el-form-item>
+        <el-form-item label="学分" required>
+          <el-input-number v-model="addForm.credits" :min="0.5" :max="20" :step="0.5" style="width:100%" />
+        </el-form-item>
+        <el-form-item label="课程类型">
+          <el-select v-model="addForm.type" style="width:100%">
+            <el-option label="必修课" value="必修课" />
+            <el-option label="选修课" value="选修课" />
           </el-select>
         </el-form-item>
-        <el-form-item label="授课班级" required>
-          <el-select v-model="addForm.classId" placeholder="选择授课班级" style="width:100%">
-            <el-option v-for="c in myClasses" :key="c.id" :label="c.name" :value="c.id" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="课程描述"><el-input v-model="addForm.description" type="textarea" rows="2" placeholder="课程简介（可选）" /></el-form-item>
+        <el-form-item label="课程描述"><el-input v-model="addForm.description" type="textarea" :rows="2" placeholder="课程简介（可选）" /></el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="addVisible = false">取消</el-button>
-        <el-button type="primary" @click="submitAddCourse" :loading="adding">确认添加</el-button>
+        <el-button type="primary" @click="submitAddCourse" :loading="adding">确认创建</el-button>
       </template>
     </el-dialog>
 
@@ -105,10 +97,12 @@
           <el-tab-pane v-for="rc in rosterClasses" :key="rc.name" :label="rc.name + '(' + rc.students.length + '人)'" :name="rc.name">
             <el-table :data="rc.students" stripe max-height="360">
               <el-table-column type="index" label="#" width="45" />
-              <el-table-column prop="studentId" label="学号" width="140" />
+              <el-table-column prop="studentNo" label="学号" width="140" />
               <el-table-column prop="studentName" label="姓名" width="90" />
               <el-table-column label="成绩" width="80" align="center">
-                <template #default="{ row }"><span :class="row.score >= 60 ? 'cr-ok' : 'cr-low'">{{ row.score || '--' }}</span></template>
+                <!-- score 可能是 '待录入' 字符串，不能用 `row.score >= 60` 字符串比较
+                     （'待录入' >= 60 为 false，会把未录入门徒标红"不及格"）。 -->
+                <template #default="{ row }"><span :class="row.scoreNum !== null && row.scoreNum >= 60 ? 'cr-ok' : 'cr-low'">{{ row.score || '--' }}</span></template>
               </el-table-column>
               <el-table-column label="等级" width="80" align="center">
                 <template #default="{ row }">
@@ -162,12 +156,9 @@ import { toNumber, PASS_LINE } from '@/utils/score'
 
 const activeTab = ref('courses')
 const courseList = ref([])
-const myClasses = ref([])
 const recVisible = ref(false)
 const addVisible = ref(false)
 const adding = ref(false)
-const allCourses = ref([])
-const courseSearchResults = ref([])
 const rosterVisible = ref(false)
 const rosterCourse = ref({})
 const rosterClasses = ref([])
@@ -175,71 +166,13 @@ const rosterActiveClass = ref('')
 const rosterAllStudents = ref([])
 const recForm = reactive({ courseId: null, courseName: '', reason: '' })
 const myRecs = ref([])
-const addForm = reactive({ selectedCourseId: null, name: '', code: '', credits: 2, type: '选修课', description: '', classId: '' })
+const addForm = reactive({ name: '', code: '', credits: 2, type: '选修课', description: '' })
 const stats = reactive({ total: 0, students: 0, pass: 0, avgRating: '--' })
 
 const colors = ['#7c3aed', '#2563eb', '#16a34a', '#f59e0b', '#ef4444', '#8b5cf6', '#db2777', '#ea580c', '#0891b2']
 function grad(id) { return `linear-gradient(135deg, ${colors[(id || 1) % colors.length]}, ${colors[(id || 1) % colors.length]}cc)` }
 
-onMounted(async () => { await Promise.all([loadAllCourses(), loadMyClasses(), loadData()]) })
-
-async function loadAllCourses() {
-  try {
-    // 使用教师端 GET /courses（不传 teacher_id 参数获取全部课程）
-    const res = await teacherAPI.getAllCourses()
-    // 2026-10-02（W4.15）：删掉恒假的 `res?.code === 200` 支（拦截器已解包）。
-    const raw = Array.isArray(res) ? res : []
-    allCourses.value = raw
-    courseSearchResults.value = raw
-  } catch (e) { /* 降级 */ }
-}
-
-function onCourseSelect(val) {
-  if (!val) {
-    addForm.name = ''; addForm.code = ''; addForm.credits = 2; addForm.type = '选修课'; addForm.description = ''
-    addForm.selectedCourseId = null
-    return
-  }
-  const c = allCourses.value.find(c => c.id === val)
-  if (c) {
-    addForm.name = c.name || ''
-    addForm.code = c.code || ''
-    addForm.credits = c.credits || 2
-    addForm.type = c.type || '选修课'
-    addForm.description = c.description || ''
-    addForm.selectedCourseId = val
-  }
-}
-
-async function loadMyClasses() {
-  try {
-    const tid = getTeacherId()
-    console.log('[TeacherCourses] loading classes for teacherId:', tid)
-    const res = await teacherAPI.getMyClasses(tid)
-    if (Array.isArray(res)) {
-      myClasses.value = res
-      console.log('[TeacherCourses] classes loaded:', res.length)
-    } else {
-      // 2026-10-02（W4.15）：删掉中间的 `res?.code === 200` 支（拦截器已解包，恒假）。
-      console.warn('[TeacherCourses] unexpected response:', res)
-    }
-  } catch (e) {
-    console.error('[TeacherCourses] loadMyClasses failed:', e)
-    // 降级：加载该教师关联的所有课程信息
-    try {
-      const tid = getTeacherId()
-      const courseRes = await teacherAPI.getCourses(tid)
-      if (Array.isArray(courseRes) && courseRes.length) {
-        // 从课程记录中提取班级名
-        const classNames = [...new Set(courseRes.map(c => c.className).filter(Boolean))]
-        if (classNames.length) {
-          myClasses.value = classNames.map((name, i) => ({ id: i + 1, name }))
-          console.log('[TeacherCourses] fallback classes from courses:', myClasses.value.length)
-        }
-      }
-    } catch (e2) { console.error('[TeacherCourses] fallback also failed:', e2) }
-  }
-}
+onMounted(async () => { await loadData() })
 
 async function loadData() {
   try {
@@ -255,9 +188,14 @@ async function loadData() {
     const courseMap = new Map()
     // `rating` 这个 key 从头到尾没有任何一列、也没有任何模板读它，2026-10-01 第二十一轮删。
     assignedCourses.forEach(c => { courseMap.set(c.id, { courseId: c.id, courseName: c.name || '课程' + c.id, credits: c.credits || 2, type: c.type || '必修', className: '--', enrollmentCount: 0, passRate: '--', students: [] }) })
+    // ⚠️ `getEnrollments(tid)` 回的是**所管班级学生的全部成绩记录**（跨课程），
+    // 不是"本人课程的选课名单"。原先这里对没见过的 courseId 也 `set` 进 courseMap，
+    // 于是班主任能看到全班学生修的所有课 —— 于凤海（带计科2306班）的「我的课程」
+    // 从 3 门涨成 10 门，与管理员「排课管理」里的归属（他只教 1/4/10）对不上。
+    // 正确口径：课程表以 getCourses(tid) 为准，选课记录只用来补人数/成绩。
     allEnrollments.forEach(e => {
       const cid = e.courseId; if (!cid) return
-      if (!courseMap.has(cid)) courseMap.set(cid, { courseId: cid, courseName: e.courseName || '课程' + cid, credits: e.credits || 2, type: e.type || '选修', className: e.className || '--', enrollmentCount: 0, passRate: '--', students: [] })
+      if (!courseMap.has(cid)) return
       const c = courseMap.get(cid); c.enrollmentCount++; c.students.push(e)
     })
 
@@ -280,7 +218,10 @@ async function loadData() {
     stats.total = courseList.value.length
     stats.students = courseList.value.reduce((s, c) => s + c.enrollmentCount, 0)
     // 同上一处：只统计**真的录了分**的选课记录，'待录入' 不算及格也不算不及格。
-    const gradedAll = allEnrollments.map(e => toNumber(e.score)).filter(v => v !== null)
+    // 2026-10-19：及格率/平均分也要限定在本人课程内 —— allEnrollments 是全班学生
+    // 所有课的成绩，不过滤的话统计条会把别人教的课也算进来。
+    const ownIds = new Set(courseMap.keys())
+    const gradedAll = allEnrollments.filter(e => ownIds.has(e.courseId)).map(e => toNumber(e.score)).filter(v => v !== null)
     if (gradedAll.length) {
       stats.pass = Math.round(gradedAll.filter(v => v >= PASS_LINE).length / gradedAll.length * 100)
       stats.avgRating = (gradedAll.reduce((s, v) => s + v, 0) / gradedAll.length).toFixed(1)
@@ -290,30 +231,42 @@ async function loadData() {
 }
 
 function openAddCourse() {
-  addForm.selectedCourseId = null
-  addForm.name = ''; addForm.code = ''; addForm.credits = 2; addForm.type = '选修课'; addForm.description = ''; addForm.classId = ''
+  addForm.name = ''; addForm.code = ''; addForm.credits = 2; addForm.type = '选修课'; addForm.description = ''
   addVisible.value = true
 }
 async function submitAddCourse() {
-  if (!addForm.selectedCourseId) { ElMessage.error('请选择课程'); return }
-  if (!addForm.classId) { ElMessage.error('请选择授课班级'); return }
+  const name = addForm.name.trim()
+  const code = addForm.code.trim()
+  if (!name) { ElMessage.error('请填写课程名称'); return }
+  if (!code) { ElMessage.error('请填写课程代码'); return }
+  if (!addForm.credits || addForm.credits <= 0) { ElMessage.error('请填写正确的学分'); return }
   adding.value = true
   try {
     const tid = getTeacherId()
-    await teacherAPI.updateCourse(addForm.selectedCourseId, { teacherId: Number(tid) })
-    ElMessage.success('课程关联成功')
+    if (!tid) { ElMessage.error('未获取到登录身份，请重新登录'); return }
+    // 归属由后端按网关注入的身份强制覆盖（请求体里的 teacherId 只能是自己）。
+    await teacherAPI.createCourse({
+      name,
+      code,
+      credits: addForm.credits,
+      type: addForm.type,
+      description: addForm.description.trim(),
+      teacherId: Number(tid)
+    })
+    ElMessage.success('课程创建成功')
     addVisible.value = false
     await loadData()
-  } catch (e) { ElMessage.error('关联失败: ' + (e?.message || '未知错误')) }
+  } catch (e) { ElMessage.error('创建失败: ' + (e?.message || '未知错误')) }
   finally { adding.value = false }
 }
 function openRoster(c) {
   rosterCourse.value = c
   const all = (c.students || []).map(s => ({
-    studentId: s.studentId || s.studentNo,
+    studentNo: s.studentNo || s.studentId,
     studentName: s.studentName,
     className: s.className || '未知班级',
     score: s.score || s.scoreTotal || '--',
+    scoreNum: toNumber(s.score || s.scoreTotal),
     scoreLevel: s.scoreLevel,
     remark: s.remark || ''
   }))

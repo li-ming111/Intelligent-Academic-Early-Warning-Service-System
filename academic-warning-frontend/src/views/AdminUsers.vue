@@ -5,99 +5,119 @@
       <p>用户信息、角色和权限</p>
     </div>
 
-    <div class="action-bar">
-      <el-button type="primary" @click="addUserDialogVisible = true">
-        <el-icon><Plus /></el-icon> 添加用户
-      </el-button>
-      <el-select v-model="filterCollege" placeholder="学院筛选" style="width: 200px;" @change="searchUsers">
-        <el-option label="全部" value=""></el-option>
-        <el-option v-for="college in colleges" :key="college.id" :label="college.name" :value="college.id">
-          {{ college.name }}
-        </el-option>
-      </el-select>
-      <el-select v-model="filterRole" placeholder="角色筛选" style="width: 150px;" @change="searchUsers">
-        <el-option label="全部" value=""></el-option>
-        <el-option label="学生" value="1"></el-option>
-        <el-option label="教师" value="2"></el-option>
-        <el-option label="辅导员" value="3"></el-option>
-        <el-option label="管理员" value="4"></el-option>
-        <!-- 2026-10-09（W32）：补「学院管理员」(role 5)。此前这里只有 1-4，
-             活库里 collegeadmin1 是 role 5 ⇒ 按该角色筛不出人、列表里角色列显示「未知」。 -->
-        <el-option label="学院管理员" value="5"></el-option>
-      </el-select>
-      <el-input v-model="searchText" placeholder="搜索用户名或姓名" style="width: 250px;" @input="searchUsers" clearable />
-      <el-button @click="loadUsers" :loading="loading">
-        <el-icon><Refresh /></el-icon> 刷新
-      </el-button>
-    </div>
-
-    <el-card>
-      <template #header>
-        <div class="card-header">
-          <span>用户列表</span>
-          <span class="user-count">共 {{ total }} 个用户</span>
+    <el-tabs v-model="activeTab" class="user-tabs" @tab-change="handleTabChange">
+      <el-tab-pane label="用户列表" name="users">
+        <div class="action-bar">
+          <el-button type="primary" @click="addUserDialogVisible = true">
+            <el-icon><Plus /></el-icon> 添加用户
+          </el-button>
+          <el-select v-model="filterCollege" placeholder="学院筛选" style="width: 200px;" @change="searchUsers">
+            <el-option label="全部" value=""></el-option>
+            <el-option v-for="college in colleges" :key="college.id" :label="college.name" :value="college.id">
+              {{ college.name }}
+            </el-option>
+          </el-select>
+          <el-select v-model="filterRole" placeholder="角色筛选" style="width: 150px;" @change="searchUsers">
+            <el-option label="全部" value=""></el-option>
+            <el-option label="学生" value="1"></el-option>
+            <el-option label="教师" value="2"></el-option>
+            <el-option label="辅导员" value="3"></el-option>
+            <el-option label="管理员" value="4"></el-option>
+            <!-- 2026-10-09（W32）：补「学院管理员」(role 5)。此前这里只有 1-4，
+                 活库里 collegeadmin1 是 role 5 ⇒ 按该角色筛不出人、列表里角色列显示「未知」。 -->
+            <el-option label="学院管理员" value="5"></el-option>
+            <!-- 自定义角色（roles.id>=6）也要能筛选，否则新建的角色在列表里能分配、却筛不出来 -->
+            <el-option v-for="r in customRoles" :key="r.id" :label="r.name" :value="String(r.id)"></el-option>
+          </el-select>
+          <el-input v-model="searchText" placeholder="搜索用户名或姓名" style="width: 250px;" @input="searchUsers" clearable />
+          <el-button @click="loadUsers" :loading="loading">
+            <el-icon><Refresh /></el-icon> 刷新
+          </el-button>
         </div>
-      </template>
 
-      <div v-if="userList.length === 0" style="padding: 20px; text-align: center; color: #999;">
-        暂无数据
-      </div>
-      <el-table v-else :data="userList" stripe v-loading="loading" @selection-change="handleSelectionChange">
-        <el-table-column type="selection" width="55"></el-table-column>
-        <el-table-column prop="id" label="ID" width="100" sortable />
-        <!-- 根据角色显示学号或工号 -->
-        <el-table-column label="学号/工号" width="120">
-          <template #default="{ row }">
-            {{ row.role === '1' || row.role === 1 ? (row.studentId || row.username) : (row.jobNumber || row.username) }}
-          </template>
-        </el-table-column>
-        <el-table-column prop="username" label="用户名" width="150" />
-        <el-table-column prop="name" label="姓名" width="120" />
-        <el-table-column prop="role" label="角色" width="100">
-          <template #default="{ row }">
-            <el-tag :type="getRoleTagType(row.role)">
-              {{ getRoleText(row.role) }}
-            </el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column prop="collegeName" label="学院" width="200" show-overflow-tooltip />
-        <el-table-column prop="majorName" label="专业" width="200" show-overflow-tooltip />
-        <el-table-column prop="status" label="状态" width="120">
-          <template #default="{ row }">
-            <el-tag v-if="row.status === 0" type="warning">待审批</el-tag>
-            <el-tag v-else-if="row.status === 1" type="success">正常</el-tag>
-            <el-tag v-else-if="row.status === 2" type="danger">已锁定</el-tag>
-            <el-tag v-else type="info">已禁用</el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column label="操作" width="340" fixed="right">
-          <template #default="{ row }">
-            <div class="action-buttons">
-              <el-button v-if="row.status === 0" type="success" size="small" @click="approveUser(row)">审批通过</el-button>
-              <el-button type="primary" size="small" @click="editUser(row)">编辑</el-button>
-              <el-button :type="row.status === 1 ? 'danger' : 'success'" size="small" @click="toggleStatus(row)">{{ row.status === 1 ? '禁用' : row.status === 0 ? '启用' : '解锁' }}</el-button>
-              <el-button type="danger" size="small" @click="deleteUser(row)">删除</el-button>
+        <el-card>
+          <template #header>
+            <div class="card-header">
+              <span>用户列表</span>
+              <span class="user-count">共 {{ total }} 个用户</span>
             </div>
           </template>
-        </el-table-column>
-      </el-table>
 
-      <div class="table-footer">
-        <div class="selection-info" v-if="selectedUsers.length > 0">
-          已选择 {{ selectedUsers.length }} 项
-          <el-button type="danger" size="small" @click="batchDeleteUsers">批量删除</el-button>
-        </div>
-        <el-pagination
-          v-model:current-page="currentPage"
-          v-model:page-size="pageSize"
-          :page-sizes="[10, 20, 50, 100]"
-          :total="total"
-          layout="total, sizes, prev, pager, next, jumper"
-          @size-change="handleSizeChange"
-          @current-change="handleCurrentChange"
-        />
-      </div>
-    </el-card>
+          <div v-if="userList.length === 0" style="padding: 20px; text-align: center; color: #999;">
+            暂无数据
+          </div>
+          <el-table v-else :data="userList" stripe v-loading="loading" @selection-change="handleSelectionChange">
+            <el-table-column type="selection" width="55"></el-table-column>
+            <el-table-column prop="id" label="ID" width="100" sortable />
+            <!-- 根据角色显示学号或工号 -->
+            <el-table-column label="学号/工号" width="120">
+              <template #default="{ row }">
+                {{ row.role === '1' || row.role === 1 ? (row.studentId || row.username) : (row.jobNumber || row.username) }}
+              </template>
+            </el-table-column>
+            <el-table-column prop="username" label="用户名" width="150" />
+            <el-table-column prop="name" label="姓名" width="120" />
+            <el-table-column prop="role" label="角色" width="150">
+              <template #default="{ row }">
+                <!-- 单向绑定：提交成功后才由 loadUsers() 从库里回读，取消/失败时界面不变 -->
+                <el-select :model-value="row.role" size="small" @change="(val) => onRoleChange(row, val)">
+                  <el-option :value="1" label="学生"></el-option>
+                  <el-option :value="2" label="教师"></el-option>
+                  <el-option :value="3" label="辅导员"></el-option>
+                  <el-option :value="4" label="管理员"></el-option>
+                  <el-option :value="5" label="学院管理员"></el-option>
+                  <el-option v-for="r in customRoles" :key="r.id" :value="r.id" :label="r.name"></el-option>
+                </el-select>
+              </template>
+            </el-table-column>
+            <el-table-column prop="collegeName" label="学院" width="200" show-overflow-tooltip />
+            <el-table-column prop="majorName" label="专业" width="200" show-overflow-tooltip />
+            <el-table-column prop="status" label="状态" width="120">
+              <template #default="{ row }">
+                <el-tag v-if="row.status === 0" type="warning">待审批</el-tag>
+                <el-tag v-else-if="row.status === 1" type="success">正常</el-tag>
+                <el-tag v-else-if="row.status === 2" type="danger">已锁定</el-tag>
+                <el-tag v-else type="info">已禁用</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="操作" width="340" fixed="right">
+              <template #default="{ row }">
+                <div class="action-buttons">
+                  <el-button v-if="row.status === 0" type="success" size="small" @click="approveUser(row)">审批通过</el-button>
+                  <el-button type="primary" size="small" @click="editUser(row)">编辑</el-button>
+                  <el-button :type="row.status === 1 ? 'danger' : 'success'" size="small" @click="toggleStatus(row)">{{ row.status === 1 ? '禁用' : row.status === 0 ? '启用' : '解锁' }}</el-button>
+                  <el-button type="danger" size="small" @click="deleteUser(row)">删除</el-button>
+                </div>
+              </template>
+            </el-table-column>
+          </el-table>
+
+          <div class="table-footer">
+            <div class="selection-info" v-if="selectedUsers.length > 0">
+              已选择 {{ selectedUsers.length }} 项
+              <el-button type="danger" size="small" @click="batchDeleteUsers">批量删除</el-button>
+            </div>
+            <el-pagination
+              v-model:current-page="currentPage"
+              v-model:page-size="pageSize"
+              :page-sizes="[10, 20, 50, 100]"
+              :total="total"
+              layout="total, sizes, prev, pager, next, jumper"
+              @size-change="handleSizeChange"
+              @current-change="handleCurrentChange"
+            />
+          </div>
+        </el-card>
+      </el-tab-pane>
+
+      <el-tab-pane label="角色管理" name="roles" lazy>
+        <role-management-panel ref="rolesPanelRef" section="roles" @changed="loadRoles" />
+      </el-tab-pane>
+
+      <el-tab-pane label="权限配置" name="permissions" lazy>
+        <role-management-panel ref="permissionsPanelRef" section="permissions" />
+      </el-tab-pane>
+    </el-tabs>
 
     <!-- 添加用户弹窗 -->
     <el-dialog v-model="addUserDialogVisible" title="添加用户" width="500px" :close-on-click-modal="false">
@@ -200,6 +220,38 @@
       </template>
     </el-dialog>
 
+    <!-- 把账号改成「学院管理员」时必须先选学院：后端据此写 college_admin_profile，
+         没有档案行，学院管理端所有接口都会 403（能登录、每页没数据）。 -->
+    <el-dialog
+      v-model="showCollegeRoleDialog"
+      title="设置所属学院"
+      width="440px"
+      :close-on-click-modal="false"
+    >
+      <el-form label-width="90px">
+        <el-form-item label="账号">
+          <span>{{ pendingRoleUser ? (pendingRoleUser.name || pendingRoleUser.username) : '' }}</span>
+        </el-form-item>
+        <el-form-item label="所属学院" required>
+          <el-select v-model="pendingCollegeId" placeholder="请选择学院" style="width: 100%;">
+            <el-option v-for="c in colleges" :key="c.id" :value="c.id" :label="c.name"></el-option>
+          </el-select>
+          <div v-if="colleges.length === 0" class="form-tip" style="color: #E6A23C;">
+            学院列表没能加载出来，无法绑定学院。
+          </div>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="closeCollegeRoleDialog">取消</el-button>
+        <el-button
+          type="primary"
+          :loading="roleSaving"
+          :disabled="!pendingCollegeId"
+          @click="confirmCollegeRole"
+        >确定</el-button>
+      </template>
+    </el-dialog>
+
     <!-- 删除确认弹窗 -->
     <el-dialog v-model="deleteDialogVisible" title="确认删除" width="400px">
       <div class="delete-warning">
@@ -229,10 +281,31 @@
 </template>
 
 <script setup>
-import { ref, onMounted, watch } from 'vue'
+import { ref, onMounted, watch, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { useRoute, useRouter } from 'vue-router'
 import { adminAPI } from '@/api/index'
-import { Plus, Refresh, Edit, Delete, WarningFilled } from '@element-plus/icons-vue'
+import { Plus, Refresh, WarningFilled } from '@element-plus/icons-vue'
+import RoleManagementPanel from '@/components/RoleManagementPanel.vue'
+
+const route = useRoute()
+const router = useRouter()
+
+const USER_TABS = ['users', 'roles', 'permissions']
+const activeTab = ref(USER_TABS.includes(route.query.tab) ? route.query.tab : 'users')
+const rolesPanelRef = ref(null)
+const permissionsPanelRef = ref(null)
+watch(
+  () => route.query.tab,
+  (tab) => { activeTab.value = USER_TABS.includes(tab) ? tab : 'users' }
+)
+
+const handleTabChange = (name) => {
+  router.replace({ path: '/admin/users', query: name === 'users' ? {} : { tab: name } })
+  const panel = name === 'roles' ? rolesPanelRef.value
+    : name === 'permissions' ? permissionsPanelRef.value : null
+  panel?.reload()
+}
 
 const searchText = ref('')
 const filterCollege = ref('')
@@ -245,6 +318,14 @@ const batchDeleteDialogVisible = ref(false)
 const editingUser = ref({})
 const userToDelete = ref(null)
 const colleges = ref([])
+/** roles 表里的自定义角色（内置 1-5 用固定选项；id>=6 才是后台新建的）。 */
+const roles = ref([])
+const customRoles = computed(() => roles.value.filter(r => r && r.id > 5 && r.status !== 0))
+const showCollegeRoleDialog = ref(false)
+/** 正在改角色的那一行。单向绑定下取消无需回滚。 */
+const pendingRoleUser = ref(null)
+const pendingCollegeId = ref(null)
+const roleSaving = ref(false)
 const currentPage = ref(1)
 const pageSize = ref(20)
 const total = ref(0)
@@ -299,6 +380,7 @@ const formRules = {
 
 onMounted(async () => {
   await loadColleges()
+  await loadRoles()
   await loadUsers()
 })
 
@@ -312,6 +394,18 @@ const loadColleges = async () => {
     }
   } catch (error) {
     console.error('加载学院列表失败:', error)
+  }
+}
+
+const loadRoles = async () => {
+  try {
+    const response = await adminAPI.getRoles()
+    roles.value = Array.isArray(response)
+      ? response
+      : Array.isArray(response?.items) ? response.items : []
+  } catch (error) {
+    console.error('加载角色失败:', error)
+    roles.value = []
   }
 }
 
@@ -339,6 +433,8 @@ const loadUsers = async () => {
     
     users = users.map(user => ({
       ...user,
+      // 角色统一成数字：后端可能回字符串，下拉选项是数字，不归一会显示不出当前值
+      role: Number(user.role) || 1,
       status: user.status !== undefined ? user.status : 1
     }))
     // 待审批(status=0)置顶，其余按ID倒序
@@ -355,23 +451,77 @@ const loadUsers = async () => {
   }
 }
 
-const getRoleText = (role) => {
-  if (role === '1' || role === 1) return '学生'
-  if (role === '2' || role === 2) return '教师'
-  if (role === '3' || role === 3) return '辅导员'
-  if (role === '4' || role === 4) return '管理员'
-  // W32：缺这一支时活库里的 role 5 账号（collegeadmin1/2）在列表里显示「未知」。
-  if (role === '5' || role === 5) return '学院管理员'
-  return '未知'
+/**
+ * 角色下拉变化。两件事必须拦下：
+ * 1. 改成学院管理员(5) ⇒ 先选所属学院，否则账号登录后学院端全部 403；
+ * 2. 从学院管理员降级 ⇒ 提醒学院绑定会被清除。
+ * 下拉是 :model-value 单向绑定，此时 row.role 还是旧值，取消无需还原。
+ */
+const onRoleChange = async (row, val) => {
+  if (val === 5) {
+    pendingRoleUser.value = row
+    pendingCollegeId.value = row.collegeId ?? null
+    if (colleges.value.length === 0) await loadColleges()
+    showCollegeRoleDialog.value = true
+    return
+  }
+
+  if (row.role === 5) {
+    const label = row.name || row.username || row.id
+    try {
+      await ElMessageBox.confirm(
+        `「${label}」当前绑定学院「${row.collegeName || '未知'}」。改为其他角色将清除该学院绑定，`
+          + '该账号将不能再使用学院管理端。确认继续吗？',
+        '解除学院管理员',
+        { type: 'warning', confirmButtonText: '解除并改角色', cancelButtonText: '取消' }
+      )
+    } catch (e) {
+      return
+    }
+  }
+
+  await submitRoleChange(row, val)
 }
 
-const getRoleTagType = (role) => {
-  if (role === '1' || role === 1) return 'success'
-  if (role === '2' || role === 2) return 'info'
-  if (role === '3' || role === 3) return 'warning'
-  if (role === '4' || role === 4) return 'primary'
-  if (role === '5' || role === 5) return 'danger'
-  return 'info'
+const confirmCollegeRole = async () => {
+  const row = pendingRoleUser.value
+  const collegeId = pendingCollegeId.value
+  if (!row || !collegeId) {
+    ElMessage.warning('请先选择所属学院')
+    return
+  }
+  roleSaving.value = true
+  try {
+    const ok = await submitRoleChange(row, 5, collegeId)
+    if (ok) closeCollegeRoleDialog()
+  } finally {
+    roleSaving.value = false
+  }
+}
+
+const closeCollegeRoleDialog = () => {
+  showCollegeRoleDialog.value = false
+  pendingRoleUser.value = null
+  pendingCollegeId.value = null
+}
+
+/** 成功后重新拉列表：不猜结果，以库为准。 */
+const submitRoleChange = async (user, role, collegeId) => {
+  try {
+    const payload = { userId: user.id, role }
+    if (role === 5) payload.collegeId = collegeId
+    const message = await adminAPI.assignRole(payload)
+    await loadUsers()
+    ElMessage.success(message || '角色已更新')
+    return true
+  } catch (error) {
+    // HTTP 400 时真正的原因在 error.response.data.message，不在 error.message
+    ElMessage.error(
+      error?.response?.data?.message || error?.message || '更新角色失败'
+    )
+    await loadUsers()
+    return false
+  }
 }
 
 const editUser = (row) => {
@@ -680,6 +830,13 @@ const confirmBatchDelete = async () => {
 .delete-warning .warning-text {
   color: #F56C6C;
   font-size: 14px;
+}
+
+.form-tip {
+  margin-top: 4px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #909399;
 }
 
 .admin-users :deep(.el-card) {

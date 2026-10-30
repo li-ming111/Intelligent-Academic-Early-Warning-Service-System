@@ -77,7 +77,12 @@
             <span :class="scoreClass(row)">{{ scoreText(row) }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="gradePoint" label="绩点" width="65" align="center" />
+        <el-table-column prop="gradePoint" label="绩点" width="65" align="center">
+          <template #default="{ row }">
+            <span v-if="isPending(row)" class="pending-dot">{{ PENDING_TEXT }}</span>
+            <span v-else>{{ row.gradePoint ?? '--' }}</span>
+          </template>
+        </el-table-column>
         <el-table-column prop="grade" label="等级" width="65" align="center">
           <template #default="{ row }">
             <el-tag :type="gradeTagType(row.grade)" size="small" effect="dark">{{ row.grade }}</el-tag>
@@ -105,9 +110,9 @@
     </div>
 
     <!-- AI 成绩分析（W26）：这两个 aiAPI 端点此前全仓零调用。
-         ⚠️ `analyzeScores` 后端有个已知的解包 bug（AIController:221-223 没解 `ApiResponse`，
-         强转 List 抛 ClassCastException ⇒ 稳定回"分析失败…"）。**不假装它成功** ——
-         失败时 AiInsight 会如实把后端那句话显示出来，不编造分析结论。 -->
+         后端 `analyzeScores` 曾有一个不解包 `ApiResponse` 的 bug，已于 2026-10-05
+         在 `AIController.analyzeStudent` 里修掉（先 `resp.getData()` 再交给模型）。
+         失败时 AiInsight 仍会如实把后端那句话显示出来，不编造分析结论。 -->
     <div class="table-card" style="margin-top: 16px;">
       <div class="ai-row">
         <AiInsight title="AI 成绩分析" :load="aiAnalyzeScores" hint="按你的成绩做分析" />
@@ -129,7 +134,7 @@
           </div>
           <div class="detail-item">
             <span class="detail-label">绩点</span>
-            <span class="detail-val">{{ detailRow.gradePoint }}</span>
+            <span class="detail-val">{{ isPending(detailRow) ? PENDING_TEXT : (detailRow.gradePoint ?? '--') }}</span>
           </div>
           <div class="detail-item">
             <span class="detail-label">等级</span>
@@ -145,7 +150,7 @@
           </div>
           <div class="detail-item">
             <span class="detail-label">期末分</span>
-            <span class="detail-val">{{ detailRow.finalScore || '-' }}</span>
+            <span class="detail-val">{{ isPending(detailRow) ? PENDING_TEXT : (detailRow.finalScore ?? '-') }}</span>
           </div>
         </div>
       </div>
@@ -506,7 +511,7 @@ function scoreText(row) {
   return n === null ? PENDING_TEXT : String(n)
 }
 function gradeTagType(g) {
-  switch (g) { case 'A': case 'A-': return 'success'; case 'B': return ''; case 'C': return 'warning'; case 'D': return 'danger'; default: return 'info' }
+  switch (g) { case 'A': case 'A-': return 'success'; case 'B': return 'primary'; case 'C': return 'warning'; case 'D': return 'danger'; default: return 'info' }
 }
 
 // ---- 申诉 ----
@@ -586,27 +591,41 @@ async function aiAnalyzeBehavior() {
   // （见 AIServiceImpl.analyzeBehavior:232-239 —— 只读这四个 key，趋势比的是
   //   first 与 last 的 averageScore）。GPA 用与 calcStats() **同一个口径**
   // （学分加权、只算 gradePoint 非空的行），免得 AI 拿到一个跟页面上那个数对不上的 GPA。
-  const semesterScores = availableSemesters.value.slice().sort().map(sem => {
-    const rows = scoresList.value.filter(s => (s.semester || '') === sem)
-    const scored = rows
-      .map(s => toNumber(s.scoreTotal ?? s.totalScore ?? s.score))
-      .filter(v => v !== null)
-    const avg = scored.length ? scored.reduce((a, v) => a + v, 0) / scored.length : 0
-    let gpaSum = 0, creditSum = 0
-    rows.forEach(c => {
-      const gp = toNumber(c.gradePoint)
-      const cr = toNumber(c.credits)
-      if (gp === null || cr === null) return
-      gpaSum += gp * cr
-      creditSum += cr
-    })
-    return {
-      semester: sem,
-      averageScore: Number(avg.toFixed(2)),
-      gpa: Number((creditSum > 0 ? gpaSum / creditSum : 0).toFixed(2)),
-      courseCount: rows.length
-    }
+  // ⚠️ 按**原始学期序号**分组，不能拿下拉里的标签（"2023-2024-2"）去和 s.semester（数字）
+  // 比较 —— 那个比较恒为 false，每学期都是空数组，averageScore/gpa 全 0，
+  // 后端根据首末均值给出的结论就永远是「成绩保持稳定」。
+  const groups = new Map()
+  scoresList.value.forEach(s => {
+    if (s.semester === null || s.semester === undefined || s.semester === '') return
+    const key = String(s.semester)
+    if (!groups.has(key)) groups.set(key, [])
+    groups.get(key).push(s)
   })
+  const semesterScores = Array.from(groups.entries())
+    .sort((a, b) => {
+      const na = Number(a[0]), nb = Number(b[0])
+      return (Number.isFinite(na) && Number.isFinite(nb)) ? na - nb : a[0].localeCompare(b[0])
+    })
+    .map(([sem, rows]) => {
+      const scored = rows
+        .map(s => toNumber(s.scoreTotal ?? s.totalScore ?? s.score))
+        .filter(v => v !== null)
+      const avg = scored.length ? scored.reduce((a, v) => a + v, 0) / scored.length : 0
+      let gpaSum = 0, creditSum = 0
+      rows.forEach(c => {
+        const gp = toNumber(c.gradePoint)
+        const cr = toNumber(c.credits)
+        if (gp === null || cr === null) return
+        gpaSum += gp * cr
+        creditSum += cr
+      })
+      return {
+        semester: semesterLabel(sem),
+        averageScore: Number(avg.toFixed(2)),
+        gpa: Number((creditSum > 0 ? gpaSum / creditSum : 0).toFixed(2)),
+        courseCount: scored.length
+      }
+    })
   return aiAPI.analyzeBehavior({ studentId: currentUid(), semesterScores })
 }
 </script>

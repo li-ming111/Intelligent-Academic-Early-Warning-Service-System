@@ -66,7 +66,7 @@
             <img src="@/assets/logo.png" alt="校徽" class="ll-logo">
           </div>
         </div>
-        <h1 class="ll-title">智能学习预警服务系统</h1>
+        <h1 class="ll-title">智能学业预警服务系统</h1>
         <div class="ll-tags">
           <span>学业预警</span><span>成绩分析</span><span>帮扶计划</span><span>智能推荐</span>
         </div>
@@ -245,12 +245,14 @@ const handleLogin = async () => {
       if (rememberMe.value) {
         localStorage.setItem('rememberMe', 'true')
       }
-      const role = String(d.role)
+      const role = d.role == null || d.role === '' ? '1' : String(d.role)
       if (role === '4' || role === 'admin') router.push('/admin/dashboard')
       else if (role === '2' || role === 'teacher') router.push('/teacher/dashboard')
       else if (role === '3' || role === 'counselor') router.push('/counselor/dashboard')
       else if (role === '5' || role === 'college_admin') router.push('/college-admin/dashboard')
-      else router.push('/student/dashboard')
+      else if (role === '1' || role === 'student' || role === '0') router.push('/student/dashboard')
+      // 自定义角色（roles.id>=6）没有对应的 Web 端布局，统一进兜底页
+      else router.push('/no-access')
     } else {
       // 失败分支：此前缺失，导致密码错误时既不报错也不跳转，点了登录毫无反应。
       // data.message 是后端给出的原因（「密码错误」「用户不存在」「用户名和密码不能为空」）。

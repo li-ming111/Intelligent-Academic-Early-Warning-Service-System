@@ -25,7 +25,7 @@
       <span class="toolbar-title">预警列表</span>
       <el-select v-model="filterLevel" placeholder="全部等级" clearable style="width:140px" size="default">
         <el-option label="严重预警" value="red"><span style="color:#ef4444">●</span> 严重预警</el-option>
-        <el-option label="中度预警" value="yellow"><span style="color:#3b82f6">●</span> 中度预警</el-option>
+        <el-option label="中度预警" value="yellow"><span style="color:#e6a23c">●</span> 中度预警</el-option>
         <el-option label="轻度预警" value="blue"><span style="color:#3b82f6">●</span> 轻度预警</el-option>
       </el-select>
     </div>

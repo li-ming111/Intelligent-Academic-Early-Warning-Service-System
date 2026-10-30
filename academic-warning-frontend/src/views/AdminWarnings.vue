@@ -74,7 +74,7 @@
     <el-dialog v-model="dialogVisible" title="快速处理" width="380px" destroy-on-close>
       <div v-if="processTarget"><b>{{ processTarget.studentName }}</b> · {{ levelLabel(processTarget.warningLevel) }}预警 · {{ processTarget.title || processTarget.description }}</div>
       <el-input v-model="processNote" type="textarea" rows="2" placeholder="处理备注..." style="margin-top:12px" />
-      <!-- AI 预警分析（W26）。端点收预警行 id；无 DASHSCOPE_KEY 时后端回占位串，
+      <!-- AI 预警分析（W26）。端点收预警行 id；无 AI_API_KEY 时后端回占位串，
            闸在 utils/ai.js 把它换成一句实话，这里不把占位符当分析结果展示。 -->
       <div v-if="processTarget" class="aw-ai">
         <AiInsight title="AI 预警分析" :load="aiAnalyzeWarning" hint="分析这条预警的严重性与原因" />

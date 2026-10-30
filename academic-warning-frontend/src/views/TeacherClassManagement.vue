@@ -15,7 +15,6 @@
               </div>
               <div class="class-info">
                 <p><span class="label">学生数：</span> {{ clazz.studentCount }}</p>
-                <p><span class="label">班级ID：</span> {{ clazz.id }}</p>
               </div>
               <div class="class-actions">
                 <el-button type="primary" size="small" @click="goToScoreImport(clazz.id)">
@@ -352,9 +351,41 @@
         </el-descriptions>
         
         <div class="detail-actions">
-          <el-button type="default" size="small" icon="FileText">查看成绩</el-button>
-          <el-button type="default" size="small" icon="Message">发送消息</el-button>
+          <el-button
+            type="default"
+            size="small"
+            icon="FileText"
+            :loading="studentScoresLoading"
+            @click="viewStudentScores"
+          >
+            {{ studentScores.length ? '刷新成绩' : '查看成绩' }}
+          </el-button>
+          <!-- 原「发送消息」按钮已删（2026-10-19）：教师→学生没有可用的发送通道
+               （消息页数据只读自 feedback 表，saveCommunication 是教师↔辅导员口径），
+               与其留一个点了没反应的按钮，不如不展示这个能力。 -->
         </div>
+
+        <template v-if="studentScores.length">
+          <el-divider></el-divider>
+          <el-table :data="studentScores" size="small" max-height="260">
+            <el-table-column prop="courseName" label="课程" min-width="140" show-overflow-tooltip />
+            <el-table-column label="学期" width="100">
+              <template #default="{ row }">第{{ row.semester }}学期</template>
+            </el-table-column>
+            <el-table-column label="成绩" width="90">
+              <template #default="{ row }">
+                <span :class="{ 'score-fail': row.totalScore !== null && row.totalScore < 60 }">
+                  {{ row.totalScore ?? '待录入' }}
+                </span>
+              </template>
+            </el-table-column>
+          </el-table>
+        </template>
+        <el-empty
+          v-else-if="studentScoresLoaded"
+          description="该生暂无成绩记录"
+          :image-size="60"
+        />
       </div>
       <template #footer>
         <el-button @click="studentDetailDialogVisible = false" size="large">关闭</el-button>
@@ -365,6 +396,7 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 // User 是模板里 `:icon="User"`（学生详情的头像）用的：
 // 之前漏了这个 import，模板里的 User 编译成 _ctx.User = undefined，
@@ -372,6 +404,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search, Warning, User } from '@element-plus/icons-vue'
 import { teacherAPI } from '@/api/index'
 
+const router = useRouter()
 const activeTab = ref('my-classes')
 const myClasses = ref([])
 const searchKeyword = ref('')
@@ -416,6 +449,11 @@ const studentSearch = ref('')
 // 学生详情相关
 const studentDetailDialogVisible = ref(false)
 const currentStudent = ref(null)
+
+// 学生成绩（详情弹窗里的「查看成绩」）
+const studentScores = ref([])
+const studentScoresLoading = ref(false)
+const studentScoresLoaded = ref(false)
 
 const teacherId = ref(null)
 
@@ -667,10 +705,9 @@ const loadMyRequests = async () => {
   }
 }
 
-// 跳转到成绩导入页面
+// 跳转到成绩导入页面，并带上班级让成绩页预选（原先参数被丢掉，总是落在第一个班）
 const goToScoreImport = (classId) => {
-  // 跳转到成绩管理页面，使用已实现的成绩导入功能
-  window.location.href = '/teacher/scores'
+  router.push({ path: '/teacher/scores', query: classId ? { classId } : {} })
 }
 
 // 打开学生导入对话框
@@ -693,7 +730,6 @@ const viewStudents = async (clazz) => {
   loadingStudents.value = true
   try {
     const response = await teacherAPI.getClassStudents(clazz.id)
-    console.log('后端返回的学生数据:', response)
     if (response && response.data) {
       classStudents.value = response.data
     } else if (response && Array.isArray(response)) {
@@ -714,7 +750,37 @@ const viewStudents = async (clazz) => {
 // 查看学生详情
 const viewStudentDetail = (student) => {
   currentStudent.value = student
+  studentScores.value = []
+  studentScoresLoaded.value = false
   studentDetailDialogVisible.value = true
+}
+
+/**
+ * 详情弹窗里的「查看成绩」：复用 /teachers/scores/by-class（join 过、带课程名），
+ * 按学号匹配本班成绩行。本班接口给的 `studentId` 是学号，by-class 行里的 `studentNo`
+ * 同口径；学号对不上时退回姓名匹配，两者都不认的行不显示。
+ */
+const viewStudentScores = async () => {
+  if (!currentStudent.value || !currentClass.value || !teacherId.value) return
+  studentScoresLoading.value = true
+  try {
+    const res = await teacherAPI.getScoresByClass(currentClass.value.name, teacherId.value)
+    const list = Array.isArray(res) ? res : []
+    const no = String(currentStudent.value.studentId ?? '')
+    studentScores.value = list
+      .filter(s => (no && s.studentNo ? String(s.studentNo) === no : s.studentName === currentStudent.value.studentName))
+      .map(s => ({
+        courseName: s.courseName || ('课程' + s.courseId),
+        semester: s.semester,
+        totalScore: s.scoreTotal ?? s.totalScore ?? null
+      }))
+    studentScoresLoaded.value = true
+  } catch (error) {
+    console.error('[class-mgmt] 学生成绩获取失败:', error)
+    ElMessage.error('学生成绩获取失败')
+  } finally {
+    studentScoresLoading.value = false
+  }
 }
 
 // 筛选学生
@@ -1128,6 +1194,11 @@ onMounted(() => {
   margin-top: 20px;
   padding-top: 16px;
   border-top: 1px solid #e8ecf1;
+}
+
+.score-fail {
+  color: #f56c6c;
+  font-weight: 600;
 }
 
 /* 弹窗动画效果 */

@@ -86,6 +86,7 @@ import { ref, reactive, computed, onMounted, nextTick } from 'vue'
 import * as echarts from 'echarts'
 import { studentAPI } from '@/api/index'
 import { getUserId } from '@/utils/userUtils'
+import { toNumber, PASS_LINE, isPending } from '@/utils/score'
 
 // ---- 学期转换工具（与Scores.vue一致） ----
 const entranceYear = (() => {
@@ -193,9 +194,14 @@ function buildHistory(benchmarks) {
   const map = {}
   allScores.value.forEach(s => {
     const lb = semLabel(s.semester); if (!lb) return
+    // 2026-10-19：未录入的课（scoreTotal 为 null / '待录入'）既不算过也不算挂，
+    // 也不进绩点 —— 原先 `(s.scoreTotal || 0) >= 60` 把它们折成 0 分当挂科。
+    const sc = toNumber(s.scoreTotal)
+    // 判定要用 finalScore：期末未录入时 scoreTotal 有"平时分折半"的中间值，非 null 不代表已录入。
+    if (sc === null || isPending(s)) return
     if (!map[lb]) map[lb] = { scores: [], pass: 0, fail: 0 }
     map[lb].scores.push(s)
-    if ((s.scoreTotal || 0) >= 60) map[lb].pass++; else map[lb].fail++
+    if (sc >= PASS_LINE) map[lb].pass++; else map[lb].fail++
   })
   return Object.entries(map).map(([lb, v]) => {
     const gpa = v.scores.length ? (v.scores.reduce((sum, s) => sum + (s.gradePoint || 0) * (s.credits || 0), 0) / v.scores.reduce((sum, s) => sum + (s.credits || 0), 0)) : 0
@@ -246,13 +252,14 @@ function parseBenchmark(res) {
 }
 
 function computeFallback(semNumVal) {
-  const scores = allScores.value.filter(s => String(s.semester) === String(semNumVal))
+  // 未录入的课不进图表与绩点（同 buildHistory 的口径，'待录入' 不是 0 分）。
+  const scores = allScores.value.filter(s => String(s.semester) === String(semNumVal) && toNumber(s.scoreTotal) !== null && !isPending(s))
   if (!scores.length) { resetBm(); return }
   let gpaSum = 0, crSum = 0
   const courses = scores.map(s => {
     const gp = s.gradePoint || 0; const cr = s.credits || 0
     gpaSum += gp * cr; crSum += cr
-    return { courseName: s.courseName || ('课程ID:' + s.courseId), studentScore: Number(s.scoreTotal || 0), classAverage: '--', departmentAverage: '--', rank: '--', totalStudents: '--' }
+    return { courseName: s.courseName || ('课程ID:' + s.courseId), studentScore: toNumber(s.scoreTotal), classAverage: '--', departmentAverage: '--', rank: '--', totalStudents: '--' }
   })
   bm.gpa = crSum ? (gpaSum / crSum).toFixed(2) : '--'
   // 2026-10-01 第二十一轮: 原先是 `bm.classAvg='3.00'; bm.deptAvg='2.90'` ——
@@ -282,35 +289,54 @@ function renderCourseChart() {
     const name = c.courseName || '课程' + c.courseId
     if (!merged[name]) merged[name] = { courseName: name, myScores: [], classAvgs: [] }
     const val = c.studentScore || 0
-    const cavg = (typeof c.classAverage === 'number') ? c.classAverage : parseInt(c.classAverage) || 0
+    // 「全部学期」视图的每门课没有班级平均（computeAllSemesters 填的是 '--'）。
+    // 不能 parseInt('--') || 0 —— 那会把"没有这个数"画成一根 0 分的柱子。
+    // 没有值就不进数组，最终为 null，ECharts 不画该柱，图例也只在有数据时出现。
+    const cavg = classAvgOf(c.classAverage)
     merged[name].myScores.push(val)
-    merged[name].classAvgs.push(cavg)
+    if (cavg !== null) merged[name].classAvgs.push(cavg)
   })
   const unique = Object.values(merged).map(m => ({
     courseName: m.courseName,
     studentScore: +(m.myScores.reduce((a, b) => a + b, 0) / m.myScores.length).toFixed(0),
-    classAverage: +(m.classAvgs.reduce((a, b) => a + b, 0) / m.classAvgs.length).toFixed(0)
+    classAverage: m.classAvgs.length
+      ? +(m.classAvgs.reduce((a, b) => a + b, 0) / m.classAvgs.length).toFixed(0)
+      : null
   }))
+  const hasClassAvg = unique.some(c => c.classAverage !== null)
 
   // 横向柱状图，课程名放 Y 轴不截断
   const names = unique.map(c => c.courseName)
   const fixedHeight = Math.max(names.length * 36, 200)
   dom.style.height = fixedHeight + 'px'
   chart.resize()
+  const series = [
+    { name: '我的成绩', type: 'bar', data: unique.slice().reverse().map(c => c.studentScore),
+      barMaxWidth: 18, itemStyle: { color: '#7c3aed', borderRadius: [0, 4, 4, 0] },
+      label: { show: true, position: 'right', fontSize: 11, color: '#7c3aed', fontWeight: 600 } }
+  ]
+  if (hasClassAvg) {
+    series.push({
+      name: '班级平均', type: 'bar', data: unique.slice().reverse().map(c => c.classAverage),
+      barMaxWidth: 18, itemStyle: { color: '#e0d5f7', borderRadius: [0, 4, 4, 0] }
+    })
+  }
+
   chart.setOption({
     tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
-    legend: { data: ['我的成绩', '班级平均'], bottom: 0, textStyle: { fontSize: 12 } },
+    legend: { data: hasClassAvg ? ['我的成绩', '班级平均'] : ['我的成绩'], bottom: 0, textStyle: { fontSize: 12 } },
     grid: { left: 3, right: 45, top: 10, bottom: 35, containLabel: true },
     xAxis: { type: 'value', min: 0, max: 100, splitLine: { lineStyle: { type: 'dashed', color: '#f0f0f0' } }, axisLabel: { fontSize: 11 } },
     yAxis: { type: 'category', data: names.reverse(), axisLabel: { fontSize: 12, color: '#333', width: 90, overflow: 'truncate' }, axisTick: { show: false }, axisLine: { show: false }, inverse: true },
-    series: [
-      { name: '我的成绩', type: 'bar', data: unique.slice().reverse().map(c => c.studentScore),
-        barMaxWidth: 18, itemStyle: { color: '#7c3aed', borderRadius: [0, 4, 4, 0] },
-        label: { show: true, position: 'right', fontSize: 11, color: '#7c3aed', fontWeight: 600 } },
-      { name: '班级平均', type: 'bar', data: unique.slice().reverse().map(c => c.classAverage),
-        barMaxWidth: 18, itemStyle: { color: '#e0d5f7', borderRadius: [0, 4, 4, 0] } }
-    ]
+    series
   })
+}
+
+/** 班级平均可能是数字、"75.5" 或 "--"；拿不到就返回 null（不是 0）。 */
+function classAvgOf(v) {
+  if (v === null || v === undefined) return null
+  const n = typeof v === 'number' ? v : parseFloat(v)
+  return Number.isFinite(n) ? n : null
 }
 
 function renderGpaChart() {
@@ -361,14 +387,16 @@ function onSemesterChange() {
   loadSemesterData()
 }
 function computeAllSemesters() {
-  const all = allScores.value
+  // 同 buildHistory：未录入的课不算挂科/0 分，也不进绩点与柱状图。
+  const all = allScores.value.filter(s => toNumber(s.scoreTotal) !== null && !isPending(s))
   if (!all.length) { resetBm(); return }
   let gpaSum = 0, crSum = 0, pass = 0, fail = 0
   const courses = all.map(s => {
     const gp = s.gradePoint || 0; const cr = s.credits || 0
+    const sc = toNumber(s.scoreTotal)
     gpaSum += gp * cr; crSum += cr
-    if ((s.scoreTotal || 0) >= 60) pass++; else fail++
-    return { courseName: s.courseName || ('课程ID:' + s.courseId), studentScore: Number(s.scoreTotal || 0), classAverage: '--', departmentAverage: '--' }
+    if (sc >= PASS_LINE) pass++; else fail++
+    return { courseName: s.courseName || ('课程ID:' + s.courseId), studentScore: sc, classAverage: '--', departmentAverage: '--' }
   })
   bm.gpa = crSum ? (gpaSum / crSum).toFixed(2) : '--'
   // 2026-10-01 第二十一轮: 原先是 `bm.classAvg='3.00'; bm.deptAvg='2.90'` —— 两个写死的常量。

@@ -34,7 +34,7 @@
           <div class="rg-field" style="flex:2">
             <label>所属学院</label>
             <el-select v-model="form.collegeId" placeholder="请选择学院" style="width:100%" clearable
-              :loading="collegesLoading" @change="handleCollegeChange">
+              :loading="collegesLoading">
               <el-option v-for="c in colleges" :key="c.id" :label="c.name" :value="c.id" />
             </el-select>
             <!-- 同 TeacherRegister：/auth/colleges 公开目录，匿名可读。
@@ -169,7 +169,6 @@ const rules = {
   confirmPassword: [{ validator: vConfirm, trigger: 'blur' }],
 }
 
-const handleCollegeChange = () => {}
 onMounted(async () => {
   // 同 TeacherRegister：学院是必填项，拉不到就没人能提交。闪一句 toast 不够，
   // 要有常驻的横幅把"为什么选不了"说清楚。

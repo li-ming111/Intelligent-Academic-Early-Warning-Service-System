@@ -122,9 +122,6 @@
             <el-option v-for="t in teacherOptions" :key="t.id" :label="t.name + ' (ID:' + t.id + ')'" :value="t.id" />
           </el-select>
         </el-form-item>
-        <el-form-item label="模块ID">
-          <el-input-number v-model="courseForm.moduleId" :min="0" placeholder="请输入模块ID（可选）" />
-        </el-form-item>
       </el-form>
       <template #footer>
         <div class="dialog-footer">
@@ -198,8 +195,7 @@ const courseForm = ref({
   credits: 0,
   type: '',
   description: '',
-  teacherId: null,
-  moduleId: null
+  teacherId: null
 })
 
 // 表单验证规则
@@ -338,8 +334,7 @@ const openEditDialog = (row) => {
     credits: Number(row.credits) || 0,
     type: row.type || '',
     description: row.description || '',
-    teacherId: row.teacherId ? Number(row.teacherId) : null,
-    moduleId: row.moduleId ? Number(row.moduleId) : null
+    teacherId: row.teacherId ? Number(row.teacherId) : null
   }
   dialogVisible.value = true
 }
@@ -356,8 +351,7 @@ const resetForm = () => {
     credits: 0,
     type: '',
     description: '',
-    teacherId: null,
-    moduleId: null
+    teacherId: null
   }
 }
 
@@ -375,8 +369,7 @@ const submitForm = async () => {
       credits: courseForm.value.credits,
       type: courseForm.value.type,
       description: courseForm.value.description || null,
-      teacherId: courseForm.value.teacherId,
-      moduleId: courseForm.value.moduleId || null
+      teacherId: courseForm.value.teacherId
     }
 
     if (isEdit.value) {

@@ -28,7 +28,7 @@
       </el-col>
       <el-col :xs="24" :sm="12" :md="6">
         <el-card class="stat-card" shadow="hover">
-          <div class="stat-number">{{ activePlans.length }}</div>
+          <div class="stat-number">{{ pendingPlans.length }}</div>
           <div class="stat-label">待评价计划</div>
         </el-card>
       </el-col>
@@ -70,13 +70,6 @@
                 评价帮扶计划
               </el-button>
             </el-col>
-            <el-col :xs="24" :sm="12" :md="8">
-              <el-select v-model="filterStatus" @change="loadEvaluations" placeholder="筛选状态" style="width: 100%">
-                <el-option label="全部" value=""></el-option>
-                <el-option label="待评价" value="pending"></el-option>
-                <el-option label="已评价" value="evaluated"></el-option>
-              </el-select>
-            </el-col>
           </el-row>
         </el-card>
 
@@ -88,8 +81,9 @@
             </div>
           </template>
           <el-table v-if="evaluations.length > 0" :data="evaluations" stripe style="width: 100%">
-            <el-table-column prop="id" label="ID" width="60"></el-table-column>
-            <el-table-column prop="planId" label="计划ID" width="80"></el-table-column>
+            <el-table-column label="计划名称" min-width="160">
+              <template #default="{ row }">{{ planName(row.planId) }}</template>
+            </el-table-column>
             <!-- 评分/反馈的字段名用后端的：score / content。
                  改前读的是 rating / feedback —— 评价列表接口从来没回过这两个键，
                  所以「评分」那栏永远是 0 颗星、「反馈」那栏永远空白。
@@ -130,15 +124,19 @@
           </div>
         </el-card>
 
-        <!-- 待评价计划列表 -->
-        <el-card class="pending-card" shadow="hover" style="margin-top: 20px" v-if="activePlans.length > 0">
+        <!-- 计划列表：筛选在这里生效（原先下拉挂在「我的评价」上方，却既不筛评价也不筛计划） -->
+        <el-card class="pending-card" shadow="hover" style="margin-top: 20px">
           <template #header>
             <div class="card-header">
-              <span class="title">待评价计划</span>
+              <span class="title">{{ planListTitle }}</span>
+              <el-select v-model="filterStatus" size="small" style="width: 130px">
+                <el-option label="全部计划" value=""></el-option>
+                <el-option label="待评价" value="pending"></el-option>
+                <el-option label="已评价" value="evaluated"></el-option>
+              </el-select>
             </div>
           </template>
-          <el-table :data="activePlans" stripe style="width: 100%">
-            <el-table-column prop="id" label="计划ID" width="80"></el-table-column>
+          <el-table v-if="filteredPlans.length > 0" :data="filteredPlans" stripe style="width: 100%">
             <el-table-column prop="title" label="计划名称" min-width="150"></el-table-column>
             <!-- 状态文案直接用后端给的 statusText（进行中/已完成/未开始）。
                  改前是前端按 'initiated'/'in_progress' 这类**字符串**查表，而后端回的是数字
@@ -163,6 +161,9 @@
               </template>
             </el-table-column>
           </el-table>
+          <div v-else class="no-data-placeholder">
+            <el-empty description="暂无计划" />
+          </div>
         </el-card>
       </el-col>
     </el-row>
@@ -173,9 +174,9 @@
         <el-form-item label="选择计划" required>
           <el-select v-model="evaluationForm.planId" placeholder="请选择要评价的计划" style="width: 100%">
             <el-option
-              v-for="plan in activePlans"
+              v-for="plan in pendingPlans"
               :key="plan.id"
-              :label="`${plan.title} (${plan.id})`"
+              :label="plan.title || '帮扶计划'"
               :value="plan.id"
             />
           </el-select>
@@ -209,9 +210,6 @@
     <!-- 编辑评价对话框 -->
     <el-dialog v-model="showEditDialog" title="编辑评价" width="600px" @close="resetEvaluationForm">
       <el-form :model="evaluationForm" label-width="100px">
-        <el-form-item label="计划ID" disabled>
-          <el-input v-model.number="evaluationForm.planId" disabled />
-        </el-form-item>
         <el-form-item label="计划评分">
           <el-rate v-model="evaluationForm.score" show-score />
         </el-form-item>
@@ -267,7 +265,7 @@ const statistics = ref({ ...EMPTY_STATISTICS })
 
 const evaluations = ref([])
 const assistancePlans = ref([])
-const filterStatus = ref('')
+const filterStatus = ref('pending')
 
 const showEvaluationDialog = ref(false)
 const showEditDialog = ref(false)
@@ -287,23 +285,32 @@ const evaluationForm = reactive({
 })
 
 /**
- * 计算待评价计划。
+ * 待评价 = 未完成（status !== 2）且尚未提交过评价的计划。
  *
- * ⚠️ 改前这里判的是 `p.status !== 'completed'`，但后端 `planStatusText` 用的是**数字**
- * （0 未开始 / 1 进行中 / 2 已完成），这个条件恒为真 —— 「已完成」的计划也照样列进"待评价"。
+ * ⚠️ 改前默认分支只判 `notFinished`，**已评价**的计划也会留在"待评价计划"里，
+ * 上方统计卡的数据因此虚高；「已完成」也不能进待评价（原来判的是字符串 'completed'，
+ * 后端给的是数字 2，条件恒为真）。
  */
-const activePlans = computed(() => {
-  const evaluatedIds = new Set(evaluations.value.map(e => String(e.planId)))
-  const notFinished = p => Number(p.status) !== 2
-
-  if (filterStatus.value === 'pending') {
-    return assistancePlans.value.filter(p => !evaluatedIds.has(String(p.id)) && notFinished(p))
-  }
+const evaluatedPlanIds = computed(() => new Set(evaluations.value.map(e => String(e.planId))))
+const pendingPlans = computed(() =>
+  assistancePlans.value.filter(p => Number(p.status) !== 2 && !evaluatedPlanIds.value.has(String(p.id)))
+)
+const filteredPlans = computed(() => {
+  if (filterStatus.value === 'pending') return pendingPlans.value
   if (filterStatus.value === 'evaluated') {
-    return assistancePlans.value.filter(p => evaluatedIds.has(String(p.id)))
+    return assistancePlans.value.filter(p => evaluatedPlanIds.value.has(String(p.id)))
   }
-  return assistancePlans.value.filter(notFinished)
+  return assistancePlans.value
 })
+const planListTitle = computed(() => {
+  if (filterStatus.value === 'pending') return '待评价计划'
+  if (filterStatus.value === 'evaluated') return '已评价计划'
+  return '全部计划'
+})
+/** 评价行只有 planId，没有计划标题；从已加载的计划里取，取不到就说"帮扶计划"。 */
+function planName(planId) {
+  return assistancePlans.value.find(p => String(p.id) === String(planId))?.title || '帮扶计划'
+}
 
 onMounted(async () => {
   const userInfo = JSON.parse(localStorage.getItem('user') || '{}')

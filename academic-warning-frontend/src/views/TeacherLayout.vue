@@ -63,12 +63,19 @@
           >
             <span>数据分析</span>
           </router-link>
-          <router-link 
-            to="/teacher/feedback" 
+          <router-link
+            to="/teacher/feedback"
             class="nav-item"
             :class="{ active: isActive('/teacher/feedback') }"
           >
             <span>反馈管理</span>
+          </router-link>
+          <router-link
+            to="/teacher/messages"
+            class="nav-item"
+            :class="{ active: isActive('/teacher/messages') }"
+          >
+            <span>消息中心<i v-if="unreadCount > 0" class="nav-badge">{{ unreadCount > 99 ? '99+' : unreadCount }}</i></span>
           </router-link>
           <router-link 
             to="/teacher/audit-log" 
@@ -119,7 +126,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch, provide } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AIAssistant from '@/components/AIAssistant.vue'
 import { 
@@ -152,6 +159,21 @@ if (storedName && !/^\d+$/.test(storedName)) {
   }
 }
 const teacherName = ref(defaultName)
+const unreadCount = ref(0)
+/** 工作台数据只拉一次：设置页的「学院」也用它，别再单独请求一份。 */
+const teacherDashboard = ref(null)
+provide('teacherDashboard', teacherDashboard)
+
+// 站内信未读徽标。消息页自己标记已读后不会回调这里，
+// 所以每次路由切换都重新取一次，返回列表时角标就是最新的。
+const loadUnreadCount = async () => {
+  try {
+    const r = await teacherAPI.getInboxUnreadCount()
+    unreadCount.value = typeof r === 'number' ? r : 0
+  } catch (error) {
+    unreadCount.value = 0
+  }
+}
 
 // 获取教师信息
 const loadTeacherInfo = async () => {
@@ -159,6 +181,7 @@ const loadTeacherInfo = async () => {
     const userId = localStorage.getItem('userId')
     if (!userId) return
     const response = await teacherAPI.getDashboard(userId)
+    teacherDashboard.value = response || null
     if (response && (response.teacherName || response.name)) {
       const teacherNameFromApi = response.teacherName || response.name
       teacherName.value = teacherNameFromApi
@@ -173,6 +196,11 @@ const loadTeacherInfo = async () => {
 // 组件挂载时加载教师信息
 onMounted(() => {
   loadTeacherInfo()
+  loadUnreadCount()
+})
+
+watch(() => route.path, () => {
+  loadUnreadCount()
 })
 
 const pageMap = {
@@ -278,6 +306,24 @@ const handleLogout = () => {
   width: 100%;
   height: 2px;
   background: #4facfe;
+}
+
+.nav-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 5px;
+  margin-left: 4px;
+  border-radius: 8px;
+  background: #ef4444;
+  color: #fff;
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 600;
+  line-height: 1;
+  vertical-align: top;
 }
 
 .navbar-right {

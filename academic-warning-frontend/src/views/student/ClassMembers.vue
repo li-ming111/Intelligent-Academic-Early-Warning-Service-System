@@ -20,7 +20,7 @@
     </div>
 
     <!-- 成员列表 -->
-    <div class="members-list">
+    <div class="members-list" v-loading="loading">
       <div v-if="filteredMembers.length === 0" class="empty-state">
         <el-empty description="暂无班级成员数据"></el-empty>
       </div>

@@ -99,7 +99,9 @@
                   {{ receiverName(row.receiverId) }}
                 </template>
               </el-table-column>
-              <el-table-column prop="createdAt" label="发送时间" width="180" sortable></el-table-column>
+              <el-table-column prop="createdAt" label="发送时间" width="180" sortable>
+                <template #default="{ row }">{{ formatDateTime(row.createdAt) }}</template>
+              </el-table-column>
               <el-table-column label="操作" width="100" fixed="right">
                 <template #default="{ row }">
                   <div class="action-buttons">
@@ -236,7 +238,9 @@
                   </el-select>
                 </template>
               </el-table-column>
-              <el-table-column prop="createdAt" label="创建时间" width="180" sortable></el-table-column>
+              <el-table-column prop="createdAt" label="创建时间" width="180" sortable>
+                <template #default="{ row }">{{ formatDateTime(row.createdAt) }}</template>
+              </el-table-column>
               <el-table-column label="操作" width="120" fixed="right">
                 <template #default="{ row }">
                   <el-button type="danger" size="small" @click="deleteTask(row.id)">
@@ -390,6 +394,14 @@ const receiverName = (receiverId) => {
   const u = users.value.find(item => item.id === receiverId)
   if (!u) return `用户 #${receiverId}`
   return u.name || u.username || `用户 #${receiverId}`
+}
+
+// 后端时间有 ISO 本地（2026-10-19T16:50:48）和带偏移（…+00:00）两种写法，
+// sortable 仍按 prop 的原始值排，这里只管显示。
+const formatDateTime = (v) => {
+  if (!v) return '—'
+  const d = new Date(v)
+  return isNaN(d.getTime()) ? v : d.toLocaleString('zh-CN', { hour12: false })
 }
 
 // 处理新消息

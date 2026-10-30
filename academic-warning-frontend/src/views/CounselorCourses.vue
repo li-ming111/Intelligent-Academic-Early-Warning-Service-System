@@ -247,7 +247,7 @@ const buildStudentList = () => {
     if (!studentMap.has(sid)) {
       studentMap.set(sid, {
         studentId: sid,
-        studentName: e.student_name || '学生' + sid,
+        studentName: e.student_name || '未知学生',
         scores: [],
         courseNames: new Set(),
         attemptedCredits: 0,
@@ -266,7 +266,7 @@ const buildStudentList = () => {
     const credits = Number(e.credits || 0)
     s.attemptedCredits += credits
     if (score !== null && score >= 60) s.earnedCredits += credits
-    s.courseNames.add(e.course_name || '课程' + e.course_id)
+    s.courseNames.add(e.course_name || '未知课程')
   })
 
   const list = Array.from(studentMap.values()).map(s => ({
@@ -317,7 +317,7 @@ const viewDetail = (row) => {
         // 未录入显示「待录入」而不是 0.0 分（ScoreCaliber 第 3 条口径）
         const pending = e.score_total === null || e.score_total === undefined
         courses.push({
-          courseName: e.course_name || '课程' + e.course_id,
+          courseName: e.course_name || '未知课程',
           scoreText: pending ? '待录入' : Number(e.score_total).toFixed(1) + '分',
           // `failed` 由后端数据算好再交给模板，模板里不再做字符串比数字。
           failed: !pending && Number(e.score_total) < 60

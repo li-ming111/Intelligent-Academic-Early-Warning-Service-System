@@ -10,12 +10,11 @@
       @click="handleClick"
     >
       <img src="@/assets/xiaohui.jpg" alt="AI助手" class="trigger-img" />
-      <span class="trigger-pulse" v-if="unreadCount > 0"></span>
     </div>
 
     <!-- 聊天面板 -->
     <transition name="panel-slide">
-      <div class="chat-panel" v-if="isChatOpen">
+      <div class="chat-panel" v-if="isChatOpen" :style="panelStyle">
         <!-- 头部 -->
         <div class="panel-header">
           <div class="header-left">
@@ -41,7 +40,7 @@
           <!-- 欢迎屏 -->
           <div v-if="messages.length === 0" class="welcome-screen">
             <h3>你好，我是智学助手</h3>
-            <p>基于通义千问大模型，为你提供智能学业分析</p>
+            <p>基于 DeepSeek 大模型，为你提供智能学业分析</p>
             <div class="quick-actions">
               <button v-for="q in quickQuestions" :key="q" @click="sendSuggestion(q)" class="quick-btn">
                 {{ q }}
@@ -52,7 +51,8 @@
           <!-- 消息列表 -->
           <div v-for="(msg, i) in messages" :key="i" :class="['msg-row', msg.type]">
             <div class="msg-bubble" :class="msg.type">
-              <div class="bubble-text">{{ msg.content }}</div>
+              <div v-if="msg.type === 'ai'" class="bubble-text" v-html="renderReply(msg.content)"></div>
+              <div v-else class="bubble-text">{{ msg.content }}</div>
               <div class="bubble-time">{{ msg.time }}</div>
             </div>
           </div>
@@ -89,7 +89,7 @@
 </template>
 
 <script setup>
-import { ref, watch, nextTick, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { aiAPI } from '@/api/index'
 import { getUserId } from '@/utils/userUtils'
 
@@ -97,13 +97,39 @@ const isChatOpen = ref(false)
 const messages = ref([])
 const inputMessage = ref('')
 const loading = ref(false)
-const unreadCount = ref(0)
 const panelBody = ref(null)
 const inputRef = ref(null)
 
 // ====== 拖拽状态 ======
-const ballX = ref(window.innerWidth - 82)  // 默认右下角
-const ballY = ref(window.innerHeight - 82)
+// 位置存 localStorage：拖到哪儿就记在哪儿，刷新/切角色不再弹回右下角。
+const BALL_POS_KEY = 'aiBallPos'
+function clampBall(x, y) {
+  return {
+    x: Math.min(Math.max(x, 8), window.innerWidth - 62),
+    y: Math.min(Math.max(y, 8), window.innerHeight - 62)
+  }
+}
+const savedPos = (() => {
+  try { return JSON.parse(localStorage.getItem(BALL_POS_KEY) || 'null') } catch { return null }
+})()
+const startPos = clampBall(
+  savedPos?.x ?? window.innerWidth - 82,
+  savedPos?.y ?? window.innerHeight - 82
+)
+const ballX = ref(startPos.x)  // 默认右下角
+const ballY = ref(startPos.y)
+
+// 聊天面板跟着球弹：默认在球右侧、垂直居中；右边放不下翻到左侧，再夹在视口内。
+const panelStyle = computed(() => {
+  const w = 400, h = 560, m = 12
+  let left = ballX.value + 54 + m
+  if (left + w > window.innerWidth - m) left = ballX.value - w - m
+  left = Math.max(m, Math.min(left, window.innerWidth - w - m))
+  let top = ballY.value + 27 - h / 2
+  top = Math.max(m, Math.min(top, window.innerHeight - h - m))
+  return { left: left + 'px', top: top + 'px' }
+})
+
 const dragging = ref(false)
 const dragStartX = ref(0)
 const dragStartY = ref(0)
@@ -112,8 +138,6 @@ const dragOffsetY = ref(0)
 const hasMoved = ref(false)  // 区分拖拽和点击
 
 function startDrag(e) {
-  // 如果聊天面板打开中，不允许拖拽
-  if (isChatOpen.value) return
   dragging.value = true
   hasMoved.value = false
   const touch = e.touches ? e.touches[0] : e
@@ -133,9 +157,9 @@ function onDrag(e) {
   const dx = touch.clientX - dragStartX.value
   const dy = touch.clientY - dragStartY.value
   if (Math.abs(dx) > 3 || Math.abs(dy) > 3) hasMoved.value = true
-  // 边界限制
-  ballX.value = Math.min(Math.max(dragOffsetX.value + dx, 8), window.innerWidth - 62)
-  ballY.value = Math.min(Math.max(dragOffsetY.value + dy, 8), window.innerHeight - 62)
+  const p = clampBall(dragOffsetX.value + dx, dragOffsetY.value + dy)
+  ballX.value = p.x
+  ballY.value = p.y
 }
 
 function stopDrag() {
@@ -144,6 +168,8 @@ function stopDrag() {
   document.removeEventListener('mouseup', stopDrag)
   document.removeEventListener('touchmove', onDrag)
   document.removeEventListener('touchend', stopDrag)
+  // 拖完落点存档（没动过的点击不写，避免无谓写盘）
+  if (hasMoved.value) localStorage.setItem(BALL_POS_KEY, JSON.stringify({ x: ballX.value, y: ballY.value }))
 }
 
 function handleClick() {
@@ -167,7 +193,6 @@ const quickQuestions = [
 function toggleChat() {
   isChatOpen.value = !isChatOpen.value
   if (isChatOpen.value) {
-    unreadCount.value = 0
     nextTick(() => { inputRef.value?.focus(); scrollToBottom() })
   }
 }
@@ -202,7 +227,7 @@ async function sendMessage() {
     })
   } catch (e) {
     console.error('AI 回复失败:', e)
-    // 把后端的原话带出来（例如"未配置 DASHSCOPE_KEY"），而不是一律"服务暂时不可用"
+    // 把后端的原话带出来（例如"未配置 AI_API_KEY"），而不是一律"服务暂时不可用"
     messages.value.push({ type: 'ai', content: 'AI 不可用：' + (e?.message || '网络错误'), time: fmtTime() })
   } finally {
     loading.value = false
@@ -217,6 +242,24 @@ function sendSuggestion(q) {
 
 function fmtTime() {
   return new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
+}
+
+// 模型按 Markdown 回话，气泡原来是纯文本，于是 **、# 原样露出来。
+// 先转义再套格式：v-html 里只可能出现下面这几组固定标签，模型返回的 HTML 进不来。
+function renderReply(text) {
+  const safe = String(text || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/\r\n?/g, '\n')
+  return safe
+    .replace(/^#{1,6}\s*(.+)$/gm, '<strong class="md-h">$1</strong>')
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '$1（$2）')
+    .replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/`([^`\n]+)`/g, '<code>$1</code>')
+    .replace(/^\s*[-*]\s+/gm, '• ')
+    .replace(/\n/g, '<br>')
 }
 
 watch(messages, () => scrollToBottom(), { deep: true })
@@ -249,18 +292,12 @@ watch(messages, () => scrollToBottom(), { deep: true })
 .chat-trigger.active { box-shadow: 0 6px 24px rgba(0,0,0,.15); border-color: #7c3aed; }
 .chat-trigger.active:hover { transform: none; }
 .trigger-img { width: 100%; height: 100%; object-fit: cover; display: block; }
-.trigger-pulse {
-  position: absolute; top: 2px; right: 2px;
-  width: 10px; height: 10px; border-radius: 50%;
-  background: #ef4444; border: 2px solid #fff;
-  animation: pulse 2s infinite;
-}
 
-/* ========== 聊天面板 (相对于触发按钮定位) ========== */
+/* ========== 聊天面板 (位置由 panelStyle 跟随悬浮球计算，此处只管尺寸外观) ========== */
 .chat-panel {
   position: fixed;
-  bottom: 68px; right: 28px;
   width: 400px; height: 560px;
+  max-height: calc(100vh - 24px);
   background: #fff;
   border-radius: 16px;
   box-shadow: 0 12px 48px rgba(0,0,0,.12), 0 4px 16px rgba(0,0,0,.06);
@@ -369,6 +406,15 @@ watch(messages, () => scrollToBottom(), { deep: true })
 }
 .msg-bubble.user .bubble-time { text-align: right; }
 
+/* renderReply 生成的格式标签（v-html 内容不带 scoped 属性，须用 :deep） */
+.bubble-text :deep(strong) { font-weight: 600; }
+.bubble-text :deep(.md-h) { display: block; margin: 2px 0 4px; }
+.bubble-text :deep(code) {
+  padding: 1px 4px; border-radius: 4px;
+  background: #f4f4f5; font-family: ui-monospace, Consolas, monospace;
+  font-size: 12.5px;
+}
+
 /* 打字动画 */
 .msg-bubble.typing {
   display: flex; gap: 5px; align-items: center;
@@ -421,11 +467,6 @@ watch(messages, () => scrollToBottom(), { deep: true })
   0%, 80%, 100% { transform: scale(0); }
   40% { transform: scale(1); }
 }
-@keyframes pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: .4; }
-}
-
 /* ========== 响应式 ========== */
 @media (max-width: 480px) {
   .chat-panel { width: calc(100vw - 40px); height: 65vh; right: -8px; }

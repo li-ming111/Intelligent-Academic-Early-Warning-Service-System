@@ -31,7 +31,7 @@
 
     <!-- 筛选 -->
     <div class="audit-filter">
-      <el-input v-model="searchName" placeholder="搜索学生" clearable style="width:180px" @change="onSearch" />
+      <el-input v-model="searchName" placeholder="搜索姓名或学号" clearable style="width:180px" @change="onSearch" />
       <el-button @click="resetFilter" text>重置</el-button>
     </div>
 
@@ -40,7 +40,9 @@
       <el-table :data="pagedLogs" stripe v-loading="loading">
         <el-table-column type="index" label="#" width="50" />
         <el-table-column prop="studentName" label="学生" width="90" />
-        <el-table-column prop="studentId" label="学号" width="100" />
+        <el-table-column prop="studentNo" label="学号" width="120">
+          <template #default="{ row }">{{ row.studentNo || '--' }}</template>
+        </el-table-column>
         <el-table-column prop="courseName" label="课程" min-width="130" show-overflow-tooltip />
         <el-table-column label="成绩变更" min-width="180" align="center">
           <template #default="{ row }">
@@ -94,7 +96,8 @@ const avgDiff = computed(() => {
 const filteredLogs = computed(() => {
   if (!searchName.value) return auditLogs.value
   const kw = searchName.value.toLowerCase()
-  return auditLogs.value.filter(l => (l.studentName || '').toLowerCase().includes(kw))
+  return auditLogs.value.filter(l =>
+    (l.studentName || '').toLowerCase().includes(kw) || String(l.studentNo || '').includes(kw))
 })
 
 const pagedLogs = computed(() => {

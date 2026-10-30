@@ -35,7 +35,6 @@
       <el-table v-else :data="filteredRulesList" stripe v-loading="loading" @selection-change="handleSelectionChange">
         <el-table-column type="selection" width="55" />
         <el-table-column prop="id" label="规则ID" width="100" sortable />
-        <el-table-column prop="ruleCode" label="规则编码" width="120" />
         <el-table-column prop="ruleName" label="规则名称" min-width="200" show-overflow-tooltip />
         <el-table-column label="触发条件" min-width="250">
           <template #default="{ row }">
@@ -83,9 +82,6 @@
         <el-form-item label="规则名称" prop="ruleName">
           <el-input v-model="ruleForm.ruleName" placeholder="例如：低级预警" />
         </el-form-item>
-        <el-form-item label="规则编码" prop="ruleCode">
-          <el-input v-model="ruleForm.ruleCode" placeholder="例如：RULE001" />
-        </el-form-item>
         <el-form-item label="触发条件" prop="expression">
           <el-input v-model="ruleForm.expression" type="textarea" :rows="3" placeholder="例如：fail_count >= 1 AND fail_count <= 2" />
         </el-form-item>
@@ -111,9 +107,6 @@
       <el-form ref="editRuleFormRef" :model="editingRule" :rules="formRules" label-width="100px">
         <el-form-item label="规则名称" prop="ruleName">
           <el-input v-model="editingRule.ruleName" placeholder="例如：低级预警" />
-        </el-form-item>
-        <el-form-item label="规则编码" prop="ruleCode">
-          <el-input v-model="editingRule.ruleCode" placeholder="例如：RULE001" />
         </el-form-item>
         <el-form-item label="触发条件" prop="expression">
           <el-input v-model="editingRule.expression" type="textarea" :rows="3" placeholder="例如：fail_count >= 1 AND fail_count <= 2" />
@@ -188,7 +181,6 @@ const editRuleFormRef = ref(null)
 
 const ruleForm = ref({ 
   ruleName: '', 
-  ruleCode: '', 
   expression: '', 
   warningLevel: 1,
   description: '' 
@@ -197,7 +189,6 @@ const ruleForm = ref({
 const editingRule = ref({ 
   id: null,
   ruleName: '', 
-  ruleCode: '', 
   expression: '', 
   warningLevel: 1,
   description: '' 
@@ -207,10 +198,6 @@ const formRules = {
   ruleName: [
     { required: true, message: '请输入规则名称', trigger: 'blur' },
     { min: 2, max: 100, message: '规则名称长度为 2-100 个字符', trigger: 'blur' }
-  ],
-  ruleCode: [
-    { required: true, message: '请输入规则编码', trigger: 'blur' },
-    { min: 3, max: 20, message: '规则编码长度为 3-20 个字符', trigger: 'blur' }
   ],
   expression: [
     { required: true, message: '请输入触发条件', trigger: 'blur' }
@@ -268,8 +255,7 @@ const filteredRulesList = computed(() => {
     const searchLower = searchText.value.toLowerCase()
     filtered = filtered.filter(rule =>
       rule.ruleName.toLowerCase().includes(searchLower) ||
-      String(rule.id).includes(searchLower) ||
-      (rule.ruleCode && rule.ruleCode.toLowerCase().includes(searchLower))
+      String(rule.id).includes(searchLower)
     )
   }
 
@@ -289,8 +275,7 @@ const totalRules = computed(() => {
     const searchLower = searchText.value.toLowerCase()
     filtered = filtered.filter(rule =>
       rule.ruleName.toLowerCase().includes(searchLower) ||
-      String(rule.id).includes(searchLower) ||
-      (rule.ruleCode && rule.ruleCode.toLowerCase().includes(searchLower))
+      String(rule.id).includes(searchLower)
     )
   }
 
@@ -356,7 +341,6 @@ const submitEditRule = async () => {
     await editRuleFormRef.value.validate()
     const data = {
       ruleName: editingRule.value.ruleName,
-      ruleCode: editingRule.value.ruleCode,
       expression: editingRule.value.expression,
       warningLevel: editingRule.value.warningLevel,
       description: editingRule.value.description
@@ -432,10 +416,11 @@ const submitAddRule = async () => {
   
   try {
     await ruleFormRef.value.validate()
-    await adminAPI.createRule(ruleForm.value)
+    // 规则编码是内部标识，界面上不填也不展示，建规则时按时间戳生成一个即可（后端不校验、不参与判定）
+    await adminAPI.createRule({ ...ruleForm.value, ruleCode: `RULE_${Date.now()}` })
     ElMessage.success('规则已添加')
     addRuleDialogVisible.value = false
-    ruleForm.value = { ruleName: '', ruleCode: '', expression: '', warningLevel: 1, description: '' }
+    ruleForm.value = { ruleName: '', expression: '', warningLevel: 1, description: '' }
     await loadRules()
   } catch (error) {
     console.error('添加规则失败:', error)

@@ -13,7 +13,6 @@
               </div>
               <div class="class-info">
                 <p><span class="label">学生数：</span>{{ clazz.studentCount }}</p>
-                <p><span class="label">班级ID：</span>{{ clazz.id }}</p>
               </div>
               <div class="class-actions">
                 <el-button type="primary" size="small" @click="goToScores(clazz.id)">查看成绩</el-button>
@@ -175,10 +174,12 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Search } from '@element-plus/icons-vue'
 import { counselorAPI } from '@/api/index'
 
+const router = useRouter()
 const activeTab = ref('my-classes')
 const myClasses = ref([])
 const searchKeyword = ref('')
@@ -263,7 +264,7 @@ const submitCancelApplication = async () => {
   finally { cancelLoading.value = false }
 }
 
-const goToScores = (classId) => { window.location.href = '/counselor/scores' }
+const goToScores = (classId) => { router.push({ path: '/counselor/scores', query: { classId } }) }
 
 const viewStudents = async (clazz) => {
   currentClass.value = clazz; loadingStudents.value = true

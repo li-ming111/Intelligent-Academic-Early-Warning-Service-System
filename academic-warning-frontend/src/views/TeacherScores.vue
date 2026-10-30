@@ -83,7 +83,7 @@
     </div>
 
     <!-- AI 分析（W26）：下面这几个 aiAPI 端点此前全仓零调用。
-         `analyzeClassScores` 是**纯 AI** 端点（后端直接问通义千问），没配 DASHSCOPE_KEY 时
+         `analyzeClassScores` 是**纯 AI** 端点（后端直接问DeepSeek），没配 AI_API_KEY 时
          后端会拿占位串冒充成功 —— 闸在 utils/ai.js，命中就换成一句实话，不当作分析结果。 -->
     <div v-if="selectedClass" class="content-card">
       <div class="card-title-bar">
@@ -93,7 +93,7 @@
         <AiInsight
           title="AI 班级学业分析"
           :load="aiAnalyzeClass"
-          hint="把当前班级交给 AI 做整体分析（需要后端配置 DASHSCOPE_KEY）"
+          hint="把当前班级交给 AI 做整体分析（需要后端配置 AI_API_KEY）"
         />
         <AiInsight
           title="AI 学习建议"
@@ -201,7 +201,7 @@
             </div>
             <div class="analysis-item">
               <div class="analysis-label">成绩等级</div>
-              <div class="analysis-value">{{ studentAnalysisData.level }}</div>
+              <div class="analysis-value">{{ scoreLevelText(studentAnalysisData.level) }}</div>
             </div>
           </div>
           <div class="analysis-row">
@@ -291,6 +291,7 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
+import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Search } from '@element-plus/icons-vue'
 import { teacherAPI, aiAPI } from '@/api/index'
@@ -298,6 +299,7 @@ import AiInsight from '@/components/AiInsight.vue'
 import { getUserId, getTeacherId } from '@/utils/userUtils'
 import { saveBlobAsFile, describeDownloadError } from '@/utils/download'
 
+const route = useRoute()
 const selectedClass = ref('')
 const searchName = ref('')
 const selectedSemester = ref('')
@@ -365,6 +367,9 @@ function semLabel(num) {
   const y = entranceYear.value + Math.floor((n - 1) / 2)
   return `${y}-${y + 1}-${(n - 1) % 2 + 1}`
 }
+
+// 后端 analyzeStudentScore 的 level 是 1-5 的档位码（ScoreSyncSupport.scoreToLevel），直接显示会是个数字。
+const scoreLevelText = (level) => ({ 1: '优秀', 2: '良好', 3: '中等', 4: '及格', 5: '不及格' }[level] || '--')
 const availableSemesters = computed(() => {
   // 自动生成第1学期到当前学期的选项
   const list = []
@@ -469,8 +474,12 @@ const loadClasses = async () => {
         name: cls.name || cls.className
       }))
       if (classes.value.length > 0 && !selectedClass.value) {
-        selectedClass.value = classes.value[0].name
-        await loadClassScores(classes.value[0].name)
+        // 班级管理页「导入成绩」会带 ?classId= 过来，优先预选该班；否则落第一个班。
+        const wantedId = route.query.classId
+        const wanted = wantedId ? classes.value.find(c => String(c.id) === String(wantedId)) : null
+        const target = wanted || classes.value[0]
+        selectedClass.value = target.name
+        await loadClassScores(target.name)
       }
     } catch (error) {
       console.error('加载班级失败:', error)
@@ -786,7 +795,7 @@ const notifyCounselor = async (row) => {
     const response = await teacherAPI.getCounselorByClass(selectedClass.value)
     const counselor = response?.data || response
     if (counselor && counselor.counselorId) {
-      notifyTarget.value = { ...counselor, studentName: row.studentName, studentNo: row.studentNo }
+      notifyTarget.value = { ...counselor, studentName: row.studentName, studentNo: row.studentNo, studentId: row.studentId }
     } else {
       notifyTarget.value = null
     }
@@ -809,7 +818,9 @@ const submitNotify = async () => {
     const teacherId = getUserId()
     await teacherAPI.saveCommunication({
       teacherId: teacherId,
-      studentId: notifyTarget.value.studentName ? 0 : 0,
+      // 单个学生 → 该生的 student_profile.id；全班通知没有具体学生，保持 0
+      // （旧代码两分支都写死 0，单个学生的通知在库里查不到归属）
+      studentId: notifyTarget.value.studentId ?? 0,
       content: notifyContent.value,
       type: 'notify_counselor',
       studentName: notifyTarget.value.studentName || '全班'

@@ -89,9 +89,6 @@
         <el-form-item label="进度">
           <el-slider v-model="progressForm.progress" :min="0" :max="100"></el-slider>
         </el-form-item>
-        <el-form-item label="完成情况">
-          <el-input v-model="progressForm.notes" type="textarea" rows="2" placeholder="描述完成情况"></el-input>
-        </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="progressDialogVisible = false">取消</el-button>
@@ -138,8 +135,7 @@ const editForm = ref({
 })
 
 const progressForm = ref({
-  progress: 0,
-  notes: ''
+  progress: 0
 })
 const currentPlanId = ref(null)
 

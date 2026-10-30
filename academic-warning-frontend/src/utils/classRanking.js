@@ -24,28 +24,22 @@ import { toNumber } from './score'
  *
  * @param {object} payload 已解包的响应体 `{studentId, rank, total, list[]}`
  * @returns {Array<{id, name, studentId, className, gpa, credits, rank, isCurrent}>}
- *          按后端给的顺序（`ORDER BY gpa DESC, sp.id`）返回；`rank` 并列同名次。
+ *          按后端给的顺序（`ORDER BY gpa DESC, sp.id`）返回；`rank` 取后端列表位置
+ *          （脱敏只清空 GPA，不改变顺序）。
  */
 export function toClassMembers(payload) {
   const list = payload && Array.isArray(payload.list) ? payload.list : []
   // `studentId` 在后端装的是**请求者自己的 profileId**（见 StudentServiceImpl.rankingResult），
   // 不是学号字符串。用它标出"你"。
   const meProfileId = payload && payload.studentId != null ? String(payload.studentId) : null
+  const selfRank = payload && typeof payload.rank === 'number' ? payload.rank : null
 
-  // 名次口径与后端 StudentServiceImpl 的 calcClassRank 一致：GPA **严格**高于该生的人数 + 1，
-  // 即并列同名次。后端那个方法没有出现在这个响应里，所以在前端按同一规则现算。
-  const gpaDesc = list
-    .map(r => toNumber(r.gpa))
-    .filter(v => v !== null)
-    .sort((a, b) => b - a)
-  const rankOf = (gpa) => {
-    if (gpa === null) return null
-    const i = gpaDesc.findIndex(v => v === gpa)
-    return i < 0 ? null : i + 1
-  }
-
+  // 名次取后端列表位置（rankingResult 就是下标 + 1），列表按**真实 GPA** 降序。
+  // 不能用脱敏后的 gpa 重算：隐私遮蔽会把同学的 gpa 置空，重算会让本人变成第 1
+  // （与响应顶层的 rank 冲突），被遮蔽的同学也会跟着并列第 1。
   return list.map((r, i) => {
     const gpa = toNumber(r.gpa)
+    const isCurrent = meProfileId !== null && String(r.profileId) === meProfileId
     return {
       id: r.profileId,
       name: r.studentName || '未知',
@@ -55,11 +49,10 @@ export function toClassMembers(payload) {
       // gradedCredits = 计入 GPA 的课程学分（ScoreCaliber.STUDENT_GPA 的 graded_credits）。
       // 没有成绩的同学不会出现在这个列表里（后端按 gpa IS NOT NULL 过滤）。
       credits: toNumber(r.gradedCredits),
-      // 被隐私遮蔽的行算不出"严格高于他的人数"，但列表本身就是按 GPA 降序排的，
-      // 所以**位置**就是他的名次 —— 不这么做的话这一列会全是 '—'，看着像坏了。
-      // （可见的行仍用并列同名次的算法，与后端 calcClassRank 一致。）
-      rank: gpa === null ? i + 1 : rankOf(gpa),
-      isCurrent: meProfileId !== null && String(r.profileId) === meProfileId,
+      // 后端列表本身按真实 GPA 排序，脱敏只清空数值、不改变顺序；
+      // 自己的名次直接采用响应顶层的 rank，其余行取列表位置。
+      rank: isCurrent && selfRank !== null ? selfRank : i + 1,
+      isCurrent,
       // 后端按 `student_profile.privacy_level` 遮蔽了这位同学的成绩（等级不是「公开」）。
       // 行还在（名次与总人数要对得上），只是 gpa/credits 被置空并打了这个标记，
       // 页面据此显示「未公开」而不是一个像出错的 '—'。

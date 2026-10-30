@@ -3,7 +3,7 @@
     <div class="tt-hero">
       <div>
         <h1>我的课表</h1>
-        <p>本学期授课安排：上课时间、教室与选课人数</p>
+        <p>全部学期的授课安排：上课时间、教室与选课人数</p>
       </div>
       <el-button type="primary" :loading="loading" @click="loadTimetable">
         <el-icon><Refresh /></el-icon> 刷新

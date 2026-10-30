@@ -57,9 +57,9 @@
             <el-table-column label="毕业学分" width="150">
               <template #default="{ row }">
                 <div class="tcp-credit-cell">
-                  <span :class="row.totalCredits >= 150 ? 'cr-ok' : row.totalCredits >= 100 ? 'cr-warn' : 'cr-low'">{{ row.totalCredits }}</span>
+                  <span :class="row.totalCredits >= 120 ? 'cr-ok' : row.totalCredits >= 100 ? 'cr-warn' : 'cr-low'">{{ row.totalCredits }}</span>
                   <span class="cr-div">/</span>
-                  <span class="cr-req">150</span>
+                  <span class="cr-req">120</span>
                 </div>
               </template>
             </el-table-column>
@@ -195,8 +195,8 @@
           <div class="tcpds-title">毕业学分</div>
           <div class="tcpd-summary">
             <div class="tcpds"><label>已获</label><b>{{ detailStudent.totalCredits }}</b></div>
-            <div class="tcpds"><label>需修</label><b>150</b></div>
-            <div class="tcpds"><label>缺口</label><b class="gap">{{ Math.max(0, 150 - (detailStudent.totalCredits || 0)) }}</b></div>
+            <div class="tcpds"><label>需修</label><b>120</b></div>
+            <div class="tcpds"><label>缺口</label><b class="gap">{{ Math.max(0, 120 - (detailStudent.totalCredits || 0)) }}</b></div>
           </div>
           <el-progress :percentage="detailStudent.totalPercent" :color="detailStudent.totalPercent >= 100 ? '#16a34a' : detailStudent.totalPercent >= 70 ? '#f59e0b' : '#ef4444'" :stroke-width="10" />
         </div>
@@ -225,6 +225,7 @@ import { ref, reactive, computed, onMounted, nextTick } from 'vue'
 import * as echarts from 'echarts'
 import { teacherAPI } from '@/api/index'
 import { getTeacherId } from '@/utils/userUtils'
+import { toNumber, PASS_LINE } from '@/utils/score'
 
 const activeTab = ref('prediction')
 const predictions = ref([])
@@ -250,7 +251,7 @@ const stats = reactive({ total: 0, highRisk: 0, mediumRisk: 0, lowRisk: 0, elect
 
 // 毕业学分要求表（静态数据）
 const reqTableData = ref([
-  { item: '总学分', requirement: '≥ 150 学分', tagType: 'success', category: '硬性指标', note: '含必修课、选修课、实践环节等所有课程' },
+  { item: '总学分', requirement: '≥ 120 学分', tagType: 'success', category: '硬性指标', note: '含必修课、选修课、实践环节等所有课程' },
   { item: '选修总学分', requirement: '≥ 8 学分', tagType: 'warning', category: '硬性指标', note: '从校级选修课库中修读，每门通常2学分' },
   { item: '人文社科类', requirement: '≥ 1 门', tagType: 'primary', category: '类别覆盖', note: '如心理健康教育、大学英语、中国传统文化等' },
   { item: '自然科学类', requirement: '≥ 1 门', tagType: 'success', category: '类别覆盖', note: '如高等数学、线性代数、人工智能导论等' },
@@ -325,20 +326,27 @@ async function loadData() {
       const credit = Number(e.credits || 0)
       const type = (e.type || '').replace('课', '')
       const isElective = type === '选修'
+      // 2026-10-19：学分只认**真及格**的课。score 可能是 '待录入' 字符串或 null，
+      // 原先不读 score 直接累加，挂科/未录入也计入"已获学分"，达标率虚高。
+      // 口径与 CounselorCourses.vue（score 非空且 ≥60 才计学分）一致。
+      const score = toNumber(e.score)
+      const passed = score !== null && score >= PASS_LINE
 
       // 毕业学分聚合
       if (!studentMap.has(sid)) {
         studentMap.set(sid, { id: sid, name: e.studentName || '学生' + sid, totalCredits: 0, electiveCredits: 0, courseNames: [], electiveNames: [] })
       }
       const s = studentMap.get(sid)
-      s.totalCredits += credit
-      if (isElective) { s.electiveCredits += credit; s.electiveNames.push(e.courseName || '') }
+      if (passed) {
+        s.totalCredits += credit
+        if (isElective) { s.electiveCredits += credit; s.electiveNames.push(e.courseName || '') }
+      }
       s.courseNames.push(e.courseName || '')
 
       // 选修核查聚合
-      if (isElective) {
+      if (isElective && passed) {
         if (!electiveMap.has(sid)) {
-          electiveMap.set(sid, { studentId: sid, studentName: e.studentName || '学生' + sid, courseIds: new Set(), courseNames: [], totalCredits: 0, categories: new Set() })
+          electiveMap.set(sid, { studentId: sid, studentNo: e.studentNo || '', studentName: e.studentName || '学生' + sid, courseIds: new Set(), courseNames: [], totalCredits: 0, categories: new Set() })
         }
         const em = electiveMap.get(sid)
         if (!em.courseIds.has(e.courseId)) {
@@ -352,7 +360,10 @@ async function loadData() {
 
     // 构建毕业预测列表
     const list = [...studentMap.values()].map(s => {
-      const totalPercent = Math.min(100, Math.round(s.totalCredits / 150 * 100))
+      // 2026-10-19：毕业总学分与后端统一取 120（ScoreCaliber.GRADUATION_CREDITS，
+      // student-service 学分进度、teacher-service 同口径），原先写 150，
+      // 同一学生在学生端学分条与这里对不上。
+      const totalPercent = Math.min(100, Math.round(s.totalCredits / 120 * 100))
       const electivePercent = Math.min(100, Math.round(s.electiveCredits / 8 * 100))
       const risk = electivePercent < 50 ? 'high' : electivePercent < 80 ? 'medium' : 'low'
       return { studentId: s.id, studentName: s.name, totalCredits: s.totalCredits, electiveCredits: s.electiveCredits, totalPercent, electivePercent, risk, courseNames: s.courseNames.slice(0, 5).join('、'), electiveNames: s.electiveNames.slice(0, 3).join('、') }
@@ -369,9 +380,10 @@ async function loadData() {
     creditList.value = [...electiveMap.values()].map(s => {
       const covered = new Set(s.categories)
       const categoryScore = REQUIRED_CATEGORIES.filter(c => covered.has(c)).length
-      return { studentNo: s.studentId, studentName: s.studentName, courseCount: s.courseIds.size, completedCredits: s.totalCredits, requiredCredits: 8, categories: [...s.categories], categoryScore, recentCourses: s.courseNames.slice(-3).join('、') }
+      return { studentNo: s.studentNo, studentName: s.studentName, courseCount: s.courseIds.size, completedCredits: s.totalCredits, requiredCredits: 8, categories: [...s.categories], categoryScore, recentCourses: s.courseNames.slice(-3).join('、') }
     })
-    stats.electiveOk = creditList.value.filter(s => s.completedCredits >= 8).length
+    // 顶部卡片与选修 tab 用同一个"达标"定义：学分 ≥8 且 4 类全覆盖。
+    stats.electiveOk = electiveOkCount.value
 
     await nextTick()
     if (chartRef.value) renderChart()

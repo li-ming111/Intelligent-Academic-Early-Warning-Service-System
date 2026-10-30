@@ -45,7 +45,7 @@
               <div class="cari-body">
                 <div class="cari-top">
                   <span class="cari-name">{{ r.className }}</span>
-                  <span class="cari-val" :class="rateClass(r.creditRate)">{{ r.creditRate }}分</span>
+                  <span class="cari-val" :class="rateClass(r.creditRate)">{{ r.creditRate }}%</span>
                 </div>
                 <div class="cari-bar"><div class="carib-fill" :style="{width:r.creditRate+'%',background:r.creditRate>=80?'#16a34a':r.creditRate>=60?'#3b82f6':'#ef4444'}"></div></div>
                 <!-- 2026-10-01 第二十一轮删：这里原来还跟着一个 `±improvementRate%`
@@ -72,7 +72,7 @@
     </div>
 
     <!-- AI 预警趋势分析（W26）：`aiAPI.analyzeWarningTrend` 此前全仓零调用。
-         端点是**纯 AI**（后端直接问通义千问），没配 DASHSCOPE_KEY 时会拿占位串
+         端点是**纯 AI**（后端直接问DeepSeek），没配 AI_API_KEY 时会拿占位串
          冒充成功 —— 闸在 utils/ai.js，命中就换成一句实话，不当作分析结果渲染。 -->
     <div class="ca-panel" style="margin: 0 24px 24px;">
       <div class="cap-head"><span class="cap-title">AI 预警趋势分析</span></div>
@@ -80,7 +80,7 @@
         <AiInsight
           title="AI 趋势解读"
           :load="aiWarningTrend"
-          hint="把本人管辖范围内的预警趋势交给 AI 解读（需要后端配置 DASHSCOPE_KEY）"
+          hint="把本人管辖范围内的预警趋势交给 AI 解读（需要后端配置 AI_API_KEY）"
         />
       </div>
     </div>
@@ -149,7 +149,8 @@ async function loadData() {
       creditRate: Math.min(100, Math.round(parseFloat(item.achievementRate ?? item.avg_score ?? 0)))
     }))
     stats.classCount = classRanking.value.length
-    if (rdList.length) { const t = rdList.reduce((s,it)=>s+Math.min(100,parseFloat(it.achievementRate||it.avg_score||0)),0); stats.creditAchievementRate=Math.round(t/rdList.length) }
+    // 同上面的 `??`：合法 0 值不该回落到 avg_score 冒充达标率。
+    if (rdList.length) { const t = rdList.reduce((s,it)=>s+Math.min(100,parseFloat(it.achievementRate ?? it.avg_score ?? 0)),0); stats.creditAchievementRate=Math.round(t/rdList.length) }
     setTimeout(() => { renderWarn(parse(dr)); renderEfficiency(stats.warningHandlingEfficiency); renderTrend(parse(tr)) }, 200)
   } catch(e) { console.error(e); setTimeout(() => { renderWarn([]); renderEfficiency(0); renderTrend([]) }, 200) }
 }

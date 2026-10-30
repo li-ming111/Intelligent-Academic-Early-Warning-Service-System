@@ -10,7 +10,6 @@ import Settings from '../views/Settings.vue'
 import Statistics from '../views/Statistics.vue'
 import NotificationCenter from '../views/student/NotificationCenter.vue'
 import BenchmarkAnalysis from '../views/student/BenchmarkAnalysis.vue'
-import AppealManagement from '../views/student/AppealManagement.vue'
 import AssistanceFeedback from '../views/student/AssistanceFeedback.vue'
 import ClassMembers from '../views/student/ClassMembers.vue'
 import ClassRanking from '../views/student/ClassRanking.vue'
@@ -60,7 +59,7 @@ import AdminWarnings from '../views/AdminWarnings.vue'
 import AdminAppeals from '../views/AdminAppeals.vue'
 import AdminCourses from '../views/AdminCourses.vue'
 import AdminCoursePlans from '../views/AdminCoursePlans.vue'
-import AdminPermissions from '../views/AdminPermissions.vue'
+import NoAccess from '../views/NoAccess.vue'
 import AdminMessages from '../views/AdminMessages.vue'
 import AdminDataExport from '../views/AdminDataExport.vue'
 import AdminClassManagement from '../views/AdminClassManagement.vue'
@@ -79,6 +78,17 @@ import TeacherLayout from '../views/TeacherLayout.vue'
 import AdminLayout from '../views/AdminLayout.vue'
 import CounselorLayout from '../views/CounselorLayout.vue'
 
+// 角色 → 首页。自定义角色（roles.id>=6）没有对应的 Web 端布局，
+// 统一兜底到 /no-access；否则会掉进「学生守卫 → 登录页 → 登录页守卫 → 学生页」的死循环。
+const roleHome = (role) => {
+  if (role === '2' || role === 'teacher') return '/teacher/dashboard'
+  if (role === '3' || role === 'counselor') return '/counselor/dashboard'
+  if (role === '4' || role === 'admin') return '/admin/dashboard'
+  if (role === '5' || role === 'college_admin') return '/college-admin/dashboard'
+  if (role === '1' || role === 'student' || role === '0') return '/student/dashboard'
+  return '/no-access'
+}
+
 const routes = [
   {
     path: '/login',
@@ -91,6 +101,12 @@ const routes = [
     name: 'Register',
     component: Register,
     meta: { requiresAuth: false }
+  },
+  {
+    path: '/no-access',
+    name: 'NoAccess',
+    component: NoAccess,
+    meta: { requiresAuth: true }
   },
   {
     path: '/student',
@@ -393,7 +409,8 @@ const routes = [
       {
         path: 'permissions',
         name: 'AdminPermissions',
-        component: AdminPermissions
+        // 权限管理已并入「用户管理 → 角色与权限」标签页，旧地址保留重定向
+        redirect: { path: '/admin/users', query: { tab: 'roles' } }
       },
       {
         path: 'messages',
@@ -452,17 +469,7 @@ const routes = [
       }
       // 如果已登录，根据角色跳转
       const role = localStorage.getItem('role')
-      if (role === '2' || role === 'teacher') {
-        return '/teacher/dashboard'
-      } else if (role === '3' || role === 'counselor') {
-        return '/counselor/dashboard'
-      } else if (role === '4' || role === 'admin') {
-        return '/admin/dashboard'
-      } else if (role === '5' || role === 'college_admin') {
-        return '/college-admin/dashboard'
-      } else {
-        return '/student/dashboard'
-      }
+      return roleHome(role)
     }
   }
 ]
@@ -486,18 +493,7 @@ router.beforeEach((to, from, next) => {
   // 如果已登录且访问登录/注册页，根据角色跳转到对应首页
   // 注：/admin-register 现在需要管理员身份，不在此处跳转
   if ((to.path === '/login' || to.path === '/register' || to.path === '/teacher-register' || to.path === '/counselor-register') && hasToken) {
-    if (role === '2' || role === 'teacher') {
-      next('/teacher/dashboard')
-    } else if (role === '3' || role === 'counselor') {
-      next('/counselor/dashboard')
-    } else if (role === '4' || role === 'admin') {
-      next('/admin/dashboard')
-    } else if (role === '5' || role === 'college_admin') {
-      next('/college-admin/dashboard')
-    } else {
-      // 默认学生
-      next('/student/dashboard')
-    }
+    next(roleHome(role))
     return
   }
   
@@ -510,45 +506,21 @@ router.beforeEach((to, from, next) => {
       next('/login')
       return
     }
-    // 教师路径只允许教师角色(2)访问
-    if (path.startsWith('/teacher') && roleNum !== 2 && role !== 'teacher') {
-      if (roleNum === 1) next('/student/dashboard')
-      else if (roleNum === 3) next('/counselor/dashboard')
-      else if (roleNum === 4) next('/admin/dashboard')
-      else next('/login')
-      return
+    let allowed = true
+    if (path.startsWith('/teacher')) {
+      allowed = roleNum === 2 || role === 'teacher'
+    } else if (path.startsWith('/student')) {
+      allowed = roleNum === 1 || roleNum === 0 || role === 'student'
+    } else if (path.startsWith('/counselor')) {
+      allowed = roleNum === 3 || role === 'counselor'
+    } else if (path.startsWith('/admin')) {
+      allowed = roleNum === 4 || role === 'admin'
+    } else if (path.startsWith('/college-admin')) {
+      allowed = roleNum === 5 || role === 'college_admin'
     }
-    // 学生路径只允许学生角色(1)访问
-    if (path.startsWith('/student') && roleNum !== 1 && role !== 'student' && roleNum !== 0) {
-      if (roleNum === 2) next('/teacher/dashboard')
-      else if (roleNum === 3) next('/counselor/dashboard')
-      else if (roleNum === 4) next('/admin/dashboard')
-      else next('/login')
-      return
-    }
-    // 辅导员路径只允许辅导员角色(3)访问
-    if (path.startsWith('/counselor') && roleNum !== 3 && role !== 'counselor') {
-      if (roleNum === 1) next('/student/dashboard')
-      else if (roleNum === 2) next('/teacher/dashboard')
-      else if (roleNum === 4) next('/admin/dashboard')
-      else next('/login')
-      return
-    }
-    // 管理员路径只允许管理员角色(4)访问
-    if (path.startsWith('/admin') && roleNum !== 4 && role !== 'admin') {
-      if (roleNum === 1) next('/student/dashboard')
-      else if (roleNum === 2) next('/teacher/dashboard')
-      else if (roleNum === 3) next('/counselor/dashboard')
-      else next('/login')
-      return
-    }
-    // 学院管理员路径只允许学院管理员角色(5)访问
-    if (path.startsWith('/college-admin') && roleNum !== 5 && role !== 'college_admin') {
-      if (roleNum === 1) next('/student/dashboard')
-      else if (roleNum === 2) next('/teacher/dashboard')
-      else if (roleNum === 3) next('/counselor/dashboard')
-      else if (roleNum === 4) next('/admin/dashboard')
-      else next('/login')
+    if (!allowed) {
+      // 不认识的路径前缀（如 /no-access）不在这里拦，否则会自己重定向给自己
+      next(roleHome(role))
       return
     }
   }

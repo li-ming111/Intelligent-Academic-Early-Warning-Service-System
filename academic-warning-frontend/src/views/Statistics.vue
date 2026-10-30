@@ -14,7 +14,7 @@
           <el-col :xs="24" :sm="12" :md="6">
             <div class="stat-card">
               <div class="stat-icon" style="background-color: #409eff">
-                <i class="el-icon-circle-check"></i>
+                <el-icon><CircleCheck /></el-icon>
               </div>
               <div class="stat-info">
                 <div class="stat-label">当前GPA</div>
@@ -26,7 +26,7 @@
           <el-col :xs="24" :sm="12" :md="6">
             <div class="stat-card">
               <div class="stat-icon" style="background-color: #67c23a">
-                <i class="el-icon-success"></i>
+                <el-icon><SuccessFilled /></el-icon>
               </div>
               <div class="stat-info">
                 <div class="stat-label">平均GPA</div>
@@ -38,7 +38,7 @@
           <el-col :xs="24" :sm="12" :md="6">
             <div class="stat-card">
               <div class="stat-icon" style="background-color: #e6a23c">
-                <i class="el-icon-warning"></i>
+                <el-icon><WarningFilled /></el-icon>
               </div>
               <div class="stat-info">
                 <!-- 这两张卡读的是 highestGPA/lowestGPA（学期绩点接口的 studentGpa，
@@ -53,7 +53,7 @@
           <el-col :xs="24" :sm="12" :md="6">
             <div class="stat-card">
               <div class="stat-icon" style="background-color: #f56c6c">
-                <i class="el-icon-close"></i>
+                <el-icon><CircleCloseFilled /></el-icon>
               </div>
               <div class="stat-info">
                 <div class="stat-label">最低绩点</div>
@@ -181,7 +181,9 @@
         <h3 class="section-title">课程成绩详情</h3>
         <el-table :data="paginatedCourseScores" stripe class="score-table">
           <el-table-column prop="courseName" label="课程名称" width="200" show-overflow-tooltip></el-table-column>
-          <el-table-column prop="semester" label="学期" width="150" align="center"></el-table-column>
+          <el-table-column label="学期" width="150" align="center">
+            <template #default="{ row }">{{ row.semester != null ? `第${row.semester}学期` : '--' }}</template>
+          </el-table-column>
           <el-table-column prop="scoreTotal" label="成绩" width="100" align="center">
             <template #default="{ row }">
               <el-tag :type="getScoreTagType(row.scoreTotal)">
@@ -221,13 +223,13 @@
 </template>
 
 <script setup>
-import { ref, onMounted, computed } from 'vue';
-import { ArrowUp, ArrowDown } from '@element-plus/icons-vue';
+import { ref, onMounted, onUnmounted, computed } from 'vue';
+import { ArrowUp, ArrowDown, CircleCheck, SuccessFilled, WarningFilled, CircleCloseFilled } from '@element-plus/icons-vue';
 import { ElMessage } from 'element-plus';
 import * as echarts from 'echarts';
 import { studentAPI } from '@/api';
 import { getUserId } from '@/utils/userUtils';
-import { toNumber, warningLevel } from '@/utils/score';
+import { toNumber, warningLevel, isPending } from '@/utils/score';
 
 const statistics = ref({
   currentGPA: 0,
@@ -287,6 +289,9 @@ const fetchStatistics = async () => {
     // 连从没重修过的课也显示"持平"。这里把三个 key 都按真实数据补上。
     const attemptsByCourse = new Map()
     scores.forEach(s => {
+      // 期末未录入的行 scoreTotal 是"平时分折半"的中间值，不是一次有效作答 ——
+      // 放进来会让这 4 门课以 20~42 分出现在"课程成绩详情"里，与挂科数对不上。
+      if (isPending(s)) return
       const score = toNumber(s.scoreTotal)
       if (score === null) return
       const key = s.courseId ?? s.courseName
@@ -326,6 +331,8 @@ const fetchStatistics = async () => {
     // 学期趋势：GPA 来自历史绩点接口，均分由该学期已录入成绩求得
     const scoreBySemester = new Map()
     scores.forEach(s => {
+      // 同学期均值也只算期末已录入的成绩，否则未录入的行会把它拉低。
+      if (isPending(s)) return
       const score = toNumber(s.scoreTotal)
       if (score === null) return
       const key = String(s.semester)
@@ -367,8 +374,9 @@ const fetchStatistics = async () => {
       courseTotal: courses.length,
     }
 
-    // 初始化图表
+    // 初始化图表（先销毁上一轮的实例，否则每次刷新都会多一个 canvas + 一个 resize 监听）
     setTimeout(() => {
+      disposeCharts()
       initSemesterChart()
       initWarningPieChart()
     }, 200)
@@ -388,6 +396,27 @@ function arrayOf(res) {
   return Array.isArray(v) ? v : []
 }
 
+// ---- 图表实例管理 ----
+// `echarts.init` 每次都会新建一个实例；同一容器重复 init 会警告并泄漏 canvas，
+// 而 resize 监听每刷新一次就多挂一个（旧的 chart 被丢弃后监听还在调它的 resize）。
+const chartInstances = []
+function initChart(dom) {
+  dom.innerHTML = ''
+  const chart = echarts.init(dom)
+  const onResize = () => chart.resize()
+  window.addEventListener('resize', onResize)
+  chartInstances.push({ chart, onResize })
+  return chart
+}
+function disposeCharts() {
+  chartInstances.forEach(({ chart, onResize }) => {
+    window.removeEventListener('resize', onResize)
+    chart.dispose()
+  })
+  chartInstances.length = 0
+}
+onUnmounted(disposeCharts)
+
 // 初始化学期趋势柱状图
 const initSemesterChart = () => {
   const chartContainer = document.getElementById('semesterChart');
@@ -399,7 +428,7 @@ const initSemesterChart = () => {
     return;
   }
 
-  const chart = echarts.init(chartContainer);
+  const chart = initChart(chartContainer);
   const semesterLabels = statistics.value.semesterTrend.map(item => item.semester || '未知学期');
   const gpaValues = statistics.value.semesterTrend.map(item => parseFloat(item.averageGpa) || 0);
   const scoreValues = statistics.value.semesterTrend.map(item => parseFloat(item.averageScore) || 0);
@@ -472,7 +501,6 @@ const initSemesterChart = () => {
   };
 
   chart.setOption(option);
-  window.addEventListener('resize', () => chart.resize());
 };
 
 // 初始化预警分布饼图
@@ -480,7 +508,7 @@ const initWarningPieChart = () => {
   const chartContainer = document.getElementById('warningChart');
   if (!chartContainer) return;
 
-  const chart = echarts.init(chartContainer);
+  const chart = initChart(chartContainer);
   const data = [
     { value: statistics.value.lowWarningCount, name: '蓝色预警' },
     { value: statistics.value.mediumWarningCount, name: '黄色预警' },
@@ -530,7 +558,6 @@ const initWarningPieChart = () => {
   };
 
   chart.setOption(option);
-  window.addEventListener('resize', () => chart.resize());
 };
 
 // 刷新数据

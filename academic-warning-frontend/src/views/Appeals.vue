@@ -29,7 +29,6 @@
         </el-button>
       </div>
       <el-table :data="appeals" stripe empty-text="暂无申诉记录" style="width: 100%">
-        <el-table-column prop="id" label="编号" width="70" align="center" />
         <el-table-column prop="courseName" label="科目" min-width="120" show-overflow-tooltip />
         <!-- 2026-10-03（第四十三轮 W9）：同一门课有多个学期，只写科目说不清"申诉的是哪一次"。
              后端 appealToMap 在 score_id 非空时带出 scoreSemester / scoreTotal / scoreGrade；
@@ -87,7 +86,6 @@
     <!-- 详情弹窗 -->
     <el-dialog v-model="detailVisible" title="申诉详情" width="450px">
       <div v-if="detail" class="detail-body">
-        <div class="detail-item"><span class="dl">编号</span><span class="dv">#{{ detail.id }}</span></div>
         <div class="detail-item"><span class="dl">科目</span><span class="dv">{{ detail.courseName || '未知' }}</span></div>
         <div class="detail-item"><span class="dl">申诉成绩</span><span class="dv">{{ appealScoreText(detail) }}</span></div>
         <div class="detail-item"><span class="dl">原因</span><span class="dv">{{ reasonLabel(detail.reason) }}</span></div>
@@ -140,12 +138,16 @@ function statusName(s) {
   if (s === 0 || s === 'pending') return '待处理'
   if (s === 1 || s === 'approved') return '已通过'
   if (s === 2 || s === 'rejected') return '已驳回'
-  return s || '-'
+  // 3 = 已撤销（撤销接口 ScoreAppealMapper.withdrawAppeal 写入 status=3）。
+  // 少这一档时，学生刚撤销完，列表和详情里显示的就是裸数字 "3"。
+  if (s === 3 || s === 'withdrawn') return '已撤销'
+  return s ?? '-'
 }
 function statusColor(s) {
   if (s === 0 || s === 'pending') return 'warning'
   if (s === 1 || s === 'approved') return 'success'
   if (s === 2 || s === 'rejected') return 'danger'
+  if (s === 3 || s === 'withdrawn') return 'info'
   return 'info'
 }
 function fmt(d) {
@@ -175,8 +177,9 @@ onMounted(load)
 
 async function load() {
   try {
-    const uid = getUserId()
-    const sid = localStorage.getItem('studentId') || uid
+    // `/students/appeals/**` 系列收的都是 users.id；不要再读旧版遗留的
+    // localStorage.studentId（学号），残留时会被后端判成“只能查看本人的申诉”。
+    const sid = getUserId()
     if (!sid) return
     if (courses.value.length === 0) await fetchCourses()
     const res = await studentAPI.getAppeals(sid)
@@ -201,7 +204,7 @@ async function openSubmit() {
 
 async function fetchCourses() {
   try {
-    const sid = localStorage.getItem('studentId') || getUserId()
+    const sid = getUserId()
     if (!sid) return
     const res = await studentAPI.getScores(sid)
     let raw = []
@@ -225,7 +228,7 @@ async function fetchCourses() {
 async function doSubmit() {
   if (!form.value.courseId || !form.value.reason || !form.value.description) { ElMessage.warning('请完善申诉信息'); return }
   try {
-    const sid = localStorage.getItem('studentId') || getUserId()
+    const sid = getUserId()
     const res = await studentAPI.submitAppeal({ ...form.value, studentId: sid, courseId: Number(form.value.courseId) })
     // 提交失败是 HTTP 200 + 载荷里带 error（同 Scores.vue）—— 原来不读返回值，
     // 后端拒绝了也照样弹「申诉已提交」（假成功）。
@@ -247,11 +250,24 @@ async function openDetail(row) {
 async function withdraw(id) {
   try {
     await ElMessageBox.confirm('确定撤销该申诉吗？', '提示', { type: 'warning' })
-    const sid = localStorage.getItem('studentId') || getUserId()
-    await studentAPI.withdrawAppeal(id, sid)
-    ElMessage.success('已撤销')
+  } catch {
+    return
+  }
+  try {
+    const sid = getUserId()
+    // 后端回 `{success, message}`：影响行数为 0 时 success=false
+    // （例如申诉已被教师处理、或 id 不属于本人）。原来整个调用被外层 catch
+    // 当成"用户取消"吞掉，撤销失败页面上没有任何反馈。
+    const res = await studentAPI.withdrawAppeal(id, sid)
+    if (res && (res.success === false || res.error)) {
+      ElMessage.error(res.message || res.error || '撤销失败')
+      return
+    }
+    ElMessage.success((res && res.message) || '已撤销')
     await load()
-  } catch (e) { /* cancelled */ }
+  } catch (e) {
+    ElMessage.error(e?.message || '撤销失败')
+  }
 }
 </script>
 

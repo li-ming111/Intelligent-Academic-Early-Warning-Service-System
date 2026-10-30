@@ -8,7 +8,7 @@
     </div>
 
     <!-- 失败就如实说失败。`error` 里装的是后端原话或诚实性闸给的人话
-         （AI 没配 key 时是"没有配置 DASHSCOPE_KEY…"，**不是**一句伪装成结果的等待提示）。 -->
+         （AI 没配 key 时是"没有配置 AI_API_KEY…"，**不是**一句伪装成结果的等待提示）。 -->
     <div v-if="error" class="ai-error">{{ error }}</div>
     <div v-else-if="loading" class="ai-empty">正在请求 AI 服务…</div>
     <div v-else-if="!result" class="ai-empty">{{ hint || '点击「开始分析」获取结果' }}</div>

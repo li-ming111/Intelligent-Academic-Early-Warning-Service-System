@@ -63,6 +63,13 @@
           >
             <span>我的课表</span>
           </router-link>
+          <router-link
+            to="/student/statistics"
+            class="nav-item"
+            :class="{ active: isActive('/student/statistics') }"
+          >
+            <span>统计分析</span>
+          </router-link>
           <router-link 
             to="/student/settings" 
             class="nav-item"
@@ -106,30 +113,18 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { 
-  HomeFilled,
-  DocumentCopy,
-  Warning,
-  Help,
-  EditPen,
-  ChatDotRound,
-  Bell,
-  SwitchButton,
-  DataAnalysis,
-  Edit,
-  Setting,
-  User,
-  Trophy
-} from '@element-plus/icons-vue'
+import { Bell, SwitchButton } from '@element-plus/icons-vue'
 import { studentAPI } from '@/api/index'
 import { getUserId } from '@/utils/userUtils'
 import AIAssistant from '@/components/AIAssistant.vue'
 
 const route = useRoute()
 const router = useRouter()
-const storedName = localStorage.getItem('userName')
+// Login.vue 写入的是 `name`；`userName` 只有教师/辅导员布局才会写。
+// 只读后者会让学生顶栏永远显示兜底的「学生」。
+const storedName = localStorage.getItem('name') || localStorage.getItem('userName')
 const storedRole = localStorage.getItem('role')
 const unreadCount = ref(0)
 let pollTimer = null
@@ -147,21 +142,7 @@ if (storedName && !/^\d+$/.test(storedName)) {
 }
 const studentName = ref(defaultName)
 
-// 获取学生信息
-const loadStudentInfo = async () => {
-  try {
-    const userId = localStorage.getItem('userId')
-    if (!userId) return
-    // 这里可以添加获取学生信息的API调用
-    // 暂时使用localStorage中的用户名
-  } catch (error) {
-    console.error('加载学生信息失败:', error)
-  }
-}
-
-// 组件挂载时加载学生信息
 onMounted(() => {
-  loadStudentInfo()
   fetchUnread()
   pollTimer = setInterval(fetchUnread, 30000) // 30秒轮询
 })
@@ -187,33 +168,16 @@ function goMessages() {
   router.push('/student/messages')
 }
 
-const pageMap = {
-  '/student/dashboard': '学业数据概览',
-  '/student/scores': '成绩查询',
-  '/student/warnings': '预警信息',
-  '/student/assistance': '帮扶信息',
-  '/student/appeals': '成绩申诉',
-  '/student/messages': '消息中心',
-  '/student/benchmark-analysis': '对标分析',
-  '/student/assistance-feedback': '帮扶反馈',
-  '/student/class-members': '班级成员',
-  '/student/class-ranking': '班级排名',
-  '/student/settings': '个人设置'
-}
-
-const currentPageTitle = computed(() => {
-  return pageMap[route.path] || '学生工作台'
-})
-
 const isActive = (path) => {
   return route.path === path
 }
 
 const handleLogout = () => {
-  localStorage.removeItem('token')
-  localStorage.removeItem('userId')
-  localStorage.removeItem('username')
-  localStorage.removeItem('role')
+  // 教师/辅导员布局会写 `userName`，学生登录写 `name`；不清会给下一个
+  // 在本机登录的角色留下上一个人的姓名。
+  for (const key of ['token', 'userId', 'username', 'name', 'userName', 'role', 'email', 'phone', 'studentId']) {
+    localStorage.removeItem(key)
+  }
   router.push('/login')
 }
 </script>

@@ -23,7 +23,7 @@
                  接口没回来时，**任何**学生都会看到"计科2306班"这个具体班名。
                  同一个兜底文案在小程序端也出现过（已改）。没班级就说没班级。 -->
             <span class="htag">{{ classInfo.classIdentifier || '未分班' }}</span>
-            <span class="htag" v-if="academicData.warningLevel !== '正常'">预警 {{ academicData.warningLevel }}</span>
+            <span class="htag" v-if="academicData.warningCount > 0">预警 {{ academicData.warningCount }} 条</span>
             <span class="htag safe" v-else>状态良好</span>
           </div>
         </div>
@@ -33,7 +33,7 @@
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20V10"/><path d="M18 20V4"/><path d="M6 20v-4"/></svg>
             </div>
             <div class="hsc-body">
-              <div class="hsc-val">{{ academicData.gpa || '--' }}</div>
+              <div class="hsc-val">{{ academicData.gpa ?? '--' }}</div>
               <div class="hsc-label">当前 GPA</div>
             </div>
           </div>
@@ -119,8 +119,8 @@
                   <div class="ci-name">{{ c.courseName || '课程' + c.courseId }}</div>
                   <div class="ci-meta">{{ c.credits || '--' }} 学分</div>
                 </div>
-                <div class="ci-score" :class="{ fail: (c.scoreTotal||0)<60 }">
-                  <div class="cis-num">{{ c.scoreTotal || '--' }}</div>
+                <div class="ci-score" :class="{ fail: scoreState(c) === 'fail' }">
+                  <div class="cis-num">{{ scoreState(c) === 'pending' ? '--' : c.scoreTotal }}</div>
                   <div class="cis-label">分</div>
                 </div>
               </div>
@@ -149,7 +149,7 @@
               <div v-for="(p,i) in assistancePlans.slice(0,2)" :key="p.id" class="plan-panel" :style="{ animationDelay: i*0.1+'s' }">
                 <div class="pp-top">
                   <span class="pp-name">{{ p.title || '帮扶计划' }}</span>
-                  <el-tag size="small" :type="p.status === '进行中' ? '' : 'success'" effect="plain">{{ p.status || '进行中' }}</el-tag>
+                  <el-tag size="small" :type="planStatusTagType(p)" effect="plain">{{ planStatusLabel(p) }}</el-tag>
                 </div>
                 <p class="pp-desc">{{ p.description }}</p>
                 <div class="pp-bar-row">
@@ -301,13 +301,15 @@ import { studentAPI, aiAPI } from '@/api/index'
 import { getUserId } from '@/utils/userUtils'
 import { ElMessage } from 'element-plus'
 import AiInsight from '@/components/AiInsight.vue'
+import { scoreState } from '@/utils/score'
 
 // 优先显示真实姓名（登录时存于 'name'）；缺失或为纯数字（学号/userId）时回退，
 // 避免把学号当姓名显示——与 StudentLayout.vue 的防护保持一致
 const storedName = localStorage.getItem('name') || localStorage.getItem('userName')
 const username = ref(storedName && !/^\d+$/.test(storedName) ? storedName : '同学')
 const today = new Date().toLocaleDateString('zh-CN', { year:'numeric', month:'long', day:'numeric', weekday:'short' })
-const academicData = ref({ gpa:0, totalCourses:0, failedCourses:0, warningCount:0, warningLevel:'正常' })
+// GPA 用 null 表示"后端没给"，与真实的 0 分开；模板用 `??` 展示，避免把 0 折成 '--'
+const academicData = ref({ gpa:null, totalCourses:0, failedCourses:0, warningCount:0 })
 const classInfo = ref({})
 const warnings = ref([])
 const assistancePlans = ref([])
@@ -332,6 +334,18 @@ const getGreeting = () => {
   return '晚上好'
 }
 
+// 帮扶计划的 status 是数值（0 未开始 / 1 进行中 / 2 已完成），后端同时给 statusText。
+// 直接渲染 p.status 会显示 "1"/"2"，用中文字符串比较则恒为 false（标签颜色全错）。
+function planStatusLabel(p) {
+  if (p?.statusText) return p.statusText
+  const n = Number(p?.status)
+  return n === 2 ? '已完成' : n === 1 ? '进行中' : '未开始'
+}
+function planStatusTagType(p) {
+  const n = Number(p?.status)
+  return n === 2 ? 'success' : n === 1 ? 'warning' : 'info'
+}
+
 onMounted(() => loadAll())
 
 async function loadAll() {
@@ -348,12 +362,12 @@ async function loadDashboard(uid) {
     // 2026-10-02（W4.15）：删掉恒假的 `res?.code === 200` 支（拦截器已解包）。
     const data = res
     if (data && typeof data === 'object') {
+      const gpa = parseFloat(data.gpa)
       academicData.value = {
-        gpa: parseFloat(data.gpa) || 0,
+        gpa: Number.isFinite(gpa) ? gpa : null,
         totalCourses: parseInt(data.totalCoursesCount) || 0,
         failedCourses: parseInt(data.failedCoursesCount) || 0,
-        warningCount: parseInt(data.warningCount) || 0,
-        warningLevel: (parseInt(data.warningCount) || 0) === 0 ? '正常' : '有预警'
+        warningCount: parseInt(data.warningCount) || 0
       }
     }
   } catch(e) {}

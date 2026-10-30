@@ -12,18 +12,18 @@
     <div class="ta-stats" v-if="stats.total > 0">
       <div class="tas-card"><div class="tas-icon blue"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20"><path d="M16 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/></svg></div><div class="tas-num">{{ stats.total }}</div><div class="tas-lbl">总人数</div></div>
       <div class="tas-card"><div class="tas-icon green"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20"><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/></svg></div><div class="tas-num">{{ stats.avg }}</div><div class="tas-lbl">平均分</div></div>
-      <div class="tas-card"><div class="tas-icon purple"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></div><div class="tas-num">{{ stats.pass }}%</div><div class="tas-lbl">及格率</div></div>
-      <div class="tas-card"><div class="tas-icon red"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/></svg></div><div class="tas-num red">{{ stats.atRisk }}</div><div class="tas-lbl">风险学生</div></div>
+      <div class="tas-card"><div class="tas-icon purple"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></div><div class="tas-num">{{ stats.pass }}%</div><div class="tas-lbl">课程及格率</div></div>
+      <div class="tas-card"><div class="tas-icon red"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/></svg></div><div class="tas-num red">{{ stats.atRisk }}</div><div class="tas-lbl">挂科学生</div></div>
     </div>
 
     <div class="ta-charts" v-if="stats.total > 0">
-      <div class="ta-chart-card"><div class="tcc-title">成绩分布</div><div ref="barRef" class="tcc-box"></div></div>
-      <div class="ta-chart-card"><div class="tcc-title">成绩段占比</div><div ref="pieRef" class="tcc-box"></div></div>
+      <div class="ta-chart-card"><div class="tcc-title">学生平均分分布</div><div ref="barRef" class="tcc-box"></div></div>
+      <div class="ta-chart-card"><div class="tcc-title">平均分段占比</div><div ref="pieRef" class="tcc-box"></div></div>
     </div>
 
     <div class="ta-panel" v-if="studentList.length">
       <div class="tp-head"><span>学生成绩排名</span><span class="tp-badge">{{ studentList.length }}人</span></div>
-      <el-table :data="pagedStudents" stripe size="medium" style="width:100%">
+      <el-table :data="pagedStudents" stripe style="width:100%">
         <el-table-column type="index" label="#" width="60" align="center" />
         <el-table-column prop="studentId" label="学号" min-width="140" />
         <el-table-column prop="studentName" label="姓名" min-width="100" />
@@ -34,7 +34,9 @@
         </el-table-column>
         <el-table-column label="状态" min-width="120" align="center">
           <template #default="{row}">
-            <el-tag :type="row.scoreTotal >= 80 ? 'success' : row.scoreTotal >= 60 ? 'warning' : 'danger'">{{ row.scoreTotal >= 80 ? '优秀' : row.scoreTotal >= 60 ? '及格' : '不及格' }}</el-tag>
+            <el-tag :type="row.failCount > 0 ? 'danger' : row.scoreTotal >= 80 ? 'success' : row.scoreTotal >= 70 ? 'warning' : 'info'">
+              {{ row.failCount > 0 ? '有挂科' : row.scoreTotal >= 80 ? '优秀' : row.scoreTotal >= 70 ? '良好' : '及格' }}
+            </el-tag>
           </template>
         </el-table-column>
       </el-table>
@@ -52,7 +54,7 @@ import { ref, reactive, computed, onMounted, nextTick } from 'vue'
 import * as echarts from 'echarts'
 import { teacherAPI } from '@/api/index'
 import { getTeacherId } from '@/utils/userUtils'
-import { toNumber } from '@/utils/score'
+import { toNumber, PASS_LINE } from '@/utils/score'
 
 const selectedClass = ref('')
 const selectedCourse = ref('')
@@ -101,29 +103,44 @@ async function loadAnalysis() {
   currentPage.value = 1
   try {
     const className = classes.value.find(c => c.id === selectedClass.value)?.name
-    const r = await teacherAPI.getScoresByClass(className)
-    const list = Array.isArray(r) ? r : []
+    // only_mine=true：分析只统计本人所授课程。班级里其他教师教的课不能算进
+    // 本人的平均分/及格率（后端据此过滤 courses.teacher_id）。
+    const tid = getTeacherId()
+    const r = await teacherAPI.getScoresByClass(className, tid, true)
+    let list = Array.isArray(r) ? r : []
+    if (selectedCourse.value) list = list.filter(s => String(s.courseId) === String(selectedCourse.value))
     const byStudent = {}
+    let gradedRows = 0
+    let passedRows = 0
+    let scoreSum = 0
     list.forEach(s => {
       const sid = s.studentNo || s.studentId
-      if (!byStudent[sid]) byStudent[sid] = { studentId: sid, studentName: s.studentName, scores: [] }
+      if (!byStudent[sid]) byStudent[sid] = { studentId: sid, studentName: s.studentName, scores: [], failCount: 0 }
       // 期末未录入的成绩不能折成 0 分参与平均：`s.totalScore || 0` 会把"待录入"
-      // 算成 0 分，既拉低全班平均分，又把该学生误标成"不及格/风险学生"。
+      // 算成 0 分，既拉低全班平均分，又把该学生误标成"有挂科"。
       const score = toNumber(s.totalScore ?? s.score)
-      if (score !== null) byStudent[sid].scores.push(score)
+      if (score !== null) {
+        byStudent[sid].scores.push(score)
+        gradedRows++
+        scoreSum += score
+        if (score >= PASS_LINE) passedRows++
+        else byStudent[sid].failCount++
+      }
     })
-    studentList.value = Object.values(byStudent)
-      .filter(s => s.scores.length > 0)
+    const students = Object.values(byStudent).filter(s => s.scores.length > 0)
+    studentList.value = students
       .map(s => {
         const avg = +(s.scores.reduce((a,b)=>a+b,0) / s.scores.length).toFixed(1)
-        return { studentId: s.studentId, studentName: s.studentName, scoreTotal: avg }
+        return { studentId: s.studentId, studentName: s.studentName, scoreTotal: avg, failCount: s.failCount }
       }).sort((a,b) => b.scoreTotal - a.scoreTotal)
 
-    const sc = studentList.value.map(s => s.scoreTotal)
-    stats.total = sc.length
-    stats.avg = sc.length ? (sc.reduce((a,b)=>a+b,0) / sc.length).toFixed(1) : '--'
-    stats.pass = sc.length ? Math.round(sc.filter(v => v >= 60).length / sc.length * 100) : 0
-    stats.atRisk = sc.filter(v => v < 60).length
+    // 及格率按「课程成绩行」算，挂科学生按「至少一门 < 60」算 ——
+    // 与预警页同口径。原先拿学生平均分过线：挂一门、其余 90+ 的学生平均仍 >60，
+    // 会被算成"及格/无风险"，与预警名单对不上。
+    stats.total = studentList.value.length
+    stats.avg = gradedRows ? (scoreSum / gradedRows).toFixed(1) : '--'
+    stats.pass = gradedRows ? Math.round(passedRows / gradedRows * 100) : 0
+    stats.atRisk = students.filter(s => s.failCount > 0).length
     await nextTick(renderCharts)
   } catch (e) { console.error(e) }
 }

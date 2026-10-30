@@ -56,7 +56,7 @@
           <el-input v-model="form.password" type="password" placeholder="请输入密码（至少6位）" show-password>
             <template #prefix><el-icon><Lock /></el-icon></template>
           </el-input>
-          <span class="rg-hint dim">默认密码: 123456</span>
+          <span class="rg-hint dim">密码至少6位；注册后需管理员审批通过方可登录</span>
         </div>
 
         <div class="rg-field">

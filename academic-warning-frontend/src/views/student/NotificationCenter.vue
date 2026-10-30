@@ -1,57 +1,6 @@
 <template>
   <div class="notification-center-container">
     <el-container>
-      <!-- 侧边栏 - 订阅管理 -->
-      <el-aside width="250px" class="subscription-sidebar">
-        <div class="sidebar-title">订阅偏好</div>
-        
-        <div class="subscription-section">
-          <div class="section-title">预警通知</div>
-          <el-checkbox v-model="preferences.subscribeWarnings">
-            订阅预警通知
-          </el-checkbox>
-          
-          <div class="level-settings">
-            <el-checkbox v-model="preferences.subscribeLow">
-              <span class="low-badge">低</span> 低级预警
-            </el-checkbox>
-            <el-checkbox v-model="preferences.subscribeMedium">
-              <span class="medium-badge">中</span> 中级预警
-            </el-checkbox>
-            <el-checkbox v-model="preferences.subscribeHigh">
-              <span class="high-badge">高</span> 高级预警
-            </el-checkbox>
-          </div>
-        </div>
-
-        <div class="subscription-section">
-          <div class="section-title">其他通知</div>
-          <el-checkbox v-model="preferences.subscribeAssistance">
-            帮扶计划更新
-          </el-checkbox>
-          <el-checkbox v-model="preferences.subscribeSystem">
-            系统消息
-          </el-checkbox>
-        </div>
-
-        <div class="subscription-section">
-          <div class="section-title">推送渠道</div>
-          <el-checkbox v-model="preferences.pushApp"> 
-            <i class="el-icon-bell"></i> 应用内通知
-          </el-checkbox>
-          <el-checkbox v-model="preferences.pushEmail">
-            <i class="el-icon-message"></i> 邮件通知
-          </el-checkbox>
-          <el-checkbox v-model="preferences.pushSms">
-            <i class="el-icon-phone"></i> 短信通知
-          </el-checkbox>
-        </div>
-
-        <el-button type="primary" @click="savePreferences" style="width: 100%; margin-top: 20px">
-          保存设置
-        </el-button>
-      </el-aside>
-
       <!-- 主内容区 - 通知列表 -->
       <el-main class="notification-main">
         <!-- 顶部工具栏 -->
@@ -131,14 +80,10 @@
 import { studentAPI } from '@/api'
 import { subscribeMyMessages, unsubscribeMyMessages } from '@/utils/realtimeMessages'
 
-// 订阅设置的 9 个键，顺序与后端 `StudentServiceImpl.SUBSCRIPTION_KEYS` 一致。
-// 页面里一律用**布尔**（el-checkbox 只认 `modelValue === trueValue`），
-// 与后端交换时用 1/0（loadPreferences / savePreferences 各转一次）。
-const SUBSCRIPTION_KEYS = [
-  'subscribeWarnings', 'subscribeLow', 'subscribeMedium', 'subscribeHigh',
-  'subscribeAssistance', 'subscribeSystem',
-  'pushEmail', 'pushSms', 'pushApp'
-]
+// 2026-10-21：删掉侧边栏 9 个「订阅偏好」开关。后端 `subscription_preferences`
+// 只有读写、全仓没有任何消费方（无 JavaMailSender、无短信实现，通知生成也不读它），
+// 开关拨了不会改变任何通知行为 —— 留着就是让用户以为设置生效。与辅导员端
+// 「邮件提醒」开关的处理一致：无实现就不摆假开关。
 
 export default {
   name: 'NotificationCenter',
@@ -148,17 +93,6 @@ export default {
       unreadCount: 0,
       unreadNotifications: [],
       allNotifications: [],
-      preferences: {
-        subscribeWarnings: true,
-        subscribeLow: true,
-        subscribeMedium: true,
-        subscribeHigh: true,
-        subscribeAssistance: true,
-        subscribeSystem: true,
-        pushEmail: true,
-        pushSms: false,
-        pushApp: true
-      },
       currentPage: 1,
       pageSize: 10,
       total: 0,
@@ -167,7 +101,10 @@ export default {
   },
   computed: {
     userId() {
-      return localStorage.getItem('userId') || this.$store.state.user?.id
+      // 本项目没有安装 Vuex，`this.$store` 是 undefined —— 原来 userId 缺失时
+      // 兜底分支会直接抛 TypeError。登录后 userId 必有；没有就返回空串，
+      // 让请求层如实失败。
+      return localStorage.getItem('userId') || ''
     }
   },
   mounted() {
@@ -198,8 +135,6 @@ export default {
         await this.loadUnreadNotifications()
         // 加载所有通知
         await this.loadAllNotifications()
-        // 加载用户订阅偏好
-        await this.loadPreferences()
         // 加载未读数量
         await this.loadUnreadCount()
       } finally {
@@ -234,46 +169,6 @@ export default {
       }
     },
 
-    async loadPreferences() {
-      try {
-        // 先根据 userId 获取 profileId（订阅表存的是 student_profile.id）
-        const profileId = await this.resolveProfileId()
-        if (!profileId) {
-          console.warn('未找到学生档案，跳过订阅偏好加载')
-          return
-        }
-        const res = await studentAPI.getSubscriptionPreferences(profileId)
-        if (res && res.success === false) {
-          console.warn('订阅偏好不可用:', res.message)
-          return
-        }
-        if (res && typeof res === 'object') {
-          // ⚠️ 2026-10-01 第二十四轮：必须**转成布尔**再绑给 el-checkbox。
-          // 库和后端给的都是 1/0，而 `el-checkbox` 判的是 `modelValue === trueValue`
-          // （trueValue 默认就是 `true`），`1 === true` 是 false ⇒ **九个勾全部显示为未勾选**，
-          // 与库里的实际设置完全相反（实测司明：medium/high/assistance/system/pushApp/pushEmail
-          // 库里都是 1，页面上却一个都没勾）。这类"数据全对、只有控件状态错"用接口核不出来，
-          // 必须看渲染。下面 savePreferences 再转回 1/0，保持进出同一种表示。
-          for (const k of SUBSCRIPTION_KEYS) {
-            if (res[k] !== undefined && res[k] !== null) {
-              this.preferences[k] = Number(res[k]) === 1
-            }
-          }
-        }
-      } catch (error) {
-        console.warn('加载订阅偏好失败', error)
-      }
-    },
-
-    /** `users.id` → `student_profile.id`；取不到就返回 null（调用方如实提示，不硬发请求）。 */
-    async resolveProfileId() {
-      const userId = parseInt(localStorage.getItem('userId')) || this.userId
-      if (!userId) return null
-      const studentInfo = await studentAPI.getStudentInfoByUserId(userId)
-      // 查不到人时后端回的是 `{error:"学生不存在"}`（HTTP 200），没有 id
-      return studentInfo && studentInfo.id != null ? studentInfo.id : null
-    },
-
     async loadUnreadCount() {
       try {
         const res = await studentAPI.getUnreadNotificationCountAdvanced(this.userId)
@@ -281,32 +176,6 @@ export default {
         this.unreadCount = res && res.unreadCount != null ? res.unreadCount : 0
       } catch (error) {
         console.error('加载未读数量失败', error)
-      }
-    },
-
-    async savePreferences() {
-      try {
-        const profileId = await this.resolveProfileId()
-        if (!profileId) {
-          this.$message.error('未找到学生档案，无法保存订阅设置')
-          return
-        }
-        // el-checkbox 的 v-model 是**布尔**，库里是 1/0 —— 后端两种都收
-        // （改前后端是 `(Integer) pref.get(...)` 硬转，收到 true 直接 ClassCastException，
-        //   而页面又用死分支读响应，所以"保存设置"一直是个静默失败）。
-        // 这里显式转回 1/0：读回来的和写进去的用同一种表示，避免"存了 true、读回 1"
-        // 这种两边都对但看着像不一致的状态。
-        const payload = {}
-        for (const k of SUBSCRIPTION_KEYS) payload[k] = this.preferences[k] ? 1 : 0
-        const res = await studentAPI.updateSubscriptionPreferences(profileId, payload)
-        if (res && res.success === false) {
-          this.$message.error(res.message || '保存设置失败')
-          return
-        }
-        this.$message.success('订阅设置已保存')
-        await this.loadPreferences()
-      } catch (error) {
-        this.$message.error('保存设置失败')
       }
     },
 
@@ -457,73 +326,6 @@ export default {
 .notification-center-container {
   .el-container {
     height: 100%;
-  }
-
-  .subscription-sidebar {
-    background: #f5f7fa;
-    border-right: 1px solid #ebeef5;
-    padding: 20px;
-    overflow-y: auto;
-
-    .sidebar-title {
-      font-size: 16px;
-      font-weight: bold;
-      margin-bottom: 20px;
-      color: #303133;
-    }
-
-    .subscription-section {
-      margin-bottom: 20px;
-      padding-bottom: 20px;
-      border-bottom: 1px solid #ebeef5;
-
-      .section-title {
-        font-size: 14px;
-        font-weight: bold;
-        color: #606266;
-        margin-bottom: 10px;
-      }
-
-      .el-checkbox {
-        display: block;
-        margin-bottom: 8px;
-        color: #606266;
-      }
-
-      .level-settings {
-        padding-left: 20px;
-        margin-top: 10px;
-
-        .el-checkbox {
-          margin-bottom: 6px;
-        }
-      }
-
-      .low-badge, .medium-badge, .high-badge {
-        display: inline-block;
-        width: 20px;
-        height: 20px;
-        border-radius: 3px;
-        color: white;
-        text-align: center;
-        line-height: 20px;
-        font-weight: bold;
-        margin-right: 6px;
-        font-size: 12px;
-      }
-
-      .low-badge {
-        background: #67c23a;
-      }
-
-      .medium-badge {
-        background: #e6a23c;
-      }
-
-      .high-badge {
-        background: #f56c6c;
-      }
-    }
   }
 
   .notification-main {
