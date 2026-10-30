@@ -11,6 +11,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.*;
@@ -47,6 +48,7 @@ public class CollegeAdminController {
     @Autowired private TeacherProfileMapper teacherProfileMapper;
     @Autowired private CounselorProfileMapper counselorProfileMapper;
     @Autowired private AcademicWarningMapper academicWarningMapper;
+    @Autowired private AcademicWarningCourseMapper academicWarningCourseMapper;
     @Autowired private com.academic.mapper.MajorMapper majorMapper;
     @Autowired private ScoreStatMapper scoreStatMapper;
     @Autowired private com.academic.mapper.AssistancePlanMapper assistancePlanMapper;
@@ -608,7 +610,7 @@ public class CollegeAdminController {
         if (collegeId == null) return ApiResponse.forbidden("无权限");
         TeacherProfile tp = teacherProfileMapper.selectById(teacherId);
         if (tp == null) return ApiResponse.error("教师不存在");
-        if (!tp.getCollegeId().equals(collegeId)) return ApiResponse.forbidden("该教师不属于您管理的学院");
+        if (!Objects.equals(tp.getCollegeId(), collegeId)) return ApiResponse.forbidden("该教师不属于您管理的学院");
         Map<String, Object> d = new HashMap<>();
         d.put("id", tp.getId()); d.put("name", tp.getName()); d.put("title", tp.getTitle());
         d.put("researchAreas", tp.getResearchAreas());
@@ -654,21 +656,37 @@ public class CollegeAdminController {
         if (!ownsWarning(collegeId, warningId)) return ApiResponse.forbidden("该预警不属于本院");
         AcademicWarning w = academicWarningMapper.selectById(warningId);
         if (w == null) return ApiResponse.error("记录不存在");
-        w.setStatus(intOr(body.get("status"), 1));
+        Integer target = intOr(body.get("status"), WarningStatus.HANDLED);
+        if (target < WarningStatus.PENDING || target > WarningStatus.DISPELLED) {
+            return ApiResponse.badRequest("非法状态值: " + target);
+        }
+        if (w.getStatus() != null && w.getStatus() == WarningStatus.DISPELLED
+                && target != WarningStatus.DISPELLED) {
+            return ApiResponse.error("该预警已解除，不能再处理");
+        }
+        w.setStatus(target);
         w.setUpdatedAt(java.time.LocalDateTime.now());
-        academicWarningMapper.updateById(w);
+        if (academicWarningMapper.updateById(w) == 0) {
+            return ApiResponse.error("预警状态已变化，请刷新后重试");
+        }
         return ApiResponse.success("处理成功");
     }
 
-    /** 删除预警记录 */
+    /** 删除预警记录（连同挂科课程明细一起删，明细表没有外键） */
     @DeleteMapping("/delete-warning/{userId}/{warningId}")
+    @Transactional(rollbackFor = Exception.class)
     public ApiResponse<String> deleteWarning(@PathVariable Long userId, @PathVariable Long warningId) {
         Long collegeId = getCollegeId(userId);
         if (collegeId == null) return ApiResponse.forbidden("无权限");
         if (!ownsWarning(collegeId, warningId)) return ApiResponse.forbidden("该预警不属于本院");
         AcademicWarning w = academicWarningMapper.selectById(warningId);
         if (w == null) return ApiResponse.error("记录不存在");
-        academicWarningMapper.deleteById(warningId);
+        // academic_warning_course.warning_id 没有外键约束，漏删就留下指向不存在预警的孤儿行。
+        academicWarningCourseMapper.delete(
+                new QueryWrapper<AcademicWarningCourse>().eq("warning_id", warningId));
+        if (academicWarningMapper.deleteById(warningId) == 0) {
+            return ApiResponse.error("预警已被删除，请刷新后重试");
+        }
         return ApiResponse.success("已删除");
     }
 
@@ -706,17 +724,23 @@ public class CollegeAdminController {
         return ApiResponse.success(result);
     }
 
-    /** 成绩查询：按班级/学生筛选全院成绩 */
+    /** 成绩查询：按班级/学生筛选本学院成绩，服务端分页 */
     @GetMapping("/score-query/{userId}")
-    public ApiResponse<List<Map<String, Object>>> scoreQuery(
+    public ApiResponse<Map<String, Object>> scoreQuery(
             @PathVariable Long userId,
             @RequestParam(required = false) Long classId,
-            @RequestParam(required = false) String keyword) {
+            @RequestParam(required = false) String keyword,
+            @RequestParam(defaultValue = "1") int page,
+            @RequestParam(defaultValue = "30") int size) {
         Long collegeId = getCollegeId(userId);
         if (collegeId == null) return ApiResponse.forbidden("无权限");
-        // 班级与关键字过滤已下推到 SQL；排序也由 SQL 的 ORDER BY 完成
-        List<Map<String, Object>> result = new ArrayList<>();
-        for (Map<String, Object> row : scoreStatMapper.selectScoreRows(collegeId, classId, keyword)) {
+        int p = Math.max(1, page);
+        int s = Math.min(200, Math.max(1, size));
+        String kw = (keyword == null || keyword.trim().isEmpty()) ? null : keyword.trim();
+        // 过滤、排序、截断都在 SQL 里做：一次只取一页，不把全院明细拉进内存
+        long total = scoreStatMapper.countScoreRows(collegeId, classId, kw);
+        List<Map<String, Object>> items = new ArrayList<>();
+        for (Map<String, Object> row : scoreStatMapper.selectScoreRowsPage(collegeId, classId, kw, (p - 1) * s, s)) {
             Map<String, Object> m = new HashMap<>();
             m.put("id", row.get("id"));
             m.put("studentName", row.get("student_name"));
@@ -729,8 +753,13 @@ public class CollegeAdminController {
             m.put("gradePoint", row.get("grade_point"));
             m.put("grade", row.get("grade"));
             m.put("semester", row.get("semester"));
-            result.add(m);
+            items.add(m);
         }
+        Map<String, Object> result = new HashMap<>();
+        result.put("total", total);
+        result.put("items", items);
+        result.put("page", p);
+        result.put("size", s);
         return ApiResponse.success(result);
     }
 }

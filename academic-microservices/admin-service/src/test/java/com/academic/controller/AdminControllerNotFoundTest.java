@@ -5,6 +5,7 @@ import com.academic.common.entity.College;
 import com.academic.entity.WarningRule;
 import com.academic.common.entity.CounselorProfile;
 import com.academic.mapper.CounselorProfileMapper;
+import com.academic.mapper.UserMapper;
 import com.academic.service.AuditLogService;
 import com.academic.service.CollegeService;
 import com.academic.service.CounselorService;
@@ -48,6 +49,7 @@ class AdminControllerNotFoundTest {
     @Mock private ReportTemplateService reportTemplateService;
     @Mock private CounselorService counselorService;
     @Mock private CounselorProfileMapper counselorProfileMapper;
+    @Mock private UserMapper userMapper;
     @Mock private UserService userService;
 
     @InjectMocks private AdminController controller;
@@ -146,6 +148,8 @@ class AdminControllerNotFoundTest {
         profile.setUserId(29L);
         when(counselorProfileMapper.selectById(3L)).thenReturn(profile);
         when(counselorService.removeById(3L)).thenReturn(true);
+        // 新实现删完档案还要删账号，账号删失败（0 行）会抛异常触发回滚。
+        when(userService.removeById(29L)).thenReturn(true);
 
         assertEquals(200, controller.deleteCounselor(3L).getCode());
 

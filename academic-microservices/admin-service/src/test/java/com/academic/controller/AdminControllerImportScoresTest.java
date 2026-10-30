@@ -300,10 +300,10 @@ class AdminControllerImportScoresTest {
     }
 
     @Test
-    @DisplayName("★ 不写学期 ⇒ 退到该生已有最大学期序号（不是硬编码 1）")
+    @DisplayName("★ 不写学期 ⇒ 退到该生该课最近一条学期序号（不是硬编码 1）")
     void missingSemesterFallsBackToMax() throws Exception {
         oneStudentAndCourse();
-        when(scoreMapper.selectMaxSemester(PROFILE_ID)).thenReturn(6);
+        when(scoreMapper.selectLatestSemester(PROFILE_ID, COURSE_ID)).thenReturn(6);
         when(scoreMapper.selectByStudentCourseSemester(PROFILE_ID, COURSE_ID, "6")).thenReturn(null);
 
         MultipartFile file = xlsx(new String[]{"学号", "课程名称", "成绩"},

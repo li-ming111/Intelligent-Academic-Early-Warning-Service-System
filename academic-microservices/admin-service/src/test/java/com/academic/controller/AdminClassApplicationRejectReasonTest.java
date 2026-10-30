@@ -74,6 +74,7 @@ class AdminClassApplicationRejectReasonTest {
     @DisplayName("拒绝教师申请：理由写进记录，首尾空白被裁掉")
     void rejectTeacher_writesTrimmedReason() {
         when(applicationMapper.selectById(7L)).thenReturn(teacherApp(7L, 0));
+        when(applicationMapper.updateById(any(TeacherClassApplication.class))).thenReturn(1);
 
         ApiResponse<String> r = controller.rejectClassRequest(7L, body("  材料不全，请补齐班级证明  "), "teacher");
 
@@ -111,6 +112,7 @@ class AdminClassApplicationRejectReasonTest {
     @DisplayName("body 整个缺失时照常拒绝，理由为 null")
     void rejectTeacher_missingBodyDoesNotThrow() {
         when(applicationMapper.selectById(9L)).thenReturn(teacherApp(9L, 0));
+        when(applicationMapper.updateById(any(TeacherClassApplication.class))).thenReturn(1);
 
         ApiResponse<String> r = controller.rejectClassRequest(9L, null, "teacher");
 
@@ -140,6 +142,7 @@ class AdminClassApplicationRejectReasonTest {
     @DisplayName("拒绝辅导员申请：理由写进辅导员表")
     void rejectCounselor_writesReasonToCounselorTable() {
         when(counselorClassApplicationMapper.selectById(3L)).thenReturn(counselorApp(3L, 0));
+        when(counselorClassApplicationMapper.updateById(any(CounselorClassApplication.class))).thenReturn(1);
 
         ApiResponse<String> r = controller.rejectClassRequest(3L, body("该班已由另一位辅导员接管"), "counselor");
 

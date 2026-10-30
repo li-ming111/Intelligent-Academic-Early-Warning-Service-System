@@ -12,7 +12,7 @@ import java.util.stream.Collectors;
 
 /**
  * AI 智能分析服务实现
- * 基于通义千问大模型的智能分析 + 规则引擎兜底
+ * 基于DeepSeek大模型的智能分析 + 规则引擎兜底
  */
 @Service
 public class AIServiceImpl implements AIService {
@@ -131,7 +131,7 @@ public class AIServiceImpl implements AIService {
         }
         result.put("analysis", analysis.toString());
 
-        // 调用通义千问获取 AI 智能分析
+        // 调用DeepSeek获取 AI 智能分析
         try {
             String aiAnalysis = tongYiService.analyzeStudentScores(
                     (String) request.getOrDefault("studentName", "学生"), result);
@@ -199,7 +199,7 @@ public class AIServiceImpl implements AIService {
         suggestions.add("建议使用番茄工作法管理学习时间，每学习45分钟休息5分钟");
         suggestions.add("每周与学习伙伴进行一次知识复盘，互相考查对方");
 
-        // 调用通义千问获取个性化建议
+        // 调用DeepSeek获取个性化建议
         try {
             String aiSuggestion = tongYiService.generalChat(
                     "请根据以下学生数据生成个性化学习建议，200字以内：" +
@@ -271,7 +271,7 @@ public class AIServiceImpl implements AIService {
         result.put("semesterTrends", trends);
         result.put("analysis", trendDetail);
 
-        // 调用通义千问分析趋势
+        // 调用DeepSeek分析趋势
         try {
             String aiTrend = tongYiService.generalChat(
                     "请分析以下学生学期成绩趋势数据，给出趋势评价和改善建议，150字以内：" +
@@ -354,7 +354,7 @@ public class AIServiceImpl implements AIService {
         result.put("riskFactors", riskFactors);
         result.put("predictedAt", System.currentTimeMillis());
 
-        // 调用通义千问获取 AI 风险分析
+        // 调用DeepSeek获取 AI 风险分析
         try {
             String aiRisk = tongYiService.predictAcademicRisk(
                     (String) request.getOrDefault("studentName", "学生"), result);
@@ -404,7 +404,7 @@ public class AIServiceImpl implements AIService {
             result.put("riskFactors", riskFactors);
         }
 
-        // 调用通义千问生成预警建议（取代硬编码的 if-else）
+        // 调用DeepSeek生成预警建议（取代硬编码的 if-else）
         try {
             String aiWarning = tongYiService.generalChat(
                     "你是学业预警专家。学生" + studentName +

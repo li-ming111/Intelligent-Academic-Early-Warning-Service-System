@@ -30,6 +30,20 @@ public interface CourseRecommendationMapper extends BaseMapper<CourseRecommendat
     int countRecipients(@Param("teacherId") Long teacherId,
                         @Param("targetClassId") Long targetClassId);
 
+    /**
+     * 收件学生的档案 id 列表（口径与 {@link #countRecipients} 完全一致）：
+     * 教师名下班级的学生，可按班收窄。推荐落库后逐个发 {@code notifications} 用。
+     * 只取 {@code sp.id}（{@code StudentNotifier} 内部负责换成 users.id）。
+     */
+    @Select("<script>"
+          + "SELECT sp.id FROM student_profile sp JOIN classes c ON c.id = sp.class_id "
+          + " WHERE c.teacher_id = #{teacherId} "
+          + "<if test='targetClassId != null'> AND c.id = #{targetClassId}</if>"
+          + " ORDER BY sp.id"
+          + "</script>")
+    List<Long> listRecipientProfileIds(@Param("teacherId") Long teacherId,
+                                       @Param("targetClassId") Long targetClassId);
+
     /** 我发出过的推荐（教师端回看用）。 */
     @Select("SELECT r.id, r.course_id AS courseId, c.name AS courseName, c.credits AS credits, "
           + "       r.target_class_id AS targetClassId, cl.name AS targetClassName, "

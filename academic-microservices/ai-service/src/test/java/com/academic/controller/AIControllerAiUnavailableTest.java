@@ -3,6 +3,7 @@ package com.academic.controller;
 import com.academic.common.dto.ApiResponse;
 import com.academic.feign.StudentServiceFeignClient;
 import com.academic.service.AIService;
+import com.academic.service.AnalysisContextService;
 import com.academic.service.TongYiService;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -46,6 +47,7 @@ class AIControllerAiUnavailableTest {
     @Mock private AIService aiService;
     @Mock private TongYiService tongYiService;
     @Mock private StudentServiceFeignClient studentServiceClient;
+    @Mock private AnalysisContextService analysisContextService;
 
     @InjectMocks private AIController controller;
 
@@ -74,6 +76,7 @@ class AIControllerAiUnavailableTest {
     @Test
     @DisplayName("预警趋势：没配 key ⇒ error + 说清是「未配置」，且不含旧占位串")
     void testWarningTrendUnconfigured() {
+        when(analysisContextService.buildWarningTrendPrompt(3L)).thenReturn("prompt");
         when(tongYiService.isConfigured()).thenReturn(false);
         when(tongYiService.generalChat(anyString())).thenReturn(null);
 
@@ -83,6 +86,7 @@ class AIControllerAiUnavailableTest {
     @Test
     @DisplayName("单条预警分析：没配 key ⇒ error + 同上一族")
     void testAnalyzeWarningUnconfigured() {
+        when(analysisContextService.buildWarningPrompt(11L)).thenReturn("prompt");
         when(tongYiService.isConfigured()).thenReturn(false);
         when(tongYiService.generalChat(anyString())).thenReturn(null);
 
@@ -92,6 +96,7 @@ class AIControllerAiUnavailableTest {
     @Test
     @DisplayName("班级成绩分析：没配 key ⇒ error + 同上一族")
     void testAnalyzeClassScoresUnconfigured() {
+        when(analysisContextService.buildClassScoresPrompt(7L)).thenReturn("prompt");
         when(tongYiService.isConfigured()).thenReturn(false);
         when(tongYiService.generalChat(anyString())).thenReturn(null);
 
@@ -103,6 +108,7 @@ class AIControllerAiUnavailableTest {
     @Test
     @DisplayName("配了 key 但模型没答 ⇒ error 且说明是「调用失败」，与「未配置」分开说")
     void testConfiguredButCallFailedIsDistinguishedFromUnconfigured() {
+        when(analysisContextService.buildWarningTrendPrompt(3L)).thenReturn("prompt");
         when(tongYiService.isConfigured()).thenReturn(true);
         when(tongYiService.generalChat(anyString())).thenReturn(null);
 
@@ -116,6 +122,7 @@ class AIControllerAiUnavailableTest {
     @Test
     @DisplayName("空白串也算「没拿到」—— 不能把 \"\" 当成分析结果回下去")
     void testBlankAnswerIsNotAResult() {
+        when(analysisContextService.buildWarningPrompt(11L)).thenReturn("prompt");
         when(tongYiService.isConfigured()).thenReturn(true);
         when(tongYiService.generalChat(anyString())).thenReturn("   ");
 
@@ -127,6 +134,9 @@ class AIControllerAiUnavailableTest {
     @Test
     @DisplayName("模型真答了 ⇒ 200 + 原样回真文本（三条端点各一次）")
     void testRealAnswerStillSucceeds() {
+        when(analysisContextService.buildWarningTrendPrompt(3L)).thenReturn("prompt");
+        when(analysisContextService.buildWarningPrompt(11L)).thenReturn("prompt");
+        when(analysisContextService.buildClassScoresPrompt(7L)).thenReturn("prompt");
         when(tongYiService.generalChat(anyString())).thenReturn("这是真实的分析结果");
         // isConfigured() 在成功路径上**不被调用** ⇒ 不 stub，避免 UnnecessaryStubbing
 

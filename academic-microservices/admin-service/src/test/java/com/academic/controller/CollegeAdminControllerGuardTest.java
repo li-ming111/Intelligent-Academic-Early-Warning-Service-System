@@ -52,6 +52,7 @@ class CollegeAdminControllerGuardTest {
     @Mock private TeacherProfileMapper teacherProfileMapper;
     @Mock private CounselorProfileMapper counselorProfileMapper;
     @Mock private AcademicWarningMapper academicWarningMapper;
+    @Mock private AcademicWarningCourseMapper academicWarningCourseMapper;
     @Mock private MajorMapper majorMapper;
     @Mock private ScoreStatMapper scoreStatMapper;
 
@@ -240,6 +241,7 @@ class CollegeAdminControllerGuardTest {
         AcademicWarning w = new AcademicWarning();
         w.setId(9L); w.setStatus(0);
         when(academicWarningMapper.selectById(9L)).thenReturn(w);
+        when(academicWarningMapper.updateById(w)).thenReturn(1);
 
         ApiResponse<String> r = controller.processWarning(body("userId", ADMIN_A, "id", 9L, "status", 1));
 
@@ -275,6 +277,7 @@ class CollegeAdminControllerGuardTest {
         profileOf(ADMIN_A, COLLEGE_A);
         when(academicWarningMapper.countWarningInCollege(9L, COLLEGE_A)).thenReturn(1);
         when(academicWarningMapper.selectById(9L)).thenReturn(new AcademicWarning());
+        when(academicWarningMapper.deleteById(9L)).thenReturn(1);
 
         assertEquals(200, controller.deleteWarning(ADMIN_A, 9L).getCode());
         verify(academicWarningMapper).deleteById(9L);

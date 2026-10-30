@@ -460,6 +460,17 @@ public class UserServiceImpl implements UserService {
             }
         }
 
+        // 2026-10-19：学院与专业改为**必填**（班级仍可选）。此前两者都能空着注册，
+        // 落下的档案没有归属，"按学院/专业统计"永远查不到这个学生。两端的注册表单
+        // 已同步加了必选校验，这里是接口层的兜底 —— 不信调用方。
+        // 放在班级/专业推导**之后**：只选了班级的学生，学院/专业从班级行带出，一样算选了。
+        if (collegeId == null) {
+            throw new IllegalArgumentException("学生注册必须选择所属学院与专业");
+        }
+        if (majorId == null) {
+            throw new IllegalArgumentException("学生注册必须选择所属专业");
+        }
+
         if (collegeId != null) {
             requireExists(registrationMapper.countCollege(collegeId) > 0, "所选学院不存在: " + collegeId);
         }
@@ -506,9 +517,12 @@ public class UserServiceImpl implements UserService {
      */
     private void createCounselorProfile(User user, Map<String, Object> reqMap) {
         Long collegeId = idOf(reqMap, "collegeId");
-        if (collegeId != null) {
-            requireExists(registrationMapper.countCollege(collegeId) > 0, "所选学院不存在: " + collegeId);
+        // 2026-10-19：学院改为必填（与教师同口径）。此前可以空着注册，落下的辅导员
+        // 档案没有归属，按学院筛选/统计都查不到这个人。
+        if (collegeId == null) {
+            throw new IllegalArgumentException("辅导员注册必须选择所属学院");
         }
+        requireExists(registrationMapper.countCollege(collegeId) > 0, "所选学院不存在: " + collegeId);
 
         String counselorId = str(reqMap, "counselorId");
         if (counselorId == null) {

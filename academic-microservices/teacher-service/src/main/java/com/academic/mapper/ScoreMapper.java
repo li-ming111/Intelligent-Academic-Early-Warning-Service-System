@@ -26,9 +26,17 @@ public interface ScoreMapper extends BaseMapper<Score> {
                                         @Param("semester") String semester);
 
     /**
-     * 该学生已有的最大学期序号，用作录入时未指定学期的兜底值。
-     * {@code scores.semester} 是全局学期序号（int，如 2~6），不是"学年内的第几学期"。
+     * 该学生**该门课**已有的最近一条学期，用作录入时未指定学期的兜底值。
+     *
+     * <p>此前取的是 {@code MAX(semester) WHERE student_id = ?}（跨所有课程）。学生的
+     * 最大学期可能来自另一门课，于是"沿用最近学期"会在这门课下**新建**一条高学期记录，
+     * 而不是覆盖原有那条 —— 同一门课留下两行、学期标签还是错的。改为按课程取最近一条，
+     * 与小程序「沿用最近学期 = 该生该课最近一条，覆盖」的契约一致。
+     *
+     * <p>{@code scores.semester} 是全局学期序号（int，如 2~6），不是"学年内的第几学期"。
      */
-    @Select("SELECT MAX(semester) FROM scores WHERE student_id = #{studentId}")
-    Integer selectMaxSemester(@Param("studentId") Long studentId);
+    @Select("SELECT semester FROM scores WHERE student_id = #{studentId} AND course_id = #{courseId} "
+          + "ORDER BY semester DESC, id DESC LIMIT 1")
+    Integer selectLatestSemester(@Param("studentId") Long studentId,
+                                 @Param("courseId") Long courseId);
 }

@@ -76,7 +76,12 @@ public class CoursePlanController {
      */
     @PostMapping("/create")
     public ResponseEntity<Map<String, Object>> createCoursePlan(@RequestBody CoursePlan coursePlan) {
-        boolean success = coursePlanService.createCoursePlan(coursePlan);
+        boolean success;
+        try {
+            success = coursePlanService.createCoursePlan(coursePlan);
+        } catch (IllegalArgumentException e) {
+            return new ResponseEntity<>(Map.of("success", false, "message", e.getMessage()), HttpStatus.BAD_REQUEST);
+        }
         if (success) {
             return new ResponseEntity<>(Map.of("success", true, "message", "课程计划创建成功"), HttpStatus.CREATED);
         } else {
@@ -93,7 +98,12 @@ public class CoursePlanController {
     @PutMapping("/{id}")
     public ResponseEntity<Map<String, Object>> updateCoursePlan(@PathVariable Long id, @RequestBody CoursePlan coursePlan) {
         coursePlan.setId(id);
-        boolean success = coursePlanService.updateCoursePlan(coursePlan);
+        boolean success;
+        try {
+            success = coursePlanService.updateCoursePlan(coursePlan);
+        } catch (IllegalArgumentException e) {
+            return new ResponseEntity<>(Map.of("success", false, "message", e.getMessage()), HttpStatus.BAD_REQUEST);
+        }
         if (success) {
             return new ResponseEntity<>(Map.of("success", true, "message", "课程计划更新成功"), HttpStatus.OK);
         } else {

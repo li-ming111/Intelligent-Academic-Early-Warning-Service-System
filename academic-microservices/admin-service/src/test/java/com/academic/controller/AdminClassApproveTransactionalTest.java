@@ -5,13 +5,15 @@ import com.academic.entity.Classes;
 import com.academic.entity.CounselorClassApplication;
 import com.academic.mapper.ClassesMapper;
 import com.academic.mapper.CounselorClassApplicationMapper;
+import com.baomidou.mybatisplus.core.conditions.Wrapper;
+import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
-import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.transaction.annotation.Transactional;
+import org.mockito.junit.jupiter.MockitoExtension;import org.springframework.transaction.annotation.Transactional;
 
 import java.lang.reflect.Method;
 
@@ -77,7 +79,7 @@ class AdminClassApproveTransactionalTest {
     void approve_secondWriteFails_throws() {
         when(counselorClassApplicationMapper.selectById(7L)).thenReturn(app(7L, 1L, 990050L));
         when(classesMapper.selectById(1L)).thenReturn(new Classes());
-        when(classesMapper.updateById(any(Classes.class)))
+        when(classesMapper.update(isNull(), any(Wrapper.class)))
                 .thenThrow(new org.springframework.dao.DataAccessResourceFailureException("db down"));
 
         assertThrows(Exception.class,
@@ -94,14 +96,21 @@ class AdminClassApproveTransactionalTest {
         Classes cls = new Classes();
         cls.setId(1L);
         when(classesMapper.selectById(1L)).thenReturn(cls);
+        when(classesMapper.update(isNull(), any(Wrapper.class))).thenReturn(1);
+        when(counselorClassApplicationMapper.updateById(a)).thenReturn(1);
 
         ApiResponse<String> r = controller.approveClassRequest(7L, "counselor");
 
         assertEquals(200, r.getCode(), "实际: " + r.getMessage());
         assertEquals(1, a.getStatus().intValue(), "申请行应被置为已通过");
-        assertEquals(990050L, cls.getCounselorId().longValue(), "班级应被换上申请里的辅导员");
         verify(counselorClassApplicationMapper).updateById(a);
-        verify(classesMapper).updateById(cls);
+
+        ArgumentCaptor<Wrapper<Classes>> cap = ArgumentCaptor.forClass(Wrapper.class);
+        verify(classesMapper).update(isNull(), cap.capture());
+        UpdateWrapper<Classes> bind = (UpdateWrapper<Classes>) cap.getValue();
+        assertTrue(bind.getSqlSet().contains("counselor_id"), "实际 SET: " + bind.getSqlSet());
+        assertTrue(bind.getParamNameValuePairs().containsValue(990050L),
+                "绑定值必须是申请里的辅导员，实际参数: " + bind.getParamNameValuePairs());
     }
 
     /** 申请不存在 ⇒ 不是 200，且两笔写都不发生。 */
@@ -114,6 +123,6 @@ class AdminClassApproveTransactionalTest {
 
         assertNotEquals(200, r.getCode());
         verify(counselorClassApplicationMapper, never()).updateById(any());
-        verify(classesMapper, never()).updateById(any());
+        verify(classesMapper, never()).update(any(), any(Wrapper.class));
     }
 }

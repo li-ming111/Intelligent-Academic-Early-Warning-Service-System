@@ -18,6 +18,7 @@ import com.academic.service.ClassInfoService;
 import com.academic.service.TeacherClassApplicationService;
 import com.academic.service.ScoreRecordService;
 import com.academic.service.FeedbackService;
+import com.academic.service.TeacherInboxService;
 import com.academic.service.CommunicationRecordService;
 import com.academic.service.ScoreAuditLogService;
 import com.academic.common.entity.ScoreAuditLog;
@@ -48,6 +49,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.NoSuchElementException;
 import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -80,6 +82,9 @@ public class TeacherController {
 
     @Autowired
     private FeedbackService feedbackService;
+
+    @Autowired
+    private TeacherInboxService teacherInboxService;
 
     @Autowired
     private CommunicationRecordService communicationRecordService;
@@ -185,7 +190,9 @@ public class TeacherController {
             return ApiResponse.error(403, "无权删除其他教师的信息");
         }
         try {
-            boolean success = teacherService.deleteProfile(id);
+            // id 是 users.id（getByUserId 查出来的），删除要用档案自己的主键，
+            // 否则会拿 users.id 去删 teacher_profile（两套 id 在活库并不相同）。
+            boolean success = teacherService.deleteProfile(profile.getId());
             if (success) {
                 return ApiResponse.success("教师信息删除成功");
             } else {
@@ -281,10 +288,18 @@ public class TeacherController {
         }
         if (!isAdmin(request)) {
             Long me = getUserIdFromGateway(request);
+            if (me == null) {
+                return forbidden("无法识别当前教师");
+            }
             boolean unowned = existing.getTeacherId() == null;
-            boolean mine = me != null && me.equals(existing.getTeacherId());
+            boolean mine = me.equals(existing.getTeacherId());
             if (!unowned && !mine) {
                 return forbidden("无权修改其他教师的课程");
+            }
+            // 归属字段同样来自请求体：不校验的话，主讲可以把课程转给任意用户
+            //（courses.teacher_id 没有外键兜底）。非管理员只能把自己登记为主讲。
+            if (course.getTeacherId() != null && !course.getTeacherId().equals(me)) {
+                return forbidden("无权将课程归属改为其他教师");
             }
         }
         try {
@@ -351,13 +366,13 @@ public class TeacherController {
      * 获取教师仪表盘
      */
     @GetMapping("/dashboard/{userId}")
-    public ApiResponse<Object> getDashboard(@PathVariable String userId, HttpServletRequest request) {
+    public ApiResponse<Object> getDashboard(@PathVariable Long userId, HttpServletRequest request) {
         // W11 读侧归属闸：路径参数是 users.id —— 换个数字就读到别的教师的看板。
-        if (!isSelf(Long.parseLong(userId), request)) {
+        if (!isSelf(userId, request)) {
             return forbidden("只能查看本人的工作台");
         }
         try {
-            Long teacherId = Long.parseLong(userId);
+            Long teacherId = userId;
             List<Object> myClasses = (List<Object>) (List<?>) classInfoService.getClassesByTeacherId(teacherId);
             List<Object> myRequests = (List<Object>) (List<?>) applicationService.getApplicationsByTeacherId(teacherId);
             
@@ -400,9 +415,17 @@ public class TeacherController {
                 log.warn("获取教师信息失败(降级): {}", e.getMessage());
             }
             
+            // pendingRequests 名字说的是"待审核"，此前统计的却是全部申请（含已通过/已拒绝/已取消）。
+            long pendingRequests = 0L;
+            for (Object requestItem : myRequests) {
+                if (requestItem instanceof TeacherClassApplication application
+                        && application.getStatus() != null && application.getStatus() == 0) {
+                    pendingRequests++;
+                }
+            }
             Map<String, Object> dashboard = new HashMap<>();
             dashboard.put("totalClasses", myClasses.size());
-            dashboard.put("pendingRequests", myRequests.size());
+            dashboard.put("pendingRequests", pendingRequests);
             dashboard.put("totalStudents", totalStudents);
             // 2026-10-01 第二十四轮：这里原先是写死的 0，而**同一个文件**的 /todos（下方
             // pendingFeedbacks 那段）早就有真实统计了 —— 真实现和桩并存，被首页读的是桩，
@@ -433,13 +456,13 @@ public class TeacherController {
      * 获取教师的学生列表
      */
     @GetMapping("/students/{teacherId}")
-    public ApiResponse<Object> getStudents(@PathVariable String teacherId, HttpServletRequest request) {
+    public ApiResponse<Object> getStudents(@PathVariable Long teacherId, HttpServletRequest request) {
         // W11 读侧归属闸：users.id 空间（本端点当前零调用方，闸照加 —— 见手册 §6.44）。
-        if (!isSelf(Long.parseLong(teacherId), request)) {
+        if (!isSelf(teacherId, request)) {
             return forbidden("只能查看本人班级的学生");
         }
         try {
-            Long tid = Long.parseLong(teacherId);
+            Long tid = teacherId;
             // 从教师管理的班级获取学生
             List<Map<String, Object>> classes = classInfoService.getClassesByTeacherId(tid);
             List<Object> allStudents = new ArrayList<>();
@@ -480,10 +503,15 @@ public class TeacherController {
     }
 
     /**
-     * 按班级获取成绩（带教师过滤）
+     * 按班级获取成绩。
+     *
+     * <p>{@code teacher_id} 是归属判据（必须是本人），不是过滤条件 —— 默认仍回全班所有课程，
+     * 因为班级管理里的「学生详情 → 查看成绩」要看该生的全部课程。成绩分析要的是
+     * 「本人所授课程」，显式传 {@code only_mine=true}。
      */
     @GetMapping("/scores/by-class")
     public ApiResponse<Object> getScoresByClass(@RequestParam String class_name, @RequestParam(required = false) Long teacher_id,
+                                                @RequestParam(name = "only_mine", required = false) Boolean onlyMine,
                                                 HttpServletRequest request) {
         // W11 读侧归属闸：teacher_id 收 users.id，传了就必须是本人。
         // 不传的那条分支是"全班成绩"视图（含别位教师录的行）—— W30（2026-10-08）之前
@@ -495,9 +523,17 @@ public class TeacherController {
             if (!isSelf(teacher_id, request)) {
                 return forbidden("只能查看本人所授班级的成绩");
             }
+            // teacher_id 只证明"你在问自己的事"，不证明"这个班是你的" ——
+            // 班级名仍是客户端说了算，必须按 classes.teacher_id 再判一次。
+            ApiResponse<Object> deny = denyUnlessMyClassByName(class_name, request, "只能查看本人所带班级的成绩");
+            if (deny != null) {
+                return deny;
+            }
             try {
-                return ApiResponse.success((List<Object>) (List<?>) scoreRecordService
-                        .getScoresByClassNameAndTeacherId(class_name, teacher_id));
+                List<ScoreRecord> rows = Boolean.TRUE.equals(onlyMine)
+                        ? scoreRecordService.getScoresByClassNameAndTeacherId(class_name, teacher_id)
+                        : scoreRecordService.getScoresByClassName(class_name);
+                return ApiResponse.success((List<Object>) (List<?>) rows);
             } catch (Exception e) {
                 return ApiResponse.error(ExceptionMessages.describe(e));
             }
@@ -964,6 +1000,7 @@ public class TeacherController {
                     enrollment.put("type", course == null ? null : course.getType());
                     enrollment.put("className", score.getClassName());
                     enrollment.put("studentId", score.getStudentId());
+                    enrollment.put("studentNo", score.getStudentNo());
                     enrollment.put("studentName", score.getStudentName());
                     enrollment.put("score", score.getScore());
                     enrollment.put("scoreLevel", score.getScoreLevel());
@@ -984,6 +1021,7 @@ public class TeacherController {
                         for (Map<String, Object> score : rows) {
                             Map<String, Object> enrollment = new HashMap<>();
                             enrollment.put("studentId", score.get("student_id"));
+                            enrollment.put("studentNo", score.get("student_no"));
                             enrollment.put("studentName", score.get("student_name"));
                             enrollment.put("courseId", score.get("course_id"));
                             enrollment.put("courseName", score.get("course_name"));
@@ -1024,6 +1062,11 @@ public class TeacherController {
                 return forbidden("无权以其他教师的名义保存沟通记录");
             }
             Long studentId = Long.parseLong(data.get("studentId").toString());
+            // studentId 是 student_profile.id，同样由客户端给 —— 不核归属就能给任意学生写记录。
+            ApiResponse<Object> deny = denyUnlessMyStudent(studentId, request, "只能为本人班级的学生保存沟通记录");
+            if (deny != null) {
+                return deny;
+            }
             String content = (String) data.get("content");
             String type = (String) data.get("type");
             String studentName = (String) data.get("studentName");
@@ -1037,9 +1080,16 @@ public class TeacherController {
 
     /**
      * 根据班级名称获取辅导员信息
+     *
+     * <p>班级名是客户端给的，此前没有归属校验：任意登录教师按班名就能查到别班辅导员的
+     * 姓名与电话。现在与 {@code /scores/by-class} 同一条判据 —— 只能查本人所带班级。
      */
     @GetMapping("/counselor/by-class")
-    public ApiResponse<Object> getCounselorByClass(@RequestParam String class_name) {
+    public ApiResponse<Object> getCounselorByClass(@RequestParam String class_name, HttpServletRequest request) {
+        ApiResponse<Object> deny = denyUnlessMyClassByName(class_name, request, "只能查看本人所带班级的辅导员");
+        if (deny != null) {
+            return deny;
+        }
         try {
             Map<String, Object> counselor = classInfoService.getCounselorByClassName(class_name);
             if (counselor == null || counselor.isEmpty()) {
@@ -1105,6 +1155,11 @@ public class TeacherController {
      * 校验"这门课是不是我教的"，落一行 {@code course_recommendation}，
      * 并把**真正会看到它的人数**回给前端 —— 提示语从此有据可依。
      *
+     * <p><b>2026-10-19 补通知闭环</b>：落库后按同一收件人口径给每个学生写一条
+     * {@code notifications}（走 {@link com.academic.common.notify.StudentNotifier}，
+     * 含 profile→users id 转换与「班级通知」偏好闸），学生端通知中心立即可见。
+     * 通知为尽力而为：失败只记日志，不影响推荐落库。
+     *
      * <p>⚠️ 这里没有复用 {@link #denyUnlessMyCourse}：那条对"课程不存在"也回 403，
      * 而本端点需要把"不存在"(404) 与"不是你的"(403) 分开。
      */
@@ -1148,6 +1203,23 @@ public class TeacherController {
         rec.setStatus(1);
         courseRecommendationMapper.insert(rec);
 
+        // 落库后给目标学生发通知（2026-10-19）：推荐→学生收到，闭环补齐。
+        // 尽力而为：推荐已落库，通知侧故障（如下游表不可写）不该让整个接口 500。
+        // 类别 CLASS：学生可在设置里关掉「班级通知」，关了就跳过（StudentNotifier 内闸）。
+        int notified = 0;
+        try {
+            for (Long profileId : courseRecommendationMapper.listRecipientProfileIds(me, targetClassId)) {
+                if (studentNotifier.notifyStudent(profileId,
+                        com.academic.common.notify.NotificationPreferences.Category.CLASS, null,
+                        "课程推荐：" + course.getName(),
+                        "你的老师推荐了课程《" + course.getName() + "》：" + rec.getReason(), null)) {
+                    notified++;
+                }
+            }
+        } catch (Exception e) {
+            log.error("推荐通知发送失败: recommendationId={}, course={}", rec.getId(), course.getName(), e);
+        }
+
         Map<String, Object> result = new java.util.LinkedHashMap<>();
         result.put("id", rec.getId());
         result.put("courseId", courseId);
@@ -1155,6 +1227,7 @@ public class TeacherController {
         result.put("targetClassId", targetClassId);
         result.put("reason", rec.getReason());
         result.put("recipients", courseRecommendationMapper.countRecipients(me, targetClassId));
+        result.put("notified", notified);
         result.put("status", "已推荐");
         return ApiResponse.success(result);
     }
@@ -1223,15 +1296,15 @@ public class TeacherController {
      *                 老师从"我全班的情况"切到"我只关心我教的课"。
      */
     @GetMapping("/warnings/{teacherId}")
-    public ApiResponse<Object> getWarnings(@PathVariable String teacherId, @RequestParam(required = false) String status,
+    public ApiResponse<Object> getWarnings(@PathVariable Long teacherId, @RequestParam(required = false) String status,
                                            @RequestParam(required = false, defaultValue = "false") boolean onlyMine,
                                            HttpServletRequest request) {
         // W11 读侧归属闸：users.id 空间。
-        if (!isSelf(Long.parseLong(teacherId), request)) {
+        if (!isSelf(teacherId, request)) {
             return forbidden("只能查看本人的预警");
         }
         try {
-            Long tid = Long.parseLong(teacherId);
+            Long tid = teacherId;
             List<Map<String, Object>> result = new ArrayList<>();
             // 先把本班全部预警收齐（保持原有班级范围），再一次性补课程明细 —— 不做逐行查询。
             List<com.academic.common.entity.AcademicWarning> all = new ArrayList<>();
@@ -1263,10 +1336,19 @@ public class TeacherController {
                 involvingMine.addAll(academicWarningCourseMapper.selectWarningIdsInvolvingTeacher(tid, warningIds));
             }
 
+            // status 参数此前只接收、不生效 —— 前端传了也照样拿到全部三态。
+            // 同时接受状态码（0/1/2）与展示文案（待处理/已处理/已解除），与返回字段一致。
+            String wantedStatus = status == null ? null : status.trim();
             for (com.academic.common.entity.AcademicWarning w : all) {
                 boolean mine = involvingMine.contains(w.getId());
                 if (onlyMine && !mine) {
                     continue;
+                }
+                if (wantedStatus != null && !wantedStatus.isEmpty()) {
+                    String code = String.valueOf(w.getStatus());
+                    if (!wantedStatus.equals(code) && !wantedStatus.equals(WarningStatus.text(w.getStatus()))) {
+                        continue;
+                    }
                 }
                 List<Map<String, Object>> courses =
                         coursesByWarningId.getOrDefault(w.getId(), Collections.emptyList());
@@ -1857,13 +1939,13 @@ public class TeacherController {
      * 获取待办事项
      */
     @GetMapping("/todos/{teacherId}")
-    public ApiResponse<Object> getTodos(@PathVariable String teacherId, HttpServletRequest request) {
+    public ApiResponse<Object> getTodos(@PathVariable Long teacherId, HttpServletRequest request) {
         // W11 读侧归属闸：users.id 空间。
-        if (!isSelf(Long.parseLong(teacherId), request)) {
+        if (!isSelf(teacherId, request)) {
             return forbidden("只能查看本人的待办");
         }
         try {
-            Long tid = Long.parseLong(teacherId);
+            Long tid = teacherId;
             List<Map<String, Object>> todos = new ArrayList<>();
             // 1. 检查待回复反馈。
             //    原来这里是 `f instanceof Map` —— getFeedbacks 返回的是 Feedback 实体，
@@ -2088,20 +2170,27 @@ public class TeacherController {
      * 获取成绩修改审计日志（score_audit_log 表）
      */
     @GetMapping("/scores/audit/{teacherId}")
-    public ApiResponse<Object> getAuditLogs(@PathVariable String teacherId, @RequestParam(required = false, defaultValue = "1") Integer page, @RequestParam(required = false, defaultValue = "20") Integer size,
+    public ApiResponse<Object> getAuditLogs(@PathVariable Long teacherId, @RequestParam(required = false, defaultValue = "1") Integer page, @RequestParam(required = false, defaultValue = "20") Integer size,
                                             HttpServletRequest request) {
         // W11 读侧归属闸：users.id 空间。改分审计是敏感面，换个数字就读到别人的改动史。
-        if (!isSelf(Long.parseLong(teacherId), request)) {
+        if (!isSelf(teacherId, request)) {
             return forbidden("只能查看本人的改分记录");
         }
         try {
-            Long tid = Long.parseLong(teacherId);
-            List<ScoreAuditLog> list = scoreAuditLogService.getByTeacherId(tid);
+            Long tid = teacherId;
+            List<ScoreAuditLog> all = scoreAuditLogService.getByTeacherId(tid);
+            // page/size 此前只回显、不切片，调用方拿到的永远是全量。审计行按教师维度不多，
+            // 在内存里切即可；total 保持全量条数，前端才能算总页数。
+            int safePage = page == null || page < 1 ? 1 : page;
+            int safeSize = size == null || size < 1 ? 20 : Math.min(size, 200);
+            long offset = (long) (safePage - 1) * safeSize;
+            int from = (int) Math.min(offset, all.size());
+            int to = Math.min(from + safeSize, all.size());
             Map<String, Object> result = new HashMap<>();
-            result.put("total", list.size());
-            result.put("page", page);
-            result.put("size", size);
-            result.put("list", list);
+            result.put("total", all.size());
+            result.put("page", safePage);
+            result.put("size", safeSize);
+            result.put("list", new ArrayList<>(all.subList(from, to)));
             return ApiResponse.success(result);
         } catch (Exception e) {
             return ApiResponse.error(ExceptionMessages.describe(e));
@@ -2113,7 +2202,7 @@ public class TeacherController {
      */
     @GetMapping("/scores/logs/{teacherId}")
     @Deprecated
-    public ApiResponse<Object> getScoreLogs(@PathVariable String teacherId, @RequestParam(required = false, defaultValue = "1") Integer page, @RequestParam(required = false, defaultValue = "20") Integer size,
+    public ApiResponse<Object> getScoreLogs(@PathVariable Long teacherId, @RequestParam(required = false, defaultValue = "1") Integer page, @RequestParam(required = false, defaultValue = "20") Integer size,
                                             HttpServletRequest request) {
         return getAuditLogs(teacherId, page, size, request);
     }
@@ -2127,14 +2216,14 @@ public class TeacherController {
      * PC 的 {@code getFeedbackList}/{@code getFeedback} 两个绑定零调用方。签名现在与行为一致。
      */
     @GetMapping("/feedbacks/{teacherId}/list")
-    public ApiResponse<Object> getFeedbackList(@PathVariable String teacherId, @RequestParam(required = false, defaultValue = "") String category,
+    public ApiResponse<Object> getFeedbackList(@PathVariable Long teacherId, @RequestParam(required = false, defaultValue = "") String category,
                                                HttpServletRequest request) {
         // W11 读侧归属闸：users.id 空间。
-        if (!isSelf(Long.parseLong(teacherId), request)) {
+        if (!isSelf(teacherId, request)) {
             return forbidden("只能查看本人的反馈");
         }
         try {
-            Long tid = Long.parseLong(teacherId);
+            Long tid = teacherId;
             List<Object> feedbacks = (List<Object>) (List<?>) feedbackService.getFeedbacks(tid, category.isEmpty() ? null : category);
             return ApiResponse.success(feedbacks);
         } catch (Exception e) {
@@ -2622,6 +2711,81 @@ public class TeacherController {
     }
 
     /**
+     * 教师站内信收件箱：辅导员私信（type=2）与管理员广播（type=1）。
+     *
+     * <p>与下面 {@code /messages/{userId}} 分开：那条读的是学生反馈 {@code feedback}，
+     * 这条读的是 {@code messages}。两者 id 空间不同，前端不能混在一个列表里按 id 操作。
+     * 身份只认 {@code X-User-Id}，不接受查询参数指定别人。
+     */
+    @GetMapping("/inbox")
+    public ApiResponse<Object> getInbox(@RequestParam(required = false) String type,
+                                        HttpServletRequest request) {
+        Long userId = getUserIdFromGateway(request);
+        if (userId == null) {
+            return ApiResponse.unauthorized("未获取到登录身份");
+        }
+        return ApiResponse.success(teacherInboxService.getInbox(userId, type));
+    }
+
+    @GetMapping("/inbox/unread-count")
+    public ApiResponse<Long> getInboxUnreadCount(HttpServletRequest request) {
+        Long userId = getUserIdFromGateway(request);
+        if (userId == null) {
+            return ApiResponse.unauthorized("未获取到登录身份");
+        }
+        return ApiResponse.success(teacherInboxService.getUnreadCount(userId));
+    }
+
+    @PostMapping("/inbox/{id}/read")
+    public ApiResponse<String> markInboxRead(@PathVariable Long id, HttpServletRequest request) {
+        Long userId = getUserIdFromGateway(request);
+        if (userId == null) {
+            return ApiResponse.unauthorized("未获取到登录身份");
+        }
+        return teacherInboxService.markRead(userId, id)
+                ? ApiResponse.success("已标记为已读")
+                : ApiResponse.notFound("消息不存在或不属于当前用户");
+    }
+
+    @PostMapping("/inbox/read-all")
+    public ApiResponse<String> markAllInboxRead(HttpServletRequest request) {
+        Long userId = getUserIdFromGateway(request);
+        if (userId == null) {
+            return ApiResponse.unauthorized("未获取到登录身份");
+        }
+        int count = teacherInboxService.markAllRead(userId);
+        return ApiResponse.success("已将 " + count + " 条消息标记为已读");
+    }
+
+    /**
+     * 回复一条辅导员私信。收件人固定为原消息的发送人，发送人只认 {@code X-User-Id}。
+     */
+    @PostMapping("/inbox/{id}/reply")
+    public ApiResponse<String> replyInboxMessage(@PathVariable Long id,
+                                                 @RequestBody Map<String, Object> body,
+                                                 HttpServletRequest request) {
+        Long userId = getUserIdFromGateway(request);
+        if (userId == null) {
+            return ApiResponse.unauthorized("未获取到登录身份");
+        }
+        String content = body.get("content") == null ? "" : body.get("content").toString();
+        try {
+            teacherInboxService.reply(userId, id, content);
+            return ApiResponse.success("回复已发送");
+        } catch (NoSuchElementException e) {
+            return ApiResponse.notFound(e.getMessage());
+        } catch (IllegalArgumentException e) {
+            return ApiResponse.badRequest(e.getMessage());
+        } catch (IllegalStateException e) {
+            log.error("回复消息失败: userId={}, messageId={}, error={}", userId, id, e.getMessage());
+            return ApiResponse.serverError(e.getMessage());
+        } catch (Exception e) {
+            log.error("回复消息异常: userId={}, messageId={}", userId, id, e);
+            return ApiResponse.serverError("回复失败: " + ExceptionMessages.describe(e));
+        }
+    }
+
+    /**
      * 获取教师消息
      */
     /**
@@ -2637,13 +2801,13 @@ public class TeacherController {
      * {@code ClassCastException}。
      */
     @GetMapping("/messages/{userId}")
-    public ApiResponse<Object> getMessages(@PathVariable String userId, HttpServletRequest request) {
+    public ApiResponse<Object> getMessages(@PathVariable Long userId, HttpServletRequest request) {
         // W11 读侧归属闸：users.id 空间。
-        if (!isSelf(Long.parseLong(userId), request)) {
+        if (!isSelf(userId, request)) {
             return forbidden("只能查看本人的消息");
         }
         try {
-            Long uid = Long.parseLong(userId);
+            Long uid = userId;
             List<Map<String, Object>> messages = new ArrayList<>();
             for (Feedback fb : feedbackService.getFeedbacks(uid, null)) {
                 Map<String, Object> msg = new HashMap<>();
@@ -2673,13 +2837,13 @@ public class TeacherController {
      * {@code typeof r === 'number'}，早先接口返回对象，于是角标恒为 0。
      */
     @GetMapping("/messages/{userId}/unread-count")
-    public ApiResponse<Long> getUnreadCount(@PathVariable String userId, HttpServletRequest request) {
+    public ApiResponse<Long> getUnreadCount(@PathVariable Long userId, HttpServletRequest request) {
         // W11 读侧归属闸：users.id 空间。
-        if (!isSelf(Long.parseLong(userId), request)) {
+        if (!isSelf(userId, request)) {
             return forbidden("只能查看本人的消息");
         }
         try {
-            Long uid = Long.parseLong(userId);
+            Long uid = userId;
             // 未读 = 未回复（feedback.status = 0）。
             List<Feedback> feedbacks = feedbackService.getFeedbacks(uid, null);
             long unread = feedbacks.stream()

@@ -36,7 +36,7 @@ public class ClassInfoService {
             }
             return classes != null ? classes : new ArrayList<>();
         } catch (Exception e) {
-            log.error("获取教师班级失败: {}", e.getMessage());
+            log.error("获取教师班级失败, teacherId={}", teacherId, e);
             return new ArrayList<>();
         }
     }
@@ -78,7 +78,7 @@ public class ClassInfoService {
             }
             return new ArrayList<>();
         } catch (Exception e) {
-            log.error("搜索班级失败: {}", e.getMessage());
+            log.error("搜索班级失败, keyword={}", keyword, e);
             return new ArrayList<>();
         }
     }
@@ -105,7 +105,7 @@ public class ClassInfoService {
         try {
             return classInfoMapper.selectById(classId);
         } catch (Exception e) {
-            log.error("获取班级信息失败: {}", e.getMessage());
+            log.error("获取班级信息失败, classId={}", classId, e);
             return null;
         }
     }
@@ -117,7 +117,7 @@ public class ClassInfoService {
         try {
             return classInfoMapper.getCounselorByClassName(className);
         } catch (Exception e) {
-            log.error("获取辅导员信息失败: {}", e.getMessage());
+            log.error("获取辅导员信息失败, className={}", className, e);
             return null;
         }
     }

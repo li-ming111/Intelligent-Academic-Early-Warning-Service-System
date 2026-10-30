@@ -70,6 +70,15 @@ public interface ScoreRecordMapper {
     List<ScoreRecord> listLatestValidByClassName(@Param("className") String className);
 
     /**
+     * 某班级 + 某教师的权威成绩单：只含 {@code courses.teacher_id = 该教师} 的课程。
+     * 教师端「成绩分析」用这条 —— 班级里别的教师教的课不能算进本人的平均分/及格率。
+     */
+    @Select(LATEST_VALID_SELECT + "WHERE sp.class_id IN (SELECT id FROM classes WHERE name = #{className}) "
+          + "  AND c.teacher_id = #{teacherId} ORDER BY sp.name")
+    List<ScoreRecord> listLatestValidByClassNameAndTeacherId(@Param("className") String className,
+                                                             @Param("teacherId") Long teacherId);
+
+    /**
      * 按 {@code scores.id} 取一行原始成绩（**含**待录入行、含 {@code course_id}）。
      * 供编辑 / 删除定位与归属判定用 —— 必须能拿到 {@code course_id} 才能按课程归属把关。
      */
@@ -91,7 +100,7 @@ public interface ScoreRecordMapper {
      * <p>W36：来源由 {@code score_record}（按 {@code class_name} 字符串）改为 {@code scores}，
      * 班级归属改经 {@code student_profile.class_id} —— 后者是与预警、辅导员同源的唯一真源。
      */
-    @Select("SELECT v.student_id AS student_id, sp.name AS student_name, "
+    @Select("SELECT v.student_id AS student_id, sp.student_id AS student_no, sp.name AS student_name, "
           + "       v.course_id AS course_id, c.name AS course_name, "
           + "       c.credits AS credits, c.type AS type, "
           + "       v.score_total AS score_total, " + ScoreCaliber.SCORE_LEVEL_CASE + " AS score_level "

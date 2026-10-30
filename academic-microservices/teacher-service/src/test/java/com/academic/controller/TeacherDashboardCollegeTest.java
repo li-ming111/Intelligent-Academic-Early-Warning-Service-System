@@ -82,7 +82,7 @@ class TeacherDashboardCollegeTest {
         when(teacherService.getByUserId(55L)).thenReturn(profile);
         when(collegeMapper.getNameById(2L)).thenReturn("电子工程学院");
 
-        Map<?, ?> data = dataOf(controller.getDashboard("55", req(55L)));
+        Map<?, ?> data = dataOf(controller.getDashboard(55L, req(55L)));
 
         assertEquals("电子工程学院", data.get("college"));
         // 顺带确认没把原来那几个字段弄丢
@@ -99,7 +99,7 @@ class TeacherDashboardCollegeTest {
         profile.setCollegeId(null);          // 没填
         when(teacherService.getByUserId(19L)).thenReturn(profile);
 
-        Map<?, ?> data = dataOf(controller.getDashboard("19", req(19L)));
+        Map<?, ?> data = dataOf(controller.getDashboard(19L, req(19L)));
 
         assertEquals("", data.get("college"));
     }

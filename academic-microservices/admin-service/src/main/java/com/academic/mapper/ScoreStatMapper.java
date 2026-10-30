@@ -40,6 +40,18 @@ public interface ScoreStatMapper {
     String COLLEGE_CLASSES = "(SELECT cl.id FROM classes cl WHERE cl.college_id = #{collegeId})";
 
     /**
+     * 成绩明细的过滤条件（班级 + 关键字），列表、分页、计数三条查询共用一份，
+     * 避免"总数"与"这一页"用了不同的 where 而对不上。
+     */
+    String SCORE_ROW_FILTER =
+            "<if test='classId != null'> AND sp.class_id = #{classId} </if>"
+          + "<if test='keyword != null and keyword != \"\"'>"
+          + "   AND (sp.name LIKE CONCAT('%', #{keyword}, '%') "
+          + "        OR sp.student_id LIKE CONCAT('%', #{keyword}, '%') "
+          + "        OR c.name LIKE CONCAT('%', #{keyword}, '%')) "
+          + "</if>";
+
+    /**
      * 每个班级的汇总：学生数、有成绩的学生数、平均 GPA、预警数。
      * 列：{@code class_id} / {@code student_count} / {@code graded_student_count} /
      * {@code avg_gpa} / {@code warning_count}。
@@ -230,9 +242,12 @@ public interface ScoreStatMapper {
      * <p>{@code record_count} 统计的是 {@code v.student_id} 而非 {@code *}：班级没有学生时
      * {@code LEFT JOIN} 会留下一行全 NULL，{@code COUNT(*)} 会把它算成 1 条成绩记录。
      * 同理 {@code avg_score} 此时为 NULL，调用方按"暂无成绩"处理而不是显示 0 分。
+     *
+     * <p>{@code student_count} 数的是**花名册人数**（{@code sp.id}），不是"有成绩的人数"。
+     * 与班级列表页同一口径；有学籍但尚未出分的班不能被显示成"学生 0"。
      */
     @Select("SELECT cl.id AS class_id, cl.name AS class_name, "
-          + "       COUNT(DISTINCT v.student_id) AS student_count, "
+          + "       COUNT(DISTINCT sp.id) AS student_count, "
           + "       COUNT(v.student_id) AS record_count, AVG(v.score_total) AS avg_score, "
           + "       SUM(CASE WHEN v.score_total >= " + ScoreCaliber.PASS_LINE
           + "                THEN 1 ELSE 0 END) AS pass_count "
@@ -284,7 +299,7 @@ public interface ScoreStatMapper {
                                                      @Param("teacherUserId") Long teacherUserId);
 
     /**
-     * 成绩查询／导出：全院成绩明细，可选按班级与关键字（学生姓名或学号）过滤。
+     * 成绩查询／导出：全院成绩明细，可选按班级与关键字（学生姓名、学号或课程名）过滤。
      *
      * <p>{@code classId} 与 {@code keyword} 均可为 null，用 {@code <script>} 动态拼接。
      * 过滤条件下推到 SQL，不再把全院成绩拉进内存再筛。
@@ -298,17 +313,46 @@ public interface ScoreStatMapper {
           + "  FROM " + ScoreCaliber.LATEST_VALID_SCORE + " v "
           + "  LEFT JOIN courses c ON c.id = v.course_id "
           + "  JOIN student_profile sp ON sp.id = v.student_id "
-          + " WHERE sp.class_id IN (SELECT cl.id FROM classes cl WHERE cl.college_id = #{collegeId}) "
-          + "<if test='classId != null'> AND sp.class_id = #{classId} </if>"
-          + "<if test='keyword != null and keyword != \"\"'>"
-          + "   AND (sp.name LIKE CONCAT('%', #{keyword}, '%') "
-          + "        OR sp.student_id LIKE CONCAT('%', #{keyword}, '%')) "
-          + "</if>"
+          + " WHERE sp.class_id IN " + COLLEGE_CLASSES + " "
+          + SCORE_ROW_FILTER
           + " ORDER BY sp.name, c.name, v.semester"
           + "</script>")
     List<Map<String, Object>> selectScoreRows(@Param("collegeId") Long collegeId,
                                               @Param("classId") Long classId,
                                               @Param("keyword") String keyword);
+
+    /** 与 {@link #selectScoreRows} 同一套过滤与排序，只多一段 LIMIT，供分页查询用。 */
+    @Select("<script>"
+          + "SELECT sp.name AS student_name, sp.student_id AS student_no, sp.class_name AS class_name, "
+          + "       v.course_id AS course_id, c.name AS course_name, "
+          + "       v.regular_score AS regular_score, v.final_score AS final_score, "
+          + "       v.score_total AS score_total, v.grade_point AS grade_point, "
+          + "       v.grade AS grade, v.semester AS semester, v.id AS id "
+          + "  FROM " + ScoreCaliber.LATEST_VALID_SCORE + " v "
+          + "  LEFT JOIN courses c ON c.id = v.course_id "
+          + "  JOIN student_profile sp ON sp.id = v.student_id "
+          + " WHERE sp.class_id IN " + COLLEGE_CLASSES + " "
+          + SCORE_ROW_FILTER
+          + " ORDER BY sp.name, c.name, v.semester LIMIT #{offset}, #{size}"
+          + "</script>")
+    List<Map<String, Object>> selectScoreRowsPage(@Param("collegeId") Long collegeId,
+                                                  @Param("classId") Long classId,
+                                                  @Param("keyword") String keyword,
+                                                  @Param("offset") int offset,
+                                                  @Param("size") int size);
+
+    /** 与 {@link #selectScoreRowsPage} 同一套过滤条件，只数总数（分页控件要用）。 */
+    @Select("<script>"
+          + "SELECT COUNT(*) "
+          + "  FROM " + ScoreCaliber.LATEST_VALID_SCORE + " v "
+          + "  LEFT JOIN courses c ON c.id = v.course_id "
+          + "  JOIN student_profile sp ON sp.id = v.student_id "
+          + " WHERE sp.class_id IN " + COLLEGE_CLASSES + " "
+          + SCORE_ROW_FILTER
+          + "</script>")
+    long countScoreRows(@Param("collegeId") Long collegeId,
+                        @Param("classId") Long classId,
+                        @Param("keyword") String keyword);
 
     /**
      * 全库成绩明细，供 {@code GET /admin/export/scores} 导出（W36，2026-10-10）。

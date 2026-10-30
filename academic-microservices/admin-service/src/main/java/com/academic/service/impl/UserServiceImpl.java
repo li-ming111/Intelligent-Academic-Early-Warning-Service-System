@@ -44,7 +44,15 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
         if (existingUser != null) {
             return false;
         }
-        user.setPassword(passwordEncoder.encode(user.getPassword()));
+        // 口令留空 → 演示口令 123456。建号表单（小程序 users.vue）写着"留空则与演示口令一致"，
+        // 但从前这里直接 encode(null) 抛 IllegalArgumentException（回 500"Create user failed"、
+        // 事务回滚），也就是说**留空根本建不出号** —— 表单的承诺一直是空的。
+        // 与 resetPassword 的口径一致：本库全部账号本就用统一演示口令 123456。
+        String rawPassword = user.getPassword();
+        if (rawPassword == null || rawPassword.trim().isEmpty()) {
+            rawPassword = "123456";
+        }
+        user.setPassword(passwordEncoder.encode(rawPassword));
         user.setCreatedAt(LocalDateTime.now());
         user.setUpdatedAt(LocalDateTime.now());
         user.setStatus(1);

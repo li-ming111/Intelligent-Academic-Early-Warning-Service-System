@@ -3,8 +3,10 @@ package com.academic.controller;
 import com.academic.common.dto.ApiResponse;
 import com.academic.common.entity.College;
 import com.academic.common.entity.CollegeAdminProfile;
+import com.academic.common.entity.TeacherProfile;
 import com.academic.common.entity.User;
 import com.academic.mapper.CollegeAdminProfileMapper;
+import com.academic.mapper.TeacherProfileMapper;
 import com.academic.service.AuditLogService;
 import com.academic.service.CollegeService;
 import com.academic.service.UserService;
@@ -36,7 +38,10 @@ import static org.mockito.Mockito.*;
  *   <li>role 5 + 没给学院 ⇒ 账号照建、**档案不插**，且响应 message **如实说明后果**
  *       （不能只说"创建成功"就让人拿到一个取不到数的账号）；</li>
  *   <li>role 5 + 学院不存在 ⇒ 不插档案（悬空引用比不建更糟）；</li>
- *   <li>其它角色不受影响（尤其是 role 2 教师仍不建档案，本次**刻意**没改它）。</li>
+ *   <li>其它角色不受影响（role 2 教师的口径见 {@link #role2WithCollegeInsertsTeacherProfile}
+ *       与 {@link #role2WithoutCollegeWritesNoProfile}：2026-10-19 建号表单收口
+ *       「四角色都选学院」后，教师带学院就建档、没带就不建 —— teacher_profile.college_id
+ *       是 NOT NULL，悬空比缺行更糟）。</li>
  * </ol>
  *
  * <p>这不是 Spring 切片测试，是纯 Mockito —— 本模块的其它控制器测试同样是这个写法
@@ -47,6 +52,7 @@ class AdminControllerCreateUserCollegeAdminTest {
 
     @Mock private UserService userService;
     @Mock private CollegeAdminProfileMapper collegeAdminProfileMapper;
+    @Mock private TeacherProfileMapper teacherProfileMapper;
     @Mock private CollegeService collegeService;
     @Mock private AuditLogService auditLogService;
 
@@ -83,7 +89,7 @@ class AdminControllerCreateUserCollegeAdminTest {
         ApiResponse<String> resp = controller.createUser(
                 new User().setUsername("collegeadmin9").setPassword("123456").setName("新院长")
                         .setRole(5).setPhone("13900009999").setEmail("dean@academic.edu"),
-                1L);
+                1L, null);
 
         assertTrue(resp.isSuccess());
         CollegeAdminProfile p = capturedProfileInsert();
@@ -101,7 +107,7 @@ class AdminControllerCreateUserCollegeAdminTest {
 
         ApiResponse<String> resp = controller.createUser(
                 new User().setUsername("collegeadmin10").setPassword("123456").setName("无院院长").setRole(5),
-                null);
+                null, null);
 
         assertTrue(resp.isSuccess(), "没给学院不该让建号失败");
         verify(collegeAdminProfileMapper, never()).insert(any(CollegeAdminProfile.class));
@@ -117,24 +123,45 @@ class AdminControllerCreateUserCollegeAdminTest {
 
         ApiResponse<String> resp = controller.createUser(
                 new User().setUsername("collegeadmin11").setPassword("123456").setName("幽灵院长").setRole(5),
-                999L);
+                999L, null);
 
         assertTrue(resp.isSuccess());
         verify(collegeAdminProfileMapper, never()).insert(any(CollegeAdminProfile.class));
     }
 
     @Test
-    @DisplayName("★ 反向对照：role 2 教师仍不建任何档案行（本次刻意没改教师那条口径）")
-    void role2TeacherStillWritesNoProfile() {
+    @DisplayName("role 2 + 有效学院 ⇒ 插入教师档案，college_id 原样写入")
+    void role2WithCollegeInsertsTeacherProfile() {
         stubCreateOk(303L);
+        when(collegeService.getById(1L)).thenReturn(existingCollege(1L));
+        when(teacherProfileMapper.selectCount(any())).thenReturn(0L);
 
         ApiResponse<String> resp = controller.createUser(
                 new User().setUsername("10088").setPassword("123456").setName("王老师").setRole(2),
-                null);
+                1L, null);
 
         assertTrue(resp.isSuccess());
+        ArgumentCaptor<TeacherProfile> cap = ArgumentCaptor.forClass(TeacherProfile.class);
+        verify(teacherProfileMapper).insert(cap.capture());
+        TeacherProfile p = cap.getValue();
+        assertEquals(303L, p.getUserId());
+        assertEquals("王老师", p.getName());
+        assertEquals(1L, p.getCollegeId(), "teacher_profile.college_id 是 NOT NULL，教师端按学院取数全靠它");
+    }
+
+    @Test
+    @DisplayName("role 2 + 没给学院 ⇒ 不插教师档案（college_id NOT NULL，悬空比缺行更糟），也不查学院")
+    void role2WithoutCollegeWritesNoProfile() {
+        stubCreateOk(305L);
+
+        ApiResponse<String> resp = controller.createUser(
+                new User().setUsername("10089").setPassword("123456").setName("李老师").setRole(2),
+                null, null);
+
+        assertTrue(resp.isSuccess());
+        verify(teacherProfileMapper, never()).insert(any(TeacherProfile.class));
         verify(collegeAdminProfileMapper, never()).insert(any(CollegeAdminProfile.class));
-        // 不该为了 role 2 去查学院
+        // collegeId 为 null 时短路，不该去查学院
         verify(collegeService, never()).getById(any());
     }
 
@@ -147,7 +174,7 @@ class AdminControllerCreateUserCollegeAdminTest {
 
         controller.createUser(
                 new User().setUsername("collegeadmin12").setPassword("123456").setName("老院长").setRole(5),
-                1L);
+                1L, null);
 
         verify(collegeAdminProfileMapper, never()).insert(any(CollegeAdminProfile.class));
     }

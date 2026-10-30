@@ -69,9 +69,9 @@ class ScoreRecordServiceTest {
     // ------------------------------------------------------------------ 写（直落 scores）
 
     @Test
-    @DisplayName("录一门新课（未指定学期）：直接 INSERT scores，学期/学年/final_score 都补齐")
-    void saveScores_newRow_insertsIntoAuthoritativeTable() {
-        when(scoreMapper.selectMaxSemester(3L)).thenReturn(5);
+    @DisplayName("未指定学期、该课有历史：沿用**该课**最近一条的学期（覆盖语义），学期/学年/final_score 都补齐")
+    void saveScores_noSemester_reusesLatestSemesterOfThatCourse() {
+        when(scoreMapper.selectLatestSemester(3L, 1L)).thenReturn(5);
         when(scoreRecordMapper.selectStudentNo(3L)).thenReturn("2023020616");
         when(scoreMapper.selectByStudentCourseSemester(3L, 1L, "5")).thenReturn(null);
         when(scoreMapper.insert(any(Score.class))).thenReturn(1);
@@ -81,7 +81,8 @@ class ScoreRecordServiceTest {
         ArgumentCaptor<Score> cap = ArgumentCaptor.forClass(Score.class);
         verify(scoreMapper).insert(cap.capture());
         Score saved = cap.getValue();
-        assertEquals("5", saved.getSemester(), "未指定学期 → 取该生最大学期");
+        assertEquals("5", saved.getSemester(), "未指定学期 → 沿用该生该课最近一条的学期");
+        verify(scoreMapper, never()).selectByStudentCourseSemester(3L, 1L, "1");
         assertEquals(2025, saved.getYear(), "学年 = 学号前四位 2023 + (5-1)/2");
         assertEquals(0, new BigDecimal("92.0").compareTo(saved.getScoreTotal()));
         assertEquals("A", saved.getGrade());
@@ -95,6 +96,22 @@ class ScoreRecordServiceTest {
     }
 
     @Test
+    @DisplayName("未指定学期、该课从无历史：从第 1 学期起（不拿该生别的课的最大学期凑数）")
+    void saveScores_noSemester_noHistory_startsAtSemesterOne() {
+        when(scoreMapper.selectLatestSemester(3L, 1L)).thenReturn(null);
+        when(scoreRecordMapper.selectStudentNo(3L)).thenReturn("2023020616");
+        when(scoreMapper.selectByStudentCourseSemester(3L, 1L, "1")).thenReturn(null);
+        when(scoreMapper.insert(any(Score.class))).thenReturn(1);
+
+        scoreRecordService.saveScores(List.of(scoreData(3L, 1L, 92.0, null)), 7L);
+
+        ArgumentCaptor<Score> cap = ArgumentCaptor.forClass(Score.class);
+        verify(scoreMapper).insert(cap.capture());
+        assertEquals("1", cap.getValue().getSemester());
+        assertEquals(2023, cap.getValue().getYear(), "学期 1 → 入学学年 2023");
+    }
+
+    @Test
     @DisplayName("重修（显式指定学期）：按三元组在 scores 查重，新增一行")
     void saveScores_retake_usesTripleKey() {
         when(scoreRecordMapper.selectStudentNo(3L)).thenReturn("2023020616");
@@ -104,7 +121,7 @@ class ScoreRecordServiceTest {
         scoreRecordService.saveScores(List.of(scoreData(3L, 1L, 66.0, "6")), 7L);
 
         verify(scoreMapper).selectByStudentCourseSemester(3L, 1L, "6");
-        verify(scoreMapper, never()).selectMaxSemester(anyLong());
+        verify(scoreMapper, never()).selectLatestSemester(anyLong(), anyLong());
         ArgumentCaptor<Score> cap = ArgumentCaptor.forClass(Score.class);
         verify(scoreMapper).insert(cap.capture());
         assertEquals("6", cap.getValue().getSemester());

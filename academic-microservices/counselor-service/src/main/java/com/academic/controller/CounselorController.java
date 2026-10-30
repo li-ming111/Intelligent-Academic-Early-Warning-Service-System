@@ -23,6 +23,9 @@ import com.academic.mapper.ClassInfoMapper;
 import com.academic.mapper.ScoreMapper;
 import com.academic.mapper.WarningMapper;
 import com.academic.mapper.StudentMapper;
+import com.academic.mapper.MessageMapper;
+import com.academic.mapper.TeacherDirectoryMapper;
+import com.academic.feign.MessageServiceClient;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.extern.slf4j.Slf4j;
@@ -94,6 +97,15 @@ public class CounselorController {
 
     @Autowired
     private StudentMapper studentMapper;
+
+    @Autowired
+    private TeacherDirectoryMapper teacherDirectoryMapper;
+
+    @Autowired
+    private MessageMapper messageMapper;
+
+    @Autowired
+    private MessageServiceClient messageServiceClient;
 
     // ==================== 注册（已删，2026-10-08 W27） ====================
     // 这里原来有一条 `POST /counselors/register`：它只往 `counselor_profiles` 插一行档案，
@@ -1684,6 +1696,128 @@ public class CounselorController {
         } catch (Exception e) {
             log.error("获取通知历史失败: {}", e.getMessage(), e);
             return ApiResponse.serverError("获取通知历史失败: " + ExceptionMessages.describe(e));
+        }
+    }
+
+    // ==================== 教师消息（2026-10-21） ====================
+    /**
+     * 可接收消息的教师通讯录。
+     */
+    @GetMapping("/teachers")
+    public ApiResponse<List<Map<String, Object>>> listTeachers() {
+        try {
+            return ApiResponse.success(teacherDirectoryMapper.listTeachers());
+        } catch (Exception e) {
+            log.error("获取教师列表失败: {}", e.getMessage(), e);
+            return ApiResponse.serverError("获取教师列表失败: " + ExceptionMessages.describe(e));
+        }
+    }
+
+    /**
+     * 给教师发站内信。
+     *
+     * <p>写入不直接碰 {@code messages} 表，而是调 message-service 的
+     * {@code POST /api/messages/send}：那里统一落库并做 WebSocket 推送。
+     * 发送人由网关注入的 {@code X-User-Id} 决定（FeignConfig 负责透传），
+     * 不接受请求体里声明发送人。
+     */
+    @PostMapping("/teacher-messages/send")
+    public ApiResponse<String> sendTeacherMessage(@RequestBody Map<String, Object> body,
+                                                  HttpServletRequest request) {
+        Long senderId = getUserIdFromGateway(request);
+        if (senderId == null) {
+            return ApiResponse.unauthorized("未获取到登录身份");
+        }
+
+        Long teacherId = null;
+        Object rawTeacherId = body.get("teacherId");
+        if (rawTeacherId instanceof Number) {
+            teacherId = ((Number) rawTeacherId).longValue();
+        } else if (rawTeacherId != null && !rawTeacherId.toString().trim().isEmpty()) {
+            try {
+                teacherId = Long.parseLong(rawTeacherId.toString().trim());
+            } catch (NumberFormatException ignored) {
+                // 落到下面的参数错误
+            }
+        }
+        if (teacherId == null) {
+            return ApiResponse.badRequest("请选择接收教师");
+        }
+
+        String content = body.get("content") == null ? "" : body.get("content").toString().trim();
+        if (content.isEmpty()) {
+            return ApiResponse.badRequest("消息内容不能为空");
+        }
+        if (teacherDirectoryMapper.countTeacher(teacherId) == 0) {
+            return ApiResponse.badRequest("接收教师不存在或已停用");
+        }
+
+        Map<String, Object> payload = new HashMap<>();
+        payload.put("userId", teacherId);
+        payload.put("content", content);
+        payload.put("type", 2);
+
+        try {
+            ApiResponse<String> result = messageServiceClient.sendMessage(payload);
+            if (result == null || !result.isSuccess()) {
+                return ApiResponse.error(result == null ? "消息服务无响应" : result.getMessage());
+            }
+            return ApiResponse.success("消息已发送");
+        } catch (Exception e) {
+            log.error("发送教师消息失败: senderId={}, teacherId={}, error={}", senderId, teacherId, e.getMessage());
+            return ApiResponse.serverError("消息服务不可用，发送失败: " + ExceptionMessages.describe(e));
+        }
+    }
+
+    /**
+     * 我发给教师的最近消息（最近 50 条）。
+     */
+    @GetMapping("/teacher-messages/sent")
+    public ApiResponse<List<Map<String, Object>>> getSentTeacherMessages(HttpServletRequest request) {
+        Long senderId = getUserIdFromGateway(request);
+        if (senderId == null) {
+            return ApiResponse.unauthorized("未获取到登录身份");
+        }
+        try {
+            return ApiResponse.success(messageMapper.listSentTeacherMessages(senderId));
+        } catch (Exception e) {
+            log.error("获取教师消息发送记录失败: {}", e.getMessage(), e);
+            return ApiResponse.serverError("获取发送记录失败: " + ExceptionMessages.describe(e));
+        }
+    }
+
+    /**
+     * 教师对我发出的消息的回复（收件人是当前辅导员，type=2，发送方 role=2）。
+     */
+    @GetMapping("/teacher-messages/received")
+    public ApiResponse<List<Map<String, Object>>> getReceivedTeacherReplies(HttpServletRequest request) {
+        Long receiverId = getUserIdFromGateway(request);
+        if (receiverId == null) {
+            return ApiResponse.unauthorized("未获取到登录身份");
+        }
+        try {
+            return ApiResponse.success(messageMapper.listReceivedTeacherReplies(receiverId));
+        } catch (Exception e) {
+            log.error("获取教师回复失败: {}", e.getMessage(), e);
+            return ApiResponse.serverError("获取教师回复失败: " + ExceptionMessages.describe(e));
+        }
+    }
+
+    /**
+     * 把教师回复全部标为已读（只动当前辅导员收到的 type=2 消息）。
+     */
+    @PostMapping("/teacher-messages/read-all")
+    public ApiResponse<String> markTeacherRepliesRead(HttpServletRequest request) {
+        Long receiverId = getUserIdFromGateway(request);
+        if (receiverId == null) {
+            return ApiResponse.unauthorized("未获取到登录身份");
+        }
+        try {
+            int count = messageMapper.markTeacherRepliesRead(receiverId);
+            return ApiResponse.success("已将 " + count + " 条教师回复标记为已读");
+        } catch (Exception e) {
+            log.error("标记教师回复已读失败: {}", e.getMessage(), e);
+            return ApiResponse.serverError("操作失败: " + ExceptionMessages.describe(e));
         }
     }
 

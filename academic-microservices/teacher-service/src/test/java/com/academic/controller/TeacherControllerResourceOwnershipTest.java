@@ -406,6 +406,31 @@ class TeacherControllerResourceOwnershipTest {
         verify(courseService).updateCourse(any());
     }
 
+    @Test
+    @DisplayName("★ 改自己的课时把 body 里的 teacherId 写成别人 ⇒ 403 且不落库（不能借改名把课过户）")
+    void updateCourseTransferToOtherRejected() {
+        Course patch = new Course();
+        patch.setName("改个名");
+        patch.setTeacherId(OTHER);
+        when(courseService.getById(MY_COURSE)).thenReturn(courseOwnedBy(ME));
+
+        assertEquals(403, controller.updateCourse(MY_COURSE, patch, as(ME)).getCode());
+        verify(courseService, never()).updateCourse(any());
+    }
+
+    @Test
+    @DisplayName("认领没人认领的课程：body 里的 teacherId 写自己 ⇒ 放行")
+    void updateUnownedCourseClaimSelfAllowed() {
+        Course patch = new Course();
+        patch.setName("改名并认领");
+        patch.setTeacherId(ME);
+        when(courseService.getById(MY_COURSE)).thenReturn(courseOwnedBy(null));
+        when(courseService.updateCourse(any())).thenReturn(true);
+
+        assertEquals(200, controller.updateCourse(MY_COURSE, patch, as(ME)).getCode());
+        verify(courseService).updateCourse(any());
+    }
+
     // ================================================== 身份缺陷与旁路
 
     @Test
@@ -565,10 +590,24 @@ class TeacherControllerResourceOwnershipTest {
     }
 
     @Test
-    @DisplayName("W44 沟通记录：以自己的名义 ⇒ 放行（闸不误伤；PC「通知辅导员」发的就是 getUserId()）")
+    @DisplayName("W44 沟通记录：以自己的名义、学生也在本人班上 ⇒ 放行（闸不误伤）")
     void saveCommunication_ownName_allowed() {
+        when(classInfoMapper.findClassIdOfProfile(3L)).thenReturn(MY_CLASS);
+        when(classInfoMapper.selectById(MY_CLASS)).thenReturn(classOwnedBy(ME));
+
         assertEquals(200, controller.saveCommunication(communicationBody(ME), as(ME)).getCode());
         verify(communicationRecordService).saveCommunication(eq(ME), eq(3L), eq("W44"), eq("notify_counselor"), eq("司明"));
+    }
+
+    @Test
+    @DisplayName("★ W44 沟通记录：学生不在本人班上（studentId=别班学生）⇒ 403 且不写库")
+    void saveCommunication_othersStudent_denied() {
+        when(classInfoMapper.findClassIdOfProfile(3L)).thenReturn(OTHERS_CLASS);
+        when(classInfoMapper.selectById(OTHERS_CLASS)).thenReturn(classOwnedBy(OTHER));
+
+        assertEquals(403, controller.saveCommunication(communicationBody(ME), as(ME)).getCode(),
+                "teacherId 是自己的只证明「以自己的名义」，不证明「这个学生归你」");
+        verify(communicationRecordService, never()).saveCommunication(anyLong(), anyLong(), any(), any(), any());
     }
 
     @Test

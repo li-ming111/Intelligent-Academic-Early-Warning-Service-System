@@ -42,6 +42,7 @@ import static org.mockito.Mockito.*;
 class AdminRemoveTeacherTest {
 
     @Mock private ClassesMapper classesMapper;
+    @Mock private com.academic.mapper.TeacherClassApplicationMapper applicationMapper;
 
     @InjectMocks private AdminController controller;
 
@@ -102,6 +103,30 @@ class AdminRemoveTeacherTest {
 
         assertNotEquals(200, r.getCode(), "没改成却回 200 就是这个缺陷本身");
         assertFalse(r.isSuccess());
+    }
+
+    /**
+     * 移出教师后，该教师在该班的申请（待审/已通过）必须一并取消：
+     * 否则 {@code getApplicationsByTeacherAndClass} 仍会把 status=1 的那条读出来，
+     * 页面上「该教师仍管理中」原地复活。
+     */
+    @Test
+    @DisplayName("移出教师：该班该教师的 status 0/1 申请一并置为已取消")
+    void removeTeacher_cancelsOpenApplications() {
+        when(classesMapper.selectById(777L)).thenReturn(cls(777L, 1L), cls(777L, null));
+
+        controller.removeTeacherFromClass(777L);
+
+        ArgumentCaptor<Wrapper> cap = ArgumentCaptor.forClass(Wrapper.class);
+        verify(applicationMapper).update(isNull(), cap.capture());
+        UpdateWrapper<?> cancel = (UpdateWrapper<?>) cap.getValue();
+
+        assertTrue(cancel.getSqlSet().contains("status"), "SET 里必须显式写 status");
+        assertTrue(cancel.getSqlSegment().contains("class_id"), "只取消本班的申请");
+        assertTrue(cancel.getSqlSegment().contains("teacher_id"), "只取消被移出教师的申请");
+        assertTrue(cancel.getParamNameValuePairs().containsValue(3), "取消后的状态值是 3");
+        assertTrue(cancel.getParamNameValuePairs().containsValue(777L));
+        assertTrue(cancel.getParamNameValuePairs().containsValue(1L));
     }
 
     /** 班级不存在 ⇒ 404，且一次 update 都不发。 */

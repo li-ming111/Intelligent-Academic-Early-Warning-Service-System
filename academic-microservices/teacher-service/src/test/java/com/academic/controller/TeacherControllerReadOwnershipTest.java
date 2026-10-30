@@ -96,8 +96,8 @@ class TeacherControllerReadOwnershipTest {
     void ownReadsAllowed() {
         when(feedbackService.getFeedbacks(ME, null)).thenReturn(new ArrayList<>());
 
-        assertEquals(200, controller.getMessages(String.valueOf(ME), as(ME)).getCode());
-        assertEquals(200, controller.getUnreadCount(String.valueOf(ME), as(ME)).getCode());
+        assertEquals(200, controller.getMessages(ME, as(ME)).getCode());
+        assertEquals(200, controller.getUnreadCount(ME, as(ME)).getCode());
 
         verify(feedbackService, times(2)).getFeedbacks(ME, null);
     }
@@ -111,8 +111,8 @@ class TeacherControllerReadOwnershipTest {
         when(applicationService.getApplicationsByTeacherId(ME)).thenReturn(new ArrayList<>());
         when(feedbackService.getFeedbacks(ME, null)).thenReturn(new ArrayList<>());
 
-        assertEquals(200, controller.getDashboard(String.valueOf(ME), as(ME)).getCode());
-        assertEquals(200, controller.getTodos(String.valueOf(ME), as(ME)).getCode());
+        assertEquals(200, controller.getDashboard(ME, as(ME)).getCode());
+        assertEquals(200, controller.getTodos(ME, as(ME)).getCode());
 
         verify(teacherService).getByUserId(ME);
     }
@@ -122,7 +122,7 @@ class TeacherControllerReadOwnershipTest {
     void adminBypassesReadGuard() {
         when(feedbackService.getFeedbacks(OTHER, null)).thenReturn(new ArrayList<>());
 
-        assertEquals(200, controller.getMessages(String.valueOf(OTHER), asAdmin(1L)).getCode());
+        assertEquals(200, controller.getMessages(OTHER, asAdmin(1L)).getCode());
         verify(feedbackService).getFeedbacks(OTHER, null);
     }
 
@@ -131,7 +131,7 @@ class TeacherControllerReadOwnershipTest {
     @Test
     @DisplayName("★ 读别人的消息 ⇒ 403，且 **feedbackService 一次都没被调用**")
     void otherTeacherMessagesRejected() {
-        ApiResponse<Object> res = controller.getMessages(String.valueOf(OTHER), as(ME));
+        ApiResponse<Object> res = controller.getMessages(OTHER, as(ME));
 
         assertEquals(403, res.getCode());
         verify(feedbackService, never()).getFeedbacks(anyLong(), any());
@@ -149,16 +149,16 @@ class TeacherControllerReadOwnershipTest {
     @Test
     @DisplayName("读别人的看板 / 学生 / 预警 / 待办 / 审计日志 / 反馈 / 未读数 ⇒ 一律 403 且不触库")
     void otherTeacherAllReadsRejected() {
-        assertEquals(403, controller.getDashboard(String.valueOf(OTHER), as(ME)).getCode());
-        assertEquals(403, controller.getStudents(String.valueOf(OTHER), as(ME)).getCode());
+        assertEquals(403, controller.getDashboard(OTHER, as(ME)).getCode());
+        assertEquals(403, controller.getStudents(OTHER, as(ME)).getCode());
         // W39 起多一个 onlyMine 参数；归属闸与它无关，两种取值都必须 403。
-        assertEquals(403, controller.getWarnings(String.valueOf(OTHER), null, false, as(ME)).getCode());
-        assertEquals(403, controller.getWarnings(String.valueOf(OTHER), null, true, as(ME)).getCode());
-        assertEquals(403, controller.getTodos(String.valueOf(OTHER), as(ME)).getCode());
-        assertEquals(403, controller.getAuditLogs(String.valueOf(OTHER), 1, 20, as(ME)).getCode());
-        assertEquals(403, controller.getScoreLogs(String.valueOf(OTHER), 1, 20, as(ME)).getCode());
-        assertEquals(403, controller.getFeedbackList(String.valueOf(OTHER), "", as(ME)).getCode());
-        assertEquals(403, controller.getUnreadCount(String.valueOf(OTHER), as(ME)).getCode());
+        assertEquals(403, controller.getWarnings(OTHER, null, false, as(ME)).getCode());
+        assertEquals(403, controller.getWarnings(OTHER, null, true, as(ME)).getCode());
+        assertEquals(403, controller.getTodos(OTHER, as(ME)).getCode());
+        assertEquals(403, controller.getAuditLogs(OTHER, 1, 20, as(ME)).getCode());
+        assertEquals(403, controller.getScoreLogs(OTHER, 1, 20, as(ME)).getCode());
+        assertEquals(403, controller.getFeedbackList(OTHER, "", as(ME)).getCode());
+        assertEquals(403, controller.getUnreadCount(OTHER, as(ME)).getCode());
 
         verify(teacherService, never()).getByUserId(anyLong());
         verify(classInfoService, never()).getClassesByTeacherId(anyLong());
@@ -209,7 +209,7 @@ class TeacherControllerReadOwnershipTest {
         when(academicWarningCourseMapper.selectWarningIdsInvolvingTeacher(eq(me), anyCollection()))
                 .thenReturn(List.of(501L));
 
-        ApiResponse<Object> all = controller.getWarnings(String.valueOf(me), null, false, as(me));
+        ApiResponse<Object> all = controller.getWarnings(me, null, false, as(me));
         assertEquals(200, all.getCode());
         List<java.util.Map<String, Object>> allRows = (List<java.util.Map<String, Object>>) all.getData();
         assertEquals(2, allRows.size(), "不筛时必须保留原有班级范围（W39 没有收窄可见面）");
@@ -218,7 +218,7 @@ class TeacherControllerReadOwnershipTest {
         assertEquals(Boolean.FALSE, allRows.stream()
                 .filter(r -> Long.valueOf(502L).equals(r.get("id"))).findFirst().orElseThrow().get("involvesMyCourse"));
 
-        ApiResponse<Object> mine = controller.getWarnings(String.valueOf(me), null, true, as(me));
+        ApiResponse<Object> mine = controller.getWarnings(me, null, true, as(me));
         List<java.util.Map<String, Object>> mineRows = (List<java.util.Map<String, Object>>) mine.getData();
         assertEquals(1, mineRows.size(), "onlyMine=true 只剩 501");
         assertEquals(501L, mineRows.get(0).get("id"));
@@ -229,8 +229,8 @@ class TeacherControllerReadOwnershipTest {
     @Test
     @DisplayName("没有登录身份 ⇒ 拒绝，fail-closed")
     void noIdentityRejected() {
-        assertEquals(403, controller.getMessages(String.valueOf(ME), anonymous()).getCode());
-        assertEquals(403, controller.getDashboard(String.valueOf(ME), anonymous()).getCode());
+        assertEquals(403, controller.getMessages(ME, anonymous()).getCode());
+        assertEquals(403, controller.getDashboard(ME, anonymous()).getCode());
 
         verify(feedbackService, never()).getFeedbacks(anyLong(), any());
         verify(teacherService, never()).getByUserId(anyLong());
@@ -366,7 +366,7 @@ class TeacherControllerReadOwnershipTest {
     @Test
     @DisplayName("/scores/by-class：带别人的 teacher_id ⇒ 403，且不查库")
     void scoresByClassOthersIdDenied() {
-        assertEquals(403, controller.getScoresByClass("计科2306班", OTHER, as(ME)).getCode());
+        assertEquals(403, controller.getScoresByClass("计科2306班", OTHER, null, as(ME)).getCode());
 
         verify(scoreRecordService, never()).getScoresByClassNameAndTeacherId(anyString(), anyLong());
     }
@@ -378,12 +378,45 @@ class TeacherControllerReadOwnershipTest {
     private static final String OTHERS_CLASS_NAME = "软件工程2101班";
 
     @Test
+    @DisplayName("★ /scores/by-class：带自己的 teacher_id 但班级不是本人的 ⇒ 403，且不查成绩")
+    void scoresByClassOwnIdOthersClassDenied() {
+        when(classInfoMapper.countClassesNamedAndOwned(OTHERS_CLASS_NAME, ME)).thenReturn(0);
+
+        assertEquals(403, controller.getScoresByClass(OTHERS_CLASS_NAME, ME, null, as(ME)).getCode());
+
+        verify(scoreRecordService, never()).getScoresByClassNameAndTeacherId(anyString(), anyLong());
+    }
+
+    @Test
+    @DisplayName("/scores/by-class：带自己的 teacher_id 且班级是本人的 ⇒ 200")
+    void scoresByClassOwnIdOwnClassAllowed() {
+        when(classInfoMapper.countClassesNamedAndOwned(MY_CLASS_NAME, ME)).thenReturn(1);
+        when(scoreRecordService.getScoresByClassNameAndTeacherId(MY_CLASS_NAME, ME)).thenReturn(new ArrayList<>());
+
+        assertEquals(200, controller.getScoresByClass(MY_CLASS_NAME, ME, true, as(ME)).getCode());
+
+        verify(scoreRecordService).getScoresByClassNameAndTeacherId(MY_CLASS_NAME, ME);
+    }
+
+    @Test
+    @DisplayName("/scores/by-class：带自己的 teacher_id 但只有 only_mine=true 才按本人课程过滤，默认仍是全班")
+    void scoresByClassOwnIdWithoutOnlyMineKeepsClassWide() {
+        when(classInfoMapper.countClassesNamedAndOwned(MY_CLASS_NAME, ME)).thenReturn(1);
+        when(scoreRecordService.getScoresByClassName(MY_CLASS_NAME)).thenReturn(new ArrayList<>());
+
+        assertEquals(200, controller.getScoresByClass(MY_CLASS_NAME, ME, null, as(ME)).getCode());
+
+        verify(scoreRecordService).getScoresByClassName(MY_CLASS_NAME);
+        verify(scoreRecordService, never()).getScoresByClassNameAndTeacherId(anyString(), anyLong());
+    }
+
+    @Test
     @DisplayName("/scores/by-class：不传 teacher_id 且是本人的班 ⇒ 200（全班成绩视图保住）")
     void scoresByClassUnfilteredOwnClassAllowed() {
         when(classInfoMapper.countClassesNamedAndOwned(MY_CLASS_NAME, ME)).thenReturn(1);
         when(scoreRecordService.getScoresByClassName(MY_CLASS_NAME)).thenReturn(new ArrayList<>());
 
-        assertEquals(200, controller.getScoresByClass(MY_CLASS_NAME, null, as(ME)).getCode());
+        assertEquals(200, controller.getScoresByClass(MY_CLASS_NAME, null, null, as(ME)).getCode());
 
         verify(scoreRecordService).getScoresByClassName(MY_CLASS_NAME);
     }
@@ -393,7 +426,7 @@ class TeacherControllerReadOwnershipTest {
     void scoresByClassUnfilteredOthersClassDenied() {
         when(classInfoMapper.countClassesNamedAndOwned(OTHERS_CLASS_NAME, ME)).thenReturn(0);
 
-        assertEquals(403, controller.getScoresByClass(OTHERS_CLASS_NAME, null, as(ME)).getCode());
+        assertEquals(403, controller.getScoresByClass(OTHERS_CLASS_NAME, null, null, as(ME)).getCode());
 
         verify(scoreRecordService, never()).getScoresByClassName(anyString());
     }
@@ -403,7 +436,7 @@ class TeacherControllerReadOwnershipTest {
     void scoresByClassUnfilteredUnknownClassDenied() {
         when(classInfoMapper.countClassesNamedAndOwned("查无此班", ME)).thenReturn(0);
 
-        assertEquals(403, controller.getScoresByClass("查无此班", null, as(ME)).getCode());
+        assertEquals(403, controller.getScoresByClass("查无此班", null, null, as(ME)).getCode());
 
         verify(scoreRecordService, never()).getScoresByClassName(anyString());
     }
@@ -411,7 +444,7 @@ class TeacherControllerReadOwnershipTest {
     @Test
     @DisplayName("/scores/by-class：不传 teacher_id 且没有身份头 ⇒ 403，且不查库")
     void scoresByClassUnfilteredAnonymousDenied() {
-        assertEquals(403, controller.getScoresByClass(MY_CLASS_NAME, null, anonymous()).getCode());
+        assertEquals(403, controller.getScoresByClass(MY_CLASS_NAME, null, null, anonymous()).getCode());
 
         verify(classInfoMapper, never()).countClassesNamedAndOwned(anyString(), anyLong());
         verify(scoreRecordService, never()).getScoresByClassName(anyString());
@@ -420,7 +453,7 @@ class TeacherControllerReadOwnershipTest {
     @Test
     @DisplayName("/scores/by-class：班级名为空 ⇒ 403，且不查库")
     void scoresByClassUnfilteredBlankNameDenied() {
-        assertEquals(403, controller.getScoresByClass("  ", null, as(ME)).getCode());
+        assertEquals(403, controller.getScoresByClass("  ", null, null, as(ME)).getCode());
 
         verify(classInfoMapper, never()).countClassesNamedAndOwned(anyString(), anyLong());
     }
@@ -430,7 +463,7 @@ class TeacherControllerReadOwnershipTest {
     void scoresByClassUnfilteredAdminBypass() {
         when(scoreRecordService.getScoresByClassName(OTHERS_CLASS_NAME)).thenReturn(new ArrayList<>());
 
-        assertEquals(200, controller.getScoresByClass(OTHERS_CLASS_NAME, null, asAdmin(4L)).getCode());
+        assertEquals(200, controller.getScoresByClass(OTHERS_CLASS_NAME, null, null, asAdmin(4L)).getCode());
 
         verify(classInfoMapper, never()).countClassesNamedAndOwned(anyString(), anyLong());
     }

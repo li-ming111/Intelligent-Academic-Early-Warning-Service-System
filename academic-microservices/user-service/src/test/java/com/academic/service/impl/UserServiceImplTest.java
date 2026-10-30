@@ -252,10 +252,15 @@ class UserServiceImplTest {
     void testRegister() {
         stubFreshRegistration();
         stubUserInsertBackfillsId(88L);
+        // 2026-10-19：学生注册学院/专业必填（与 xcx/PC 表单同口径），不给就 400
+        when(registrationMapper.countMajor(5L)).thenReturn(1);
+        when(registrationMapper.selectMajorCollegeId(5L)).thenReturn(1L);
+        when(registrationMapper.countCollege(1L)).thenReturn(1);
 
         Map<String, Object> request = body(
                 "username", "2023020701", "password", "123456", "name", "新同学",
                 "phone", "13800001111", "email", "new@example.com",
+                "collegeId", 1, "majorId", 5,
                 "role", 4);   // ← 恶意请求体：想自提权成系统管理员
 
         // 端点只允许建学生，所以传 1
@@ -278,7 +283,7 @@ class UserServiceImplTest {
 
         // 学生必须有档案行，否则登录进去没有任何数据可查
         verify(registrationMapper).insertStudentProfile(
-                88L, "2023020701", "新同学", null, null, null, null, null);
+                88L, "2023020701", "新同学", null, 1L, 5L, null, null);
     }
 
     /** 学生只填了专业 → 学院跟着专业走（不能出现"专业属 A 院、学院写 B 院"）。 */
@@ -351,10 +356,13 @@ class UserServiceImplTest {
     void testRegister_studentCollegeNotFoundRejected() {
         stubFreshRegistration();
         stubUserInsertBackfillsId(93L);
+        when(registrationMapper.selectClassRow(7L))
+                .thenReturn(Map.of("id", 7L, "name", "幽灵班", "college_id", 3L, "major_id", 5L));
         when(registrationMapper.countCollege(3L)).thenReturn(0);
 
         IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
-                () -> userService.register(body("username", "2023020706", "password", "123456", "collegeId", 3), 1));
+                () -> userService.register(body("username", "2023020706", "password", "123456",
+                        "classId", 7), 1));
         assertEquals("所选学院不存在: 3", e.getMessage());
     }
 
@@ -385,17 +393,24 @@ class UserServiceImplTest {
         assertEquals("字段 collegeId 必须是数字: abc", e.getMessage());
     }
 
-    /** 空串（前端"未选择"的形状）算没填，不该报错。 */
+    /**
+     * 空串（前端"未选择"的形状）算没填，不该报"必须是数字"。
+     * 学院/专业 2026-10-19 起必填（另行有拒绝用例），这里给足有效值、
+     * 只把 classId 留成空串 —— 钉"空串 ≠ 非数字报错"。
+     */
     @Test
     void testRegister_blankIdsTreatedAsAbsent() {
         stubFreshRegistration();
         stubUserInsertBackfillsId(96L);
+        when(registrationMapper.countMajor(5L)).thenReturn(1);
+        when(registrationMapper.selectMajorCollegeId(5L)).thenReturn(1L);
+        when(registrationMapper.countCollege(1L)).thenReturn(1);
 
         userService.register(body("username", "2023020709", "password", "123456",
-                "name", "小丙", "collegeId", "", "majorId", "", "classId", ""), 1);
+                "name", "小丙", "collegeId", 1, "majorId", 5, "classId", ""), 1);
 
         verify(registrationMapper).insertStudentProfile(
-                96L, "2023020709", "小丙", null, null, null, null, null);
+                96L, "2023020709", "小丙", null, 1L, 5L, null, null);
         verify(registrationMapper, never()).selectClassRow(any());
     }
 
@@ -478,8 +493,11 @@ class UserServiceImplTest {
     void testRegister_counselorWithoutOfficeInfoCreatesNoSettingsRow() {
         stubFreshRegistration();
         stubUserInsertBackfillsId(100L);
+        // 2026-10-19：辅导员注册学院必填（后端与表单同口径）
+        when(registrationMapper.countCollege(2L)).thenReturn(1);
 
-        userService.register(body("username", "C100", "password", "123456", "name", "赵辅导"), 3);
+        userService.register(body("username", "C100", "password", "123456", "name", "赵辅导",
+                "collegeId", 2), 3);
 
         verify(registrationMapper).insertCounselorProfile(any());
         verify(registrationMapper, never()).insertUserSettings(any());

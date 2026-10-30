@@ -54,21 +54,16 @@ public class TeacherClassApplicationService {
                 return "该班级已有教师管理，无法重复申请";
             }
             
-            // 2. 检查教师是否已经申请过该班级（待审核或已通过状态）
-            // 排除已通过的解除管理申请（解除申请通过后教师已不再是管理者，应允许重新申请）
+            // 2. 检查是否已有待审核的管理申请
+            // 能走到这里说明班级当前无管理者，历史“已通过”的管理申请只代表曾经管理过、
+            // 后来又被解除，不能作为拒绝重新申请的依据，只有待审核（status=0）才拦截
             List<TeacherClassApplication> existingApplications = applicationMapper.getApplicationsByTeacherAndClass(teacherId, classId);
-            if (existingApplications != null && !existingApplications.isEmpty()) {
-                boolean hasValidApplication = false;
+            if (existingApplications != null) {
                 for (TeacherClassApplication app : existingApplications) {
-                    // 如果是申请管理（application_type=0或null），则视为有效申请
-                    // 如果是解除管理（application_type=1）且已通过（status=1），则不视为有效申请
-                    if (app.getApplicationType() == null || app.getApplicationType() == 0) {
-                        hasValidApplication = true;
-                        break;
+                    boolean isManageApplication = app.getApplicationType() == null || app.getApplicationType() == 0;
+                    if (isManageApplication && app.getStatus() != null && app.getStatus() == 0) {
+                        return "您已经申请过该班级";
                     }
-                }
-                if (hasValidApplication) {
-                    return "您已经申请过该班级";
                 }
             }
         } else {

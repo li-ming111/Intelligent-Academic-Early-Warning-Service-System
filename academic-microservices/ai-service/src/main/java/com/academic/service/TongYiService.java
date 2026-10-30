@@ -17,21 +17,22 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 通义千问 AI 大模型服务
- * 通过 DashScope OpenAI 兼容接口调用通义千问
+ * AI 大模型服务（当前接入 DeepSeek）
+ * 通过 OpenAI 兼容接口调用 DeepSeek chat completions。
+ * 类名沿用历史命名，实例实际调用的是 application.yml 中 deepseek.* 指定的服务。
  */
 @Service
 public class TongYiService {
 
     private static final Logger log = LoggerFactory.getLogger(TongYiService.class);
 
-    @Value("${tongyi.api-key}")
+    @Value("${ai.api-key}")
     private String apiKey;
 
-    @Value("${tongyi.model:qwen-plus}")
+    @Value("${ai.model:deepseek-chat}")
     private String model;
 
-    @Value("${tongyi.base-url}")
+    @Value("${ai.base-url}")
     private String baseUrl;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
@@ -42,10 +43,10 @@ public class TongYiService {
     /**
      * key 是否真的配过。
      *
-     * ⚠️ `application.yml` 里写的是 `${DASHSCOPE_KEY:your-api-key-here}` —— 没设环境变量时
-     * apiKey 就是字符串 "your-api-key-here"，而这个占位串**会被照常发出去**，服务端回 401、
-     * chat() 返回 null。于是"有没有 key"这件事在调用方看起来和"网络不通"完全一样，
-     * 调用方（AIController）只能靠猜。这里把它变成一个可以问的问题。
+     * ⚠️ `application.yml` 里写的是 `${AI_API_KEY:sk-...}` —— 没设环境变量时用配置里的默认 key，
+     * 但若有人把默认值改回占位串，它**会被照常发出去**，服务端回 401、chat() 返回 null。
+     * 于是"有没有 key"这件事在调用方看起来和"网络不通"完全一样，调用方（AIController）
+     * 只能靠猜。这里把它变成一个可以问的问题。
      */
     public boolean isConfigured() {
         if (apiKey == null) return false;
@@ -56,11 +57,11 @@ public class TongYiService {
     }
 
     /**
-     * 发送对话请求到通义千问
+     * 发送对话请求到 DeepSeek
      */
     public String chat(String systemPrompt, String userMessage) {
         if (!isConfigured()) {
-            log.warn("通义千问 API Key 未配置（DASHSCOPE_KEY），本次不发起调用");
+            log.warn("DeepSeek API Key 未配置（AI_API_KEY），本次不发起调用");
             return null;
         }
         try {
@@ -106,10 +107,10 @@ public class TongYiService {
                     return (String) msg.get("content");
                 }
             } else {
-                log.error("通义千问 API 返回错误: status={}, body={}", response.statusCode(), response.body());
+                log.error("DeepSeek API 返回错误: status={}, body={}", response.statusCode(), response.body());
             }
         } catch (Exception e) {
-            log.error("调用通义千问失败: {}", e.getMessage(), e);
+            log.error("调用 DeepSeek 失败: {}", e.getMessage(), e);
         }
         return null;
     }

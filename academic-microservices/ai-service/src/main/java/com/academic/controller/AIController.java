@@ -5,6 +5,7 @@ import com.academic.common.util.ExceptionMessages;
 import com.academic.feign.StudentServiceFeignClient;
 import com.academic.service.AIService;
 import com.academic.service.TongYiService;
+import com.academic.service.AnalysisContextService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.web.bind.annotation.*;
@@ -26,6 +27,7 @@ public class AIController {
     private final AIService aiService;
     private final TongYiService tongYiService;
     private final StudentServiceFeignClient studentServiceClient;
+    private final AnalysisContextService analysisContextService;
 
     // ⚠️ 2026-09-30：`/ai/chat` 与 `/ai/qa` 原来是**假装**答过的 ——
     //   `tongYiService.generalChat()` 在没配 key / 调不通时返回 null，
@@ -35,7 +37,7 @@ public class AIController {
     //   一次真实模型调用都没发生，前端却弹「处理意见生成成功」，还把这句话填进辅导员的处理意见框。
     //   现在：模型没答就如实说没答，不再拿一句话顶替。
     private static final String AI_UNAVAILABLE =
-        "没有可用的 AI 回答：通义千问未配置有效的 API Key（环境变量 DASHSCOPE_KEY），或本次调用失败。请配置后再使用该功能。";
+        "没有可用的 AI 回答：DeepSeek 未配置有效的 API Key（环境变量 AI_API_KEY），或本次调用失败。请配置后再使用该功能。";
 
     // ⚠️ 2026-10-08（W28）：下面三条**纯 AI** 端点当时没跟上上面那次改动 ——
     //   `analyze-warning-trend` / `analyze-warning` / `analyze-class-scores` 在模型没答时
@@ -44,10 +46,10 @@ public class AIController {
     //   用户只会以为"再等等就有了"。与 AI_UNAVAILABLE 上面记的是同一族（说法与事实不符）。
     //   现在按**原因**分开说，并回 `error`（不再包 success）。
     private static final String AI_UNCONFIGURED =
-        "通义千问 API Key 未配置（环境变量 DASHSCOPE_KEY），AI 分析不可用。请配置后再使用该功能。";
+        "DeepSeek API Key 未配置（环境变量 AI_API_KEY），AI 分析不可用。请配置后再使用该功能。";
     private static final String AI_CALL_FAILED =
-        "调用通义千问失败（网络不通或服务端返回错误），本次拿不到分析结果。"
-        + "重试若仍失败，请检查 DASHSCOPE_KEY 与出网情况。";
+        "调用 DeepSeek 失败（网络不通或服务端返回错误），本次拿不到分析结果。"
+        + "重试若仍失败，请检查 AI_API_KEY 与出网情况。";
 
     /**
      * 纯 AI 端点没拿到结果时，**如实说没拿到**，并把"没配 key"与"调失败"分开说。
@@ -71,10 +73,12 @@ public class AIController {
     }
 
     public AIController(AIService aiService, TongYiService tongYiService,
-                        StudentServiceFeignClient studentServiceClient) {
+                        StudentServiceFeignClient studentServiceClient,
+                        AnalysisContextService analysisContextService) {
         this.aiService = aiService;
         this.tongYiService = tongYiService;
         this.studentServiceClient = studentServiceClient;
+        this.analysisContextService = analysisContextService;
     }
 
     // ==================== 核心 AI 分析接口 ====================
@@ -165,11 +169,11 @@ public class AIController {
             Map<String, Object> result = new HashMap<>();
             result.put("studentId", studentId);
 
-            // 调用通义千问获取智能回复
+            // 调用 DeepSeek 获取智能回复
             String aiReply = tongYiService.generalChat(message);
             if (aiReply == null || aiReply.isEmpty()) {
                 // 模型真的没答 —— 那就别答。原来这里塞的是一句写死的话，见 AI_UNAVAILABLE 上面那段。
-                log.warn("chat 调用通义千问没有得到回答（key 已配置={}），如实回失败", tongYiService.isConfigured());
+                log.warn("chat 调用 DeepSeek 没有得到回答（key 已配置={}），如实回失败", tongYiService.isConfigured());
                 return ApiResponse.error(AI_UNAVAILABLE);
             }
             result.put("reply", aiReply);
@@ -194,11 +198,11 @@ public class AIController {
             String question = (String) data.getOrDefault("question", "");
             Map<String, Object> result = new HashMap<>();
             result.put("question", question);
-            // 调用通义千问智能问答
+            // 调用 DeepSeek 智能问答
             String aiAnswer = tongYiService.generalChat(question);
             if (aiAnswer == null || aiAnswer.isEmpty()) {
                 // 同 /ai/chat：没答就说没答，不拿写死的句子冒充模型输出。
-                log.warn("qa 调用通义千问没有得到回答（key 已配置={}），如实回失败", tongYiService.isConfigured());
+                log.warn("qa 调用 DeepSeek 没有得到回答（key 已配置={}），如实回失败", tongYiService.isConfigured());
                 return ApiResponse.error(AI_UNAVAILABLE);
             }
             result.put("answer", aiAnswer);
@@ -295,9 +299,11 @@ public class AIController {
     @GetMapping("/analyze-warning-trend/{counselorId}")
     public ApiResponse<Object> analyzeWarningTrend(@PathVariable Long counselorId) {
         try {
-            String aiAnalysis = tongYiService.generalChat(
-                    "请分析辅导员ID为" + counselorId + "所管理学生的预警趋势，" +
-                    "给出预警分布分析和重点关注建议。300字以内。");
+            String prompt = analysisContextService.buildWarningTrendPrompt(counselorId);
+            if (prompt == null) {
+                return ApiResponse.notFound("未找到该辅导员管理的班级");
+            }
+            String aiAnalysis = tongYiService.generalChat(prompt);
             if (aiAnalysis == null || aiAnalysis.isBlank()) {
                 return aiUnavailable("预警趋势分析");
             }
@@ -323,7 +329,7 @@ public class AIController {
             Map<String, Object> result = new HashMap<>();
             result.put("scoreAnalysis", scoreAnalysis);
             result.put("riskPrediction", riskPrediction);
-            // 用通义千问生成综合评语
+            // 用 DeepSeek 生成综合评语
             String comment = tongYiService.generalChat(
                     "请对学号为" + studentId + "的学生做综合学业评价，" +
                     "结合成绩和风险数据给出100字以内的总结和建议。");
@@ -348,9 +354,12 @@ public class AIController {
     @GetMapping("/analyze-warning/{warningId}")
     public ApiResponse<Object> analyzeWarning(@PathVariable Long warningId) {
         try {
-            String aiAnalysis = tongYiService.generalChat(
-                    "请分析预警记录ID为" + warningId + "的学业预警，" +
-                    "给出该预警的严重性评估、原因分析和建议处理方案。200字以内。");
+            // 只把 ID 交给模型，它会自己编等级和原因；必须连同真实预警记录一起传。
+            String prompt = analysisContextService.buildWarningPrompt(warningId);
+            if (prompt == null) {
+                return ApiResponse.notFound("预警不存在");
+            }
+            String aiAnalysis = tongYiService.generalChat(prompt);
             if (aiAnalysis == null || aiAnalysis.isBlank()) {
                 return aiUnavailable("预警分析");
             }
@@ -367,9 +376,11 @@ public class AIController {
     @GetMapping("/analyze-class-scores/{classId}")
     public ApiResponse<Object> analyzeClassScores(@PathVariable Long classId) {
         try {
-            String aiAnalysis = tongYiService.generalChat(
-                    "请分析班级ID为" + classId + "的学业情况，" +
-                    "从整体成绩分布、薄弱环节、需要关注的学生群体等角度给出分析。300字以内。");
+            String prompt = analysisContextService.buildClassScoresPrompt(classId);
+            if (prompt == null) {
+                return ApiResponse.notFound("班级不存在");
+            }
+            String aiAnalysis = tongYiService.generalChat(prompt);
             if (aiAnalysis == null || aiAnalysis.isBlank()) {
                 return aiUnavailable("班级成绩分析");
             }

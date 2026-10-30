@@ -55,13 +55,14 @@ public class ScoreRecordService {
         return scoreRecordMapper.listLatestValidByCourse(courseId);
     }
 
+    /** 按班级名取成绩（全班所有课程，含其他教师录的行）。 */
     public List<ScoreRecord> getScoresByClassName(String className) {
         return scoreRecordMapper.listLatestValidByClassName(className);
     }
 
-    /** 按班级名 + 教师取成绩（归属由调用方的班级归属闸把关，这里与按名取同源）。 */
+    /** 按班级名 + 授课教师取成绩：只回 {@code courses.teacher_id = teacherId} 的课程行。 */
     public List<ScoreRecord> getScoresByClassNameAndTeacherId(String className, Long teacherId) {
-        return scoreRecordMapper.listLatestValidByClassName(className);
+        return scoreRecordMapper.listLatestValidByClassNameAndTeacherId(className, teacherId);
     }
 
     public List<Map<String, Object>> getScoresByClassId(Long classId) {
@@ -88,8 +89,9 @@ public class ScoreRecordService {
      * {@code POST /teachers/scores/import} 共用本方法（导入端在控制器里组装行）。
      *
      * <p>查重键 {@code (student, course, semester)}：显式给学期时按三元组查（重修是同一门课
-     * 另一个学期，应新增一行）；没给学期则退到该生已有的最大学期序号（保证新记录不比历史更旧，
-     * 否则在"每门课取最新一次"的口径下会被直接丢弃）。
+     * 另一个学期，应新增一行）；没给学期则沿用**该生该课**最近一条的学期（覆盖语义），
+     * 该课没有历史记录时从第 1 学期起。不能取该生跨课程的最大学期 —— 那会在本课下
+     * 新建一条高学期记录，而不是覆盖原有那条。
      */
     @Transactional(rollbackFor = Exception.class)
     public void saveScores(List<Map<String, Object>> scores, Long teacherId) {
@@ -99,12 +101,11 @@ public class ScoreRecordService {
             double score = Double.parseDouble(scoreData.get("score").toString());
 
             String requested = trimSemester(scoreData.get("semester"));
-            // 未指定学期时退到该生已有的最大学期序号（scores 口径）—— 保证新记录不比历史更旧，
-            // 否则在"每门课取最新一次"的口径下会被直接丢弃。
+            // 未指定学期时沿用该生该课最近一条的学期（覆盖语义；跨课程取 max 会新建错学期的行）。
             String semester = requested;
             if (semester == null) {
-                Integer maxExisting = scoreMapper.selectMaxSemester(studentId);
-                semester = String.valueOf(maxExisting != null ? maxExisting : 1);
+                Integer latest = scoreMapper.selectLatestSemester(studentId, courseId);
+                semester = String.valueOf(latest != null ? latest : 1);
             }
 
             // 按 (学生, 课程, 学期) 三元组查重：重修是同一门课另一个学期，应新增一行。

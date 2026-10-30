@@ -54,6 +54,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.interceptor.TransactionAspectSupport;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 import jakarta.servlet.http.HttpServletRequest;
@@ -79,6 +80,50 @@ public class AdminController {
     /** 只用于把文件端点的失败体写成 JSON（见 {@link #writeFileEndpointError}）—— 无状态，可静态复用。 */
     private static final com.fasterxml.jackson.databind.ObjectMapper FILE_ENDPOINT_JSON =
             new com.fasterxml.jackson.databind.ObjectMapper();
+
+    /**
+     * 取文件名里最后一段，丢掉任何目录部分。
+     *
+     * <p>上传/下载接口收到的名字来自客户端（multipart 头或路径变量），
+     * {@code ..\..\x.xls}、{@code ../../x.xls} 都能过"只校验后缀"那一关。
+     * 先剥掉目录再拼路径，与 {@code BackupService} 的 {@code SAFE_NAME} 同一道闸。
+     */
+    private static String baseName(String raw) {
+        if (raw == null) {
+            return null;
+        }
+        String normalized = raw.replace('\\', '/');
+        int slash = normalized.lastIndexOf('/');
+        String name = slash >= 0 ? normalized.substring(slash + 1) : normalized;
+        return name.trim();
+    }
+
+    /**
+     * 把文件名解析到指定目录内；解析结果（含符号链接归一化）必须仍在该目录下。
+     *
+     * @throws IllegalArgumentException 文件名越界（{@code ..}、绝对路径等）
+     */
+    private static File resolveUnder(String baseDir, String fileName) throws IOException {
+        File base = new File(baseDir).getCanonicalFile();
+        File target = new File(base, fileName).getCanonicalFile();
+        String basePath = base.getPath();
+        if (!target.getPath().equals(basePath)
+                && !target.getPath().startsWith(basePath + File.separator)) {
+            throw new IllegalArgumentException("非法的文件名: " + fileName);
+        }
+        return target;
+    }
+
+    /** 分页页码收口：客户端传 0/负数时按第 1 页处理，别让 {@code subList} 抛 IndexOutOfBounds。 */
+    private static int pageNo(Integer page) {
+        return page == null || page < 1 ? 1 : page;
+    }
+
+    /** 分页大小收口：缺省 10，上限 100，避免一次请求扫全表。 */
+    private static int pageSize(Integer size) {
+        if (size == null || size < 1) return 10;
+        return Math.min(size, 100);
+    }
 
     /**
      * 导出/下载端点的**失败回写**（W26，2026-10-05）。
@@ -248,8 +293,10 @@ public class AdminController {
             return false;
         }
         if (semester == null || semester.trim().isEmpty()) {
-            Integer max = scoreMapper.selectMaxSemester(studentId);
-            semester = String.valueOf(max != null ? max : 1);
+            // 按「该生该课」取最近学期，不能跨课程取 MAX：
+            // 最大学期来自别的课时，会在这门课下新建一条高学期记录而不是覆盖原有那条。
+            Integer latest = scoreMapper.selectLatestSemester(studentId, courseId);
+            semester = String.valueOf(latest != null ? latest : 1);
         }
 
         Score existing = scoreMapper.selectByStudentCourseSemester(studentId, courseId, semester);
@@ -496,14 +543,10 @@ public class AdminController {
     }
 
     public ApiResponse<Map<String, Object>> getStatisticsFallback(Throwable t) {
-        Map<String, Object> fallbackData = new HashMap<>();
-        fallbackData.put("totalUsers", 0);
-        fallbackData.put("totalStudents", 0);
-        fallbackData.put("totalCourses", 0);
-        fallbackData.put("totalColleges", 0);
-        fallbackData.put("totalWarnings", 0);
-        fallbackData.put("message", "adminApi:getStatistics API is degraded: " + ExceptionMessages.describe(t));
-        return ApiResponse.success(fallbackData);
+        // 不能回 success + 全 0：前端会把"统计服务不可用"画成"全库 0 个学生/0 条预警"，
+        // 这比明显的报错更危险。降级必须能被看见。
+        log.warn("Statistics degraded: {}", ExceptionMessages.describe(t));
+        return ApiResponse.error("统计服务暂时不可用，请稍后重试: " + ExceptionMessages.describe(t));
     }
 
     /**
@@ -644,9 +687,12 @@ public class AdminController {
 
             // 直接查本地 academic_warning 表
             try {
-                List<AcademicWarning> warnings = academicWarningMapper.selectList(null);
-                dashboard.put("totalWarnings", warnings.size());
-                dashboard.put("recentWarnings", warnings.size() > 5 ? warnings.subList(0, 5) : warnings);
+                // 首页只展示最近 5 条：排序交给 SQL，不能整表查出来再 subList
+                // （MyBatis-Plus 不保证无 ORDER BY 时的行序，取到的可能是任意 5 条）。
+                dashboard.put("totalWarnings", academicWarningMapper.selectCount(null));
+                List<AcademicWarning> recent = academicWarningMapper.selectList(
+                        new QueryWrapper<AcademicWarning>().orderByDesc("created_at").last("LIMIT 5"));
+                dashboard.put("recentWarnings", recent);
             } catch (Exception e) {
                 log.warn("获取预警失败: {}", e.getMessage());
                 dashboard.put("totalWarnings", 0);
@@ -720,7 +766,8 @@ public class AdminController {
     @Transactional
     @SentinelResource(value = "adminApi:createUser")
     public ApiResponse<String> createUser(@RequestBody User user,
-                                          @RequestParam(required = false) Long collegeId) {
+                                          @RequestParam(required = false) Long collegeId,
+                                          @RequestParam(required = false) Long majorId) {
         try {
             // ⚠️ 原来是 userService.save(user) —— MyBatis-Plus 的裸插入，绕过了
             //    UserServiceImpl.createUser()，于是三件事都没做：
@@ -739,12 +786,19 @@ public class AdminController {
             //    实测过一次：teacher_profile.college_id 是 NOT NULL，插入失败抛 500，
             //    而 users 里那个账号已经落库了（id=76），管理员看到报错会再建一次，
             //    于是撞重名。deleteUser 早就是 @Transactional，这里对齐。
+            // 角色只能是内置的 1..5：role 5 要建学院档案、role 1/2/3 要建对应 profile，
+            // 任意数值落进来只会造出"能登录但没有档案"的账号。自定义角色先建号再走
+            // `/permissions/assign-role` 分配（那条路径对 role>=6 有存在性校验）。
+            if (user.getRole() == null || user.getRole() < 1 || user.getRole() > 5) {
+                return ApiResponse.badRequest("非法的角色值: " + user.getRole());
+            }
+
             boolean ok = userService.createUser(user);
             if (!ok) {
                 return ApiResponse.error("用户名已存在：" + user.getUsername());
             }
 
-            createProfileIfNeeded(user, collegeId);
+            createProfileIfNeeded(user, collegeId, majorId);
 
             log.info("User created: id={}, username={}, role={}, collegeId={}", user.getId(), user.getUsername(), user.getRole(), collegeId);
             auditLogService.record("CREATE", "USER", user.getId(),
@@ -770,12 +824,14 @@ public class AdminController {
      * 口径：**只在该角色的必填列都拿得到时才建**，拿不到就不建、也不猜。
      * 各表 NOT NULL 且无默认值的列（实测 information_schema）：
      *   student_profile        user_id, student_id, name   → 新建时全都有（用户名即学号）
-     *   teacher_profile        user_id, **college_id**     → 建号表单里没有学院 → 不建
+     *   teacher_profile        user_id, **college_id**     → 建号表单选了学院才建
      *   counselor_profiles     user_id                     → 有（编号用用户名兜）
      *   college_admin_profile  user_id, name, **college_id** → 建号时带了 collegeId 才建
-     * 也就是"教师新建出来的账号只有账号、没有资料行"，
-     * 学院要由管理员在资料里补 —— 这比造一个 college_id=0 的假资料要好：
-     * 0 不是任何学院，查学院时会静默漏掉这些人。
+     *
+     * <p>2026-10-19：表单按"除系统管理员外都要选学院、学生还要选专业"收口后，
+     * 四个角色在建号时就都会带 collegeId（学生另带 majorId），这里跟着把
+     * 档案行写全：学生落 college_id/major_id，教师**落表**（此前因表单没有学院
+     * 而故意不建），辅导员落 college_id。系统管理员(4) 仍不建 —— 它没有对应表。
      * users.username 就是学号/工号/编号（学生 2023020616、教师 10001 都是这么存的）。
      *
      * <p>2026-10-09（W32）：学院管理员(role 5) 从这里"不建"改成"带了 {@code collegeId} 就建"。
@@ -785,11 +841,15 @@ public class AdminController {
      * {@code @RequestParam}（users 表没有 college_id 列、User 实体也没有该字段），
      * 由建号表单在选了「学院管理员」时提供。
      */
-    private void createProfileIfNeeded(User user, Long collegeId) {
+    private void createProfileIfNeeded(User user, Long collegeId, Long majorId) {
         if (user.getId() == null || user.getRole() == null) {
             return;
         }
         String name = user.getName() != null ? user.getName() : user.getUsername();
+        // 学院/专业只在**确实指向存在的行**时才写进档案 —— 不造 college_id=0 这类假归属，
+        // 那会让"按学院筛选查不到"变成"查得到但归属是错的"，更难排查。
+        boolean collegeValid = collegeId != null && collegeService.getById(collegeId) != null;
+        boolean majorValid = majorId != null && majorService.getById(majorId) != null;
         if (user.getRole() == 1) {
             QueryWrapper<StudentProfile> exists = new QueryWrapper<StudentProfile>().eq("user_id", user.getId());
             if (studentProfileMapper.selectCount(exists) == 0) {
@@ -797,7 +857,28 @@ public class AdminController {
                 profile.setUserId(user.getId());
                 profile.setStudentId(user.getUsername());
                 profile.setName(name);
+                if (collegeValid) {
+                    profile.setCollegeId(collegeId);
+                }
+                if (majorValid) {
+                    profile.setMajorId(majorId);
+                }
                 studentProfileMapper.insert(profile);
+            }
+        } else if (user.getRole() == 2) {
+            // 教师档案的 college_id NOT NULL：表单带了有效学院才建，与角色 5 同一个口径
+            if (collegeValid) {
+                QueryWrapper<TeacherProfile> exists = new QueryWrapper<TeacherProfile>().eq("user_id", user.getId());
+                if (teacherProfileMapper.selectCount(exists) == 0) {
+                    TeacherProfile profile = new TeacherProfile();
+                    profile.setUserId(user.getId());
+                    profile.setName(name);
+                    profile.setCollegeId(collegeId);
+                    teacherProfileMapper.insert(profile);
+                }
+            } else {
+                log.warn("教师账号建立但未绑定学院: userId={}, username={}, collegeId={}",
+                        user.getId(), user.getUsername(), collegeId);
             }
         } else if (user.getRole() == 3) {
             QueryWrapper<CounselorProfile> exists = new QueryWrapper<CounselorProfile>().eq("user_id", user.getId());
@@ -810,6 +891,9 @@ public class AdminController {
                 profile.setStaffId(user.getUsername());
                 profile.setName(name);
                 profile.setStatus(1);
+                if (collegeValid) {
+                    profile.setCollegeId(collegeId);
+                }
                 counselorProfileMapper.insert(profile);
             }
         } else if (user.getRole() == 5) {
@@ -833,7 +917,6 @@ public class AdminController {
                         user.getId(), user.getUsername(), collegeId);
             }
         }
-        // 教师(2) 的 profile 必填列里有 college_id，建号入参里没有学院，故不建。
     }
 
     @PutMapping("/users/{id}")
@@ -841,6 +924,19 @@ public class AdminController {
     public ApiResponse<String> updateUser(@PathVariable Long id, @RequestBody User user) {
         try {
             user.setId(id);
+
+            User existing = userService.getById(id);
+            if (existing == null) {
+                return ApiResponse.notFound("User not found");
+            }
+            // 角色不是普通资料：role=5 要同步 college_admin_profile、降级要清档案。
+            // 通用更新接口直接写 role 会绕过 assignRole 的全部校验与联动，
+            // 造出"role=5 却没有学院档案"（学院端全 403）或降级后档案残留的账号。
+            if (user.getRole() != null && !user.getRole().equals(existing.getRole())) {
+                return ApiResponse.badRequest("角色变更请使用角色分配接口（POST /admin/permissions/assign-role）");
+            }
+            // 即使值没变也不让 updateById 碰这一列：角色只从 assignRole 一个入口写。
+            user.setRole(null);
 
             // ⚠️ 密码必须单独处理，不能跟着 updateById 一起写，两条理由：
             //    1) 空串是**真锁死**。表单上写着"留空表示不修改密码"（PC AdminUsers.vue
@@ -967,6 +1063,9 @@ public class AdminController {
                 {"studentSettings", "学生设置"}, {"subscriptions", "订阅偏好"},
                 {"benchmarks", "对标分析"}, {"feedbacks", "反馈"},
                 {"teacherCourses", "授课安排"},
+                {"classes", "管理班级"}, {"classApplications", "班级申请"},
+                {"classManagement", "班级管理记录"}, {"assistanceEvaluations", "帮扶评价"},
+                {"communicationLogs", "沟通记录"},
                 {"userSettings", "账号设置"}, {"notifications", "通知"}, {"messages", "消息"},
                 {"securityLogs", "安全日志"}, {"auditLogs", "审计日志"},
                 {"adminProfile", "管理员档案"},
@@ -1022,8 +1121,8 @@ public class AdminController {
             if (user == null) {
                 return ApiResponse.notFound("User not found");
             }
-            // 置反：非活跃→活跃, 活跃→禁用
-            if (user.getStatus() == 1) {
+            // 置反：非活跃→活跃, 活跃→禁用。status 可能为 NULL（历史数据），不能直接拆箱。
+            if (Integer.valueOf(1).equals(user.getStatus())) {
                 user.setStatus(0);
             } else {
                 user.setStatus(1);
@@ -1171,8 +1270,8 @@ public class AdminController {
             queryWrapper.orderByAsc("status").orderByDesc("id");
 
             long total = userService.count(queryWrapper);
-            int start = (page - 1) * size;
-            List<User> users = userService.list(queryWrapper.last("LIMIT " + start + ", " + size));
+            int start = (pageNo(page) - 1) * pageSize(size);
+            List<User> users = userService.list(queryWrapper.last("LIMIT " + start + ", " + pageSize(size)));
 
             List<Map<String, Object>> enhancedUsers = new ArrayList<>(users.size());
             for (User user : users) {
@@ -1356,11 +1455,10 @@ public class AdminController {
     }
 
     public ApiResponse<Map<String, Object>> getUsersByPageFallback(Integer page, Integer size, Long collegeId, Integer role, Throwable t) {
-        Map<String, Object> fallbackData = new HashMap<>();
-        fallbackData.put("total", 0);
-        fallbackData.put("items", List.of());
-        fallbackData.put("message", "adminApi:getUsersByPage API is degraded: " + ExceptionMessages.describe(t));
-        return ApiResponse.success(fallbackData);
+        // 同 getStatisticsFallback：空页 + success 会让前端显示"该学院没有用户"，
+        // 而实际是查询链路不可用。
+        log.warn("Get users by page degraded: {}", ExceptionMessages.describe(t));
+        return ApiResponse.error("用户查询服务暂时不可用，请稍后重试: " + ExceptionMessages.describe(t));
     }
 
     @GetMapping("/colleges")
@@ -1938,27 +2036,51 @@ public class AdminController {
     }
 
     @DeleteMapping("/teachers/{id}")
+    @Transactional(rollbackFor = Exception.class)
     public ApiResponse<String> deleteTeacher(@PathVariable Long id) {
         try {
             // ⚠️ 两个 ID 空间不能混：路径里的 id 是 teacher_profile.id，
             //    而 users 表认的是 users.id，两者不是同一个数。
-            //    原实现先 teacherProfileMapper.deleteById(id) 再 userService.removeById(id)，
-            //    传 profile id=1（于凤海，其账号是 users#29）时，删掉的账号是
-            //    **users#1 —— admin 账号**，而于凤海的账号还留在库里。
-            //    这个接口目前没有页面在调，但它能在演示中把管理员删没，所以顺手修掉：
             //    先按 profile 查出 user_id，再删账号（顺序与 deleteUser 一致）。
             TeacherProfile teacher = teacherProfileMapper.selectById(id);
             if (teacher == null) {
                 return ApiResponse.notFound("Teacher not found");
             }
-            teacherProfileMapper.deleteById(id);
-            if (teacher.getUserId() != null) {
-                userService.removeById(teacher.getUserId());
+            Long userId = teacher.getUserId();
+
+            // 与 deleteUser 同一道预检：users / teacher_course 的外键都是 NO ACTION，
+            // 先删档案再删账号时账号一旦被挡住，档案已经没了且不回滚 —— 半截删除。
+            String blocking = null;
+            if (userId != null) {
+                blocking = describeBlockingReferences(userMapper.countReferences(userId));
+                if (blocking == null) {
+                    // classes/courses/teacher_class_application 的 teacher_id 没有外键，
+                    // 漏检不会报错，只会留下指向不存在教师的孤儿行。
+                    blocking = describeBlockingReferences(teacherProfileMapper.countReferences(userId));
+                }
             }
+            if (blocking != null) {
+                return ApiResponse.error("该教师仍有关联数据，不能删除：" + blocking
+                        + "。可改为「停用」；如需彻底删除，要先清理这些数据。");
+            }
+
+            int removedProfiles = userId == null
+                    ? teacherProfileMapper.deleteById(id)
+                    : teacherProfileMapper.delete(new QueryWrapper<TeacherProfile>().eq("user_id", userId));
+            if (removedProfiles == 0) {
+                return ApiResponse.notFound("Teacher not found");
+            }
+            if (userId != null && !userService.removeById(userId)) {
+                throw new IllegalStateException("删除教师账号失败: " + userId);
+            }
+            auditLogService.record("DELETE", "TEACHER", id,
+                    "删除教师 " + teacher.getName() + "（账号 " + userId + "）");
             return ApiResponse.success("Teacher deleted successfully");
         } catch (Exception e) {
             log.error("Delete teacher failed: {}", e.getMessage());
-            return ApiResponse.error(ExceptionMessages.describe(e));
+            // 必须抛出去：@Transactional 只有看到异常才会回滚。
+            throw e instanceof RuntimeException ? (RuntimeException) e
+                    : new RuntimeException(ExceptionMessages.describe(e), e);
         }
     }
 
@@ -2034,28 +2156,44 @@ public class AdminController {
     }
 
     @DeleteMapping("/counselors/{id}")
+    @Transactional(rollbackFor = Exception.class)
     public ApiResponse<String> deleteCounselor(@PathVariable Long id) {
         try {
             // ⚠️ 与上面 deleteTeacher 同一类 ID 空间问题：路径里的 id 是
             //    counselor_profile.id，而 users 表认的是 users.id，两者不是同一个数。
-            //    原实现 `counselorService.removeById(id); userService.removeById(id);`
-            //    用同一个 id 去删两张不相干的表 —— 删掉辅导员档案的同时，
-            //    会把**另一个编号的账号**删掉，而该辅导员的账号还留在库里。
             //    先按 profile 查出 user_id，再删账号（顺序与 deleteTeacher 一致）。
             CounselorProfile counselor = counselorProfileMapper.selectById(id);
             if (counselor == null) {
                 return ApiResponse.notFound("Counselor not found");
             }
+            Long userId = counselor.getUserId();
+
+            String blocking = null;
+            if (userId != null) {
+                blocking = describeBlockingReferences(userMapper.countReferences(userId));
+                if (blocking == null) {
+                    blocking = describeBlockingReferences(counselorProfileMapper.countReferences(userId));
+                }
+            }
+            if (blocking != null) {
+                return ApiResponse.error("该辅导员仍有关联数据，不能删除：" + blocking
+                        + "。可改为「停用」；如需彻底删除，要先清理这些数据。");
+            }
+
             if (!counselorService.removeById(id)) {
                 return ApiResponse.notFound("Counselor not found");
             }
-            if (counselor.getUserId() != null) {
-                userService.removeById(counselor.getUserId());
+            if (userId != null && !userService.removeById(userId)) {
+                throw new IllegalStateException("删除辅导员账号失败: " + userId);
             }
+            auditLogService.record("DELETE", "COUNSELOR", id,
+                    "删除辅导员 " + counselor.getName() + "（账号 " + userId + "）");
             return ApiResponse.success("Counselor deleted successfully");
         } catch (Exception e) {
             log.error("Delete counselor failed: {}", e.getMessage());
-            return ApiResponse.error(ExceptionMessages.describe(e));
+            // 同 deleteTeacher：带事务的方法不能把异常吞成正常返回。
+            throw e instanceof RuntimeException ? (RuntimeException) e
+                    : new RuntimeException(ExceptionMessages.describe(e), e);
         }
     }
 
@@ -2254,6 +2392,10 @@ public class AdminController {
             if (warning == null) {
                 return ApiResponse.notFound("Warning not found");
             }
+            // 2 = 已解除。解除是终态，再"处理"会把预警从解除打回已处理，统计口径跟着变。
+            if (warning.getStatus() != null && warning.getStatus() == 2) {
+                return ApiResponse.error("该预警已解除，不能再处理");
+            }
             String handleResult = (String) handleData.getOrDefault("handleResult", "已处理");
             String remark = (String) handleData.getOrDefault("remark", "");
             // ⚠️ 原实现是 `warning.setHandledBy(remark)` —— 把**备注文本**写进了「处理人」列，
@@ -2268,7 +2410,9 @@ public class AdminController {
                     ? handleResult + "（备注：" + remark + "）" : handleResult);
             warning.setHandledBy(handledBy);
             warning.setHandledAt(LocalDateTime.now());
-            academicWarningMapper.updateById(warning);
+            if (academicWarningMapper.updateById(warning) == 0) {
+                return ApiResponse.error("预警状态已变化，请刷新后重试");
+            }
 
             log.info("Handled warning {}: result={}, remark={}, handledBy={}", id, handleResult, remark, handledBy);
             auditLogService.record("HANDLE", "WARNING", id,
@@ -2297,8 +2441,8 @@ public class AdminController {
             }
 
             int total = filteredApplications.size();
-            int start = (page - 1) * size;
-            int end = Math.min(start + size, total);
+            int start = (pageNo(page) - 1) * pageSize(size);
+            int end = Math.min(start + pageSize(size), total);
 
             List<TeacherClassApplication> pageItems = start < total ? filteredApplications.subList(start, end) : List.of();
 
@@ -2325,7 +2469,20 @@ public class AdminController {
     @PostMapping("/teacher-class-applications")
     public ApiResponse<String> createTeacherClassApplication(@RequestBody TeacherClassApplication application) {
         try {
-            applicationMapper.insert(application);
+            if (application.getTeacherId() == null || application.getClassId() == null) {
+                return ApiResponse.badRequest("申请缺少教师或班级信息");
+            }
+            if (application.getApplicationType() != null
+                    && application.getApplicationType() != 0 && application.getApplicationType() != 1) {
+                return ApiResponse.badRequest("非法的申请类型: " + application.getApplicationType());
+            }
+            // 新建一律进待审核：请求体里带 status=1 等于绕过审批直接改班级归属。
+            application.setId(null);
+            application.setStatus(0);
+            application.setRejectReason(null);
+            if (applicationMapper.insert(application) == 0) {
+                return ApiResponse.error("创建申请失败");
+            }
             return ApiResponse.success("Application created successfully");
         } catch (Exception e) {
             log.error("Create teacher class application failed: {}", e.getMessage());
@@ -2334,32 +2491,96 @@ public class AdminController {
     }
 
     @PutMapping("/teacher-class-applications/{id}/approve")
+    @Transactional(rollbackFor = Exception.class)
     public ApiResponse<String> approveApplication(@PathVariable Long id) {
         try {
-            TeacherClassApplication application = applicationMapper.selectById(id);
-            if (application != null) {
-                application.setStatus(1);
-                applicationMapper.updateById(application);
-                return ApiResponse.success("Application approved successfully");
-            }
-            return ApiResponse.notFound("Application not found");
+            return approveTeacherApplication(id);
         } catch (Exception e) {
             log.error("Approve application failed: {}", e.getMessage());
-            return ApiResponse.error(ExceptionMessages.describe(e));
+            // 与 approveClassRequest 同一条规矩：带事务的方法不能把异常吞成正常返回。
+            throw e instanceof RuntimeException ? (RuntimeException) e
+                    : new RuntimeException(ExceptionMessages.describe(e), e);
         }
+    }
+
+    /**
+     * 教师班级申请审批的**唯一实现**（新老两个端点共用，避免"修一处漏一处"）。
+     *
+     * <p>此前两支都只把 {@code status} 置 1，**从不碰 {@code classes.teacher_id}**：
+     * <ul>
+     *   <li>{@code application_type=0}（申请管理）批准后班级并不会记到申请人名下；</li>
+     *   <li>{@code application_type=1}（解除管理）批准后班级仍绑着该教师。</li>
+     * </ul>
+     * 现在按类型真正落地：0 → {@code classes.teacher_id=申请人}；1 → 置 NULL。
+     * 批准前还要求申请仍处于待审核，避免重复点击把已处理的申请再执行一遍。
+     */
+    private ApiResponse<String> approveTeacherApplication(Long requestId) {
+        TeacherClassApplication application = applicationMapper.selectById(requestId);
+        if (application == null) {
+            return ApiResponse.error("Application not found");
+        }
+        if (application.getStatus() != null && application.getStatus() != 0) {
+            return ApiResponse.error("该申请已处理，请刷新后重试");
+        }
+        if (application.getClassId() == null) {
+            return ApiResponse.error("申请缺少班级信息");
+        }
+        Classes clazz = classesMapper.selectById(application.getClassId());
+        if (clazz == null) {
+            return ApiResponse.error("班级不存在");
+        }
+
+        boolean release = application.getApplicationType() != null && application.getApplicationType() == 1;
+        if (release) {
+            // 申请发出后班级可能已被管理员改派：此时再批准"解除"会把新教师踢掉。
+            Long applicant = application.getTeacherId();
+            if (applicant == null || !applicant.equals(clazz.getTeacherId())) {
+                return ApiResponse.error("该班级当前不由该教师管理，请刷新后重试");
+            }
+            UpdateWrapper<Classes> clear = new UpdateWrapper<>();
+            clear.eq("id", clazz.getId()).set("teacher_id", null);
+            if (classesMapper.update(null, clear) == 0) {
+                throw new IllegalStateException("解除班级管理失败，班级可能已被删除");
+            }
+        } else {
+            Long applicant = application.getTeacherId();
+            if (applicant == null) {
+                return ApiResponse.error("申请缺少教师信息");
+            }
+            if (clazz.getTeacherId() != null && !clazz.getTeacherId().equals(applicant)) {
+                return ApiResponse.error("该班级已有其他教师管理，请先移除后再批准");
+            }
+            UpdateWrapper<Classes> bind = new UpdateWrapper<>();
+            bind.eq("id", clazz.getId()).set("teacher_id", applicant);
+            if (classesMapper.update(null, bind) == 0) {
+                throw new IllegalStateException("绑定班级管理失败，班级可能已被删除");
+            }
+        }
+
+        application.setStatus(1);
+        if (applicationMapper.updateById(application) == 0) {
+            // 并发：另一请求已改过状态。带事务抛出去，把上面动过的班级绑定一起回滚。
+            throw new IllegalStateException("申请状态已变化，请刷新后重试");
+        }
+        return ApiResponse.success(release ? "已批准解除班级管理申请" : "已批准班级管理申请");
     }
 
     @PutMapping("/teacher-class-applications/{id}/reject")
     public ApiResponse<String> rejectApplication(@PathVariable Long id, @RequestBody(required = false) String reason) {
         try {
             TeacherClassApplication application = applicationMapper.selectById(id);
-            if (application != null) {
-                application.setStatus(2);
-                application.setRejectReason(reason);
-                applicationMapper.updateById(application);
-                return ApiResponse.success("Application rejected successfully");
+            if (application == null) {
+                return ApiResponse.notFound("Application not found");
             }
-            return ApiResponse.notFound("Application not found");
+            if (application.getStatus() != null && application.getStatus() != 0) {
+                return ApiResponse.error("该申请已处理，请刷新后重试");
+            }
+            application.setStatus(2);
+            application.setRejectReason(reason);
+            if (applicationMapper.updateById(application) == 0) {
+                return ApiResponse.error("申请状态已变化，请刷新后重试");
+            }
+            return ApiResponse.success("Application rejected successfully");
         } catch (Exception e) {
             log.error("Reject application failed: {}", e.getMessage());
             return ApiResponse.error(ExceptionMessages.describe(e));
@@ -2912,6 +3133,7 @@ public class AdminController {
      * 同步 scores 表）仍在 {@link #applyScoreRows} 里，**只有一份实现**。
      */
     @PostMapping("/import/scores")
+    @Transactional(rollbackFor = Exception.class)
     public ApiResponse<Map<String, Object>> importScores(@RequestParam("file") MultipartFile file) {
         try {
             if (file == null || file.isEmpty()) {
@@ -3018,8 +3240,12 @@ public class AdminController {
         return map;
     }
 
-    /** 逐行处理一批成绩行（键：studentId=学号、courseName、score、semester 及可选列）。 */
-    @Transactional(rollbackFor = Exception.class)
+    /**
+     * 逐行处理一批成绩行（键：studentId=学号、courseName、score、semester 及可选列）。
+     *
+     * <p>事务由公开入口 {@link #importScores} 提供：{@code @Transactional} 标在 private
+     * 方法上不走 Spring 代理，等于没加（此前就是如此）。
+     */
     private ApiResponse<Map<String, Object>> applyScoreRows(List<Map<String, Object>> data) {
         Map<String, Object> result = new HashMap<>();
         int successCount = 0, skipCount = 0, updateCount = 0, insertCount = 0;
@@ -3133,6 +3359,8 @@ public class AdminController {
 
         } catch (Exception e) {
             log.error("Import scores failed", e);
+            // 中途出异常时整批回滚，避免"响应说失败、库里留半批"。
+            TransactionAspectSupport.currentTransactionStatus().setRollbackOnly();
             result.put("success", successCount);
             return ApiResponse.error("导入异常: " + ExceptionMessages.describe(e));
         }
@@ -3518,8 +3746,8 @@ public class AdminController {
             if (response != null && response.getCode() == 200) {
                 List<com.academic.common.entity.Message> messages = response.getData();
                 int total = messages != null ? messages.size() : 0;
-                int start = (page - 1) * size;
-                int end = Math.min(start + size, total);
+                int start = (pageNo(page) - 1) * pageSize(size);
+                int end = Math.min(start + pageSize(size), total);
                 List<?> pageItems = start < total && messages != null ? messages.subList(start, end) : List.of();
                 
                 Map<String, Object> result = new HashMap<>();
@@ -3543,8 +3771,8 @@ public class AdminController {
             if (response != null && response.getCode() == 200) {
                 List<com.academic.common.entity.Message> messages = response.getData();
                 int total = messages != null ? messages.size() : 0;
-                int start = (page - 1) * size;
-                int end = Math.min(start + size, total);
+                int start = (pageNo(page) - 1) * pageSize(size);
+                int end = Math.min(start + pageSize(size), total);
                 List<?> pageItems = start < total && messages != null ? messages.subList(start, end) : List.of();
                 
                 Map<String, Object> result = new HashMap<>();
@@ -3856,8 +4084,8 @@ public class AdminController {
             });
             
             int total = resultList.size();
-            int start = (page - 1) * size;
-            int end = Math.min(start + size, total);
+            int start = (pageNo(page) - 1) * pageSize(size);
+            int end = Math.min(start + pageSize(size), total);
             List<?> pageItems = start < total ? resultList.subList(start, end) : List.of();
             
             Map<String, Object> result = new HashMap<>();
@@ -3899,28 +4127,47 @@ public class AdminController {
         try {
             if ("counselor".equals(type)) {
                 com.academic.entity.CounselorClassApplication app = counselorClassApplicationMapper.selectById(requestId);
-                if (app != null) {
-                    app.setStatus(1);
-                    counselorClassApplicationMapper.updateById(app);
-                    // 更新班级的辅导员ID
-                    if (app.getClassId() != null) {
-                        Classes cls = classesMapper.selectById(app.getClassId());
-                        if (cls != null) {
-                            cls.setCounselorId(app.getCounselorId());
-                            classesMapper.updateById(cls);
-                        }
+                if (app == null) {
+                    return ApiResponse.notFound("Application not found");
+                }
+                if (app.getStatus() != null && app.getStatus() != 0) {
+                    return ApiResponse.error("该申请已处理，请刷新后重试");
+                }
+                if (app.getClassId() == null || app.getCounselorId() == null) {
+                    return ApiResponse.error("申请缺少辅导员或班级信息");
+                }
+                Classes cls = classesMapper.selectById(app.getClassId());
+                if (cls == null) {
+                    return ApiResponse.error("班级不存在");
+                }
+                boolean release = app.getApplicationType() != null && app.getApplicationType() == 1;
+                if (release) {
+                    if (!app.getCounselorId().equals(cls.getCounselorId())) {
+                        return ApiResponse.error("该班级当前不由该辅导员管理，请刷新后重试");
                     }
-                    return ApiResponse.success("已批准辅导员班级申请");
+                    UpdateWrapper<Classes> clear = new UpdateWrapper<>();
+                    clear.eq("id", cls.getId()).set("counselor_id", null);
+                    if (classesMapper.update(null, clear) == 0) {
+                        throw new IllegalStateException("解除班级管理失败，班级可能已被删除");
+                    }
+                } else {
+                    if (cls.getCounselorId() != null && !cls.getCounselorId().equals(app.getCounselorId())) {
+                        return ApiResponse.error("该班级已有其他辅导员管理，请先移除后再批准");
+                    }
+                    UpdateWrapper<Classes> bind = new UpdateWrapper<>();
+                    bind.eq("id", cls.getId()).set("counselor_id", app.getCounselorId());
+                    if (classesMapper.update(null, bind) == 0) {
+                        throw new IllegalStateException("绑定班级管理失败，班级可能已被删除");
+                    }
                 }
+                app.setStatus(1);
+                if (counselorClassApplicationMapper.updateById(app) == 0) {
+                    throw new IllegalStateException("申请状态已变化，请刷新后重试");
+                }
+                return ApiResponse.success(release ? "已批准解除班级管理申请" : "已批准辅导员班级申请");
             } else {
-                TeacherClassApplication application = applicationMapper.selectById(requestId);
-                if (application != null) {
-                    application.setStatus(1);
-                    applicationMapper.updateById(application);
-                    return ApiResponse.success("Application approved successfully");
-                }
+                return approveTeacherApplication(requestId);
             }
-            return ApiResponse.error("Application not found");
         } catch (Exception e) {
             log.error("Approve class request failed: {}", e.getMessage());
             // ⚠️ 必须抛出去，不能 `return ApiResponse.error(...)`：本方法带 @Transactional，
@@ -3959,22 +4206,33 @@ public class AdminController {
 
             if ("counselor".equals(type)) {
                 com.academic.entity.CounselorClassApplication app = counselorClassApplicationMapper.selectById(requestId);
-                if (app != null) {
-                    app.setStatus(2);
-                    app.setRejectReason(reason);
-                    counselorClassApplicationMapper.updateById(app);
-                    return ApiResponse.success("已拒绝辅导员班级申请");
+                if (app == null) {
+                    return ApiResponse.notFound("Application not found");
                 }
+                if (app.getStatus() != null && app.getStatus() != 0) {
+                    return ApiResponse.error("该申请已处理，请刷新后重试");
+                }
+                app.setStatus(2);
+                app.setRejectReason(reason);
+                if (counselorClassApplicationMapper.updateById(app) == 0) {
+                    return ApiResponse.error("申请状态已变化，请刷新后重试");
+                }
+                return ApiResponse.success("已拒绝辅导员班级申请");
             } else {
                 TeacherClassApplication application = applicationMapper.selectById(requestId);
-                if (application != null) {
-                    application.setStatus(2);
-                    application.setRejectReason(reason);
-                    applicationMapper.updateById(application);
-                    return ApiResponse.success("Application rejected successfully");
+                if (application == null) {
+                    return ApiResponse.notFound("Application not found");
                 }
+                if (application.getStatus() != null && application.getStatus() != 0) {
+                    return ApiResponse.error("该申请已处理，请刷新后重试");
+                }
+                application.setStatus(2);
+                application.setRejectReason(reason);
+                if (applicationMapper.updateById(application) == 0) {
+                    return ApiResponse.error("申请状态已变化，请刷新后重试");
+                }
+                return ApiResponse.success("Application rejected successfully");
             }
-            return ApiResponse.error("Application not found");
         } catch (Exception e) {
             log.error("Reject class request failed: {}", e.getMessage());
             return ApiResponse.error(ExceptionMessages.describe(e));
@@ -4037,9 +4295,11 @@ public class AdminController {
                 item.put("exportedBy", history.getExportedBy());
                 item.put("createdAt", history.getCreatedAt());
                 
-                String filePath = "exports/" + history.getFileName();
-                File file = new File(filePath);
-                if (file.exists()) {
+                // 与各导出/下载端点用同一个 exportDir。此前这里写死 "exports/"，
+                // 配置成别的目录后列表里每一行都显示"文件不存在"。
+                String storedName = baseName(history.getFileName());
+                File file = storedName == null || storedName.isEmpty() ? null : new File(exportDir, storedName);
+                if (file != null && file.exists()) {
                     item.put("fileSize", formatFileSize(file.length()));
                 } else {
                     item.put("fileSize", "文件不存在");
@@ -4049,8 +4309,8 @@ public class AdminController {
             }
             
             int total = resultList.size();
-            int start = (page - 1) * size;
-            int end = Math.min(start + size, total);
+            int start = (pageNo(page) - 1) * pageSize(size);
+            int end = Math.min(start + pageSize(size), total);
             List<?> pageItems = start < total ? resultList.subList(start, end) : List.of();
             
             Map<String, Object> result = new HashMap<>();
@@ -4479,17 +4739,29 @@ public class AdminController {
         try {
             // 必须与 generateReportFile 用同一个 exportDir：两边都写死 "exports/" 时
             // 一旦 export.dir 被配成别的目录，生成写 A、下载读 B，表现为"生成成功但下载 404"。
-            String filePath = exportDir + "/" + fileName;
-            File file = new File(filePath);
+            // 路径变量来自客户端，Windows 下 `%5C..%5C` 解码后就是分隔符 —— 只允许目录内的文件。
+            String safeName = baseName(fileName);
+            if (safeName == null || safeName.isEmpty()) {
+                response.sendError(HttpServletResponse.SC_BAD_REQUEST, "非法的文件名");
+                return;
+            }
+            File file;
+            try {
+                file = resolveUnder(exportDir, safeName);
+            } catch (IllegalArgumentException e) {
+                log.warn("拒绝一次越界的报表下载请求: {}", fileName);
+                response.sendError(HttpServletResponse.SC_BAD_REQUEST, "非法的文件名");
+                return;
+            }
             
             if (!file.exists()) {
-                log.error("Report file not found: {}", filePath);
+                log.error("Report file not found: {}", file.getPath());
                 response.sendError(HttpServletResponse.SC_NOT_FOUND, "报表文件不存在");
                 return;
             }
             
             response.setContentType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
-            response.setHeader("Content-Disposition", "attachment; filename=" + URLEncoder.encode(fileName, StandardCharsets.UTF_8.toString()));
+            response.setHeader("Content-Disposition", "attachment; filename=" + URLEncoder.encode(safeName, StandardCharsets.UTF_8.toString()));
             
             Files.copy(file.toPath(), response.getOutputStream());
             
@@ -4641,8 +4913,9 @@ public class AdminController {
                 return ApiResponse.error(400, "文件大小不能超过10MB");
             }
 
-            String originalFilename = file.getOriginalFilename();
-            if (originalFilename == null || (!originalFilename.endsWith(".xlsx") && !originalFilename.endsWith(".xls"))) {
+            String originalFilename = baseName(file.getOriginalFilename());
+            if (originalFilename == null || originalFilename.isEmpty()
+                    || (!originalFilename.endsWith(".xlsx") && !originalFilename.endsWith(".xls"))) {
                 return ApiResponse.error(400, "只支持 Excel 文件格式（.xlsx, .xls）");
             }
 
@@ -4652,16 +4925,22 @@ public class AdminController {
             }
 
             String fileName = "template_" + System.currentTimeMillis() + "_" + originalFilename;
-            String filePath = templateDir + "/" + fileName;
+            File target;
+            try {
+                target = resolveUnder(templateDir, fileName);
+            } catch (IllegalArgumentException e) {
+                log.warn("拒绝一次越界的模板文件名: {}", originalFilename);
+                return ApiResponse.error(400, "文件名不合法");
+            }
             
-            try (FileOutputStream fos = new FileOutputStream(filePath)) {
+            try (FileOutputStream fos = new FileOutputStream(target)) {
                 fos.write(file.getBytes());
             }
 
             ReportTemplate template = reportTemplateService.uploadTemplate(
                     name,
                     description != null ? description : "",
-                    filePath,
+                    target.getPath(),
                     fileName,
                     file.getSize(),
                     "xlsx"
@@ -4826,6 +5105,17 @@ public class AdminController {
             case 5 -> "学院管理员";
             default -> "未知";
         };
+    }
+
+    /** 角色展示名：内置 1..5 用固定词表，自定义角色回 roles 表取真名。 */
+    private String roleDisplayName(Integer role) {
+        if (role != null && role > 5) {
+            Role r = roleMapper.selectById(role.longValue());
+            if (r != null && r.getName() != null) {
+                return r.getName();
+            }
+        }
+        return getRoleNameText(role);
     }
 
     /**
@@ -5194,7 +5484,11 @@ public class AdminController {
                 //    也就是说权限管理页的「查看权限」弹窗里「拥有权限」**永远是空的**。
                 //    这是与网关那段死 RBAC 同源的缺陷（库 ROLE_* vs 代码 *）。
                 Integer roleCode = user.getRole();
-                String roleCodeStr = switch (roleCode != null ? roleCode : 0) {
+                // 自定义角色（>=6）不在固定 switch 里，按 id 去 roles 表取 code；
+                // 取不到才落到 UNKNOWN（查不到权限是如实的空，不是"没有权限"）。
+                Role customRole = roleCode != null && roleCode > 5
+                        ? roleMapper.selectById(roleCode.longValue()) : null;
+                String roleCodeStr = customRole != null ? customRole.getCode() : switch (roleCode != null ? roleCode : 0) {
                     case 1 -> "ROLE_STUDENT";
                     case 2 -> "ROLE_TEACHER";
                     case 3 -> "ROLE_COUNSELOR";
@@ -5210,7 +5504,8 @@ public class AdminController {
                 result.put("role", roleCode);
                 // roleName 是**给弹窗直接显示**的（弹窗用的是 getRoleName(selectedUser.role)，
                 // 但这里也不该回 "ROLE_STUDENT" 这种英文码）—— 改成中文名。
-                result.put("roleName", getRoleNameText(roleCode));
+                result.put("roleName", customRole != null && customRole.getName() != null
+                        ? customRole.getName() : getRoleNameText(roleCode));
                 result.put("roleCode", roleCodeStr);
                 // 前端「拥有权限」渲染的是 `perm` 本身（`v-for="perm in selectedUser.permissions"`），
                 // 而 Permission 是对象 ⇒ 原来即使查到了也会显示成 [object Object]。
@@ -5289,8 +5584,20 @@ public class AdminController {
             }
             Long userId = Long.valueOf(rawUserId.toString());
             Integer role = Integer.valueOf(rawRole.toString());
-            if (role < 1 || role > 5) {
+            if (role < 1) {
                 throw new IllegalArgumentException("非法的角色值: " + role);
+            }
+            // 1..5 是内置角色；>=6 是 roles 表里真实存在的自定义角色。
+            // 校验存在性后再写 people.role，否则会造出指向不存在角色的账号。
+            Role customRole = null;
+            if (role > 5) {
+                customRole = roleMapper.selectById(role.longValue());
+                if (customRole == null) {
+                    throw new IllegalArgumentException("角色不存在: " + role);
+                }
+                if (customRole.getStatus() != null && customRole.getStatus() == 0) {
+                    throw new IllegalArgumentException("角色已停用: " + customRole.getName());
+                }
             }
             User user = userService.getById(userId);
             if (user == null) {
@@ -5344,12 +5651,14 @@ public class AdminController {
                 clearedProfiles = clearCollegeAdminProfile(userId);
             }
 
-            String message = buildAssignRoleMessage(role, previousRole, college, clearedProfiles);
+            String roleLabel = customRole != null ? customRole.getName() : getRoleNameText(role);
+            String previousLabel = roleDisplayName(previousRole);
+            String message = buildAssignRoleMessage(roleLabel, role, previousRole, college, clearedProfiles);
             log.info("Role assigned: userId={}, {} -> {}, collegeId={}",
                     userId, previousRole, role, college == null ? null : college.getId());
             auditLogService.record("UPDATE", "USER", userId,
                     "调整账号 " + user.getUsername() + " 的角色："
-                            + getRoleNameText(previousRole) + " → " + getRoleNameText(role)
+                            + previousLabel + " → " + roleLabel
                             + (college == null ? "" : "（所属学院：" + college.getName() + "）"));
             return ApiResponse.success(message, null);
         } catch (IllegalArgumentException | ResourceNotFoundException e) {
@@ -5445,12 +5754,12 @@ public class AdminController {
      * （{@code AuthenticationFilter.validateToken} → {@code claims.get("role")}），
      * 已经登录的用户手里那张 token 不会因为你改了库而变 ⇒ 不重新登录就仍是旧角色。
      */
-    private static String buildAssignRoleMessage(Integer role, Integer previousRole,
+    private static String buildAssignRoleMessage(String roleName, Integer role, Integer previousRole,
                                                  College college, int clearedProfiles) {
         if (role == 5) {
             return "已设为学院管理员并绑定《" + college.getName() + "》；该用户需重新登录后生效";
         }
-        StringBuilder sb = new StringBuilder("角色已更新为「").append(getRoleNameText(role)).append("」");
+        StringBuilder sb = new StringBuilder("角色已更新为「").append(roleName).append("」");
         // 按**实际删掉的行数**说，不按"上一个角色是不是 5"猜：W32 之前建出来的 role 5
         // 账号本来就没有档案行，那时说"已清除学院绑定"是谎报。
         if (clearedProfiles > 0) {
@@ -5477,11 +5786,19 @@ public class AdminController {
     // "清空拒绝理由"踩的是同一个坑（那边已用 UpdateWrapper 修掉，见其注释）。
     // 修法：用 `UpdateWrapper.set("teacher_id", null)` 显式写 NULL —— 这是本仓既定的写法
     // （同类还有 `updatePermission`）。
+    /**
+     * 把教师从班级移除，并把该教师在这班的申请单一并置为「已取消」。
+     *
+     * <p>只清 {@code classes.teacher_id} 是不够的：历史「已通过」的申请会继续留在
+     * 教师端「我的申请」里，看起来像仍在管理该班。两步写必须同事务。
+     */
     @PostMapping("/class-management/remove-teacher/{classId}")
+    @Transactional(rollbackFor = Exception.class)
     public ApiResponse<String> removeTeacherFromClass(@PathVariable Long classId) {
         try {
             Classes clazz = classesMapper.selectById(classId);
             if (clazz == null) return ApiResponse.notFound("班级不存在");
+            Long removedTeacherId = clazz.getTeacherId();
 
             UpdateWrapper<Classes> update = new UpdateWrapper<>();
             update.eq("id", classId).set("teacher_id", null);
@@ -5494,11 +5811,20 @@ public class AdminController {
                 log.error("Remove teacher did not take effect: classId={}, teacher_id={}", classId, saved.getTeacherId());
                 return ApiResponse.error("移除教师未生效，班级仍绑定教师 " + saved.getTeacherId());
             }
-            log.info("Removed teacher from class: {}", classId);
+            if (removedTeacherId != null) {
+                UpdateWrapper<TeacherClassApplication> cancel = new UpdateWrapper<>();
+                cancel.eq("class_id", classId).eq("teacher_id", removedTeacherId)
+                        .in("status", 0, 1)
+                        .set("status", 3)
+                        .set("update_time", LocalDateTime.now());
+                applicationMapper.update(null, cancel);
+            }
+            log.info("Removed teacher from class: {}, teacherId={}", classId, removedTeacherId);
             return ApiResponse.success("教师已从班级移除");
         } catch (Exception e) {
             log.error("Remove teacher from class failed: {}", e.getMessage());
-            return ApiResponse.error(ExceptionMessages.describe(e));
+            throw e instanceof RuntimeException ? (RuntimeException) e
+                    : new RuntimeException(ExceptionMessages.describe(e), e);
         }
     }
 
